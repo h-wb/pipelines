@@ -2,8 +2,10 @@
 
 import dlt
 from src.sources import listenbrainz_source
+from prefect import flow
 
 
+@flow
 def load_listenbrainz() -> None:
     """Load ListenBrainz listening history."""
     pipeline = dlt.pipeline(
@@ -17,4 +19,4 @@ def load_listenbrainz() -> None:
 
 
 if __name__ == "__main__":
-    load_listenbrainz()
+    load_listenbrainz.serve('load_listenbrainz', cron='0 0 * * *')
