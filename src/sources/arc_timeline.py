@@ -2,6 +2,7 @@
 
 import dlt
 from dlt.common.pendulum import pendulum
+from dlt.sources import TDataItem
 from pyicloud import PyiCloudService
 from pyicloud.services.drive import DriveNode
 
@@ -67,20 +68,14 @@ def arc_timeline_source(
         except KeyError:
             print("metadata.json not found")
 
-    def _read_folder_json(folder: DriveNode):
-        """Read all JSON files from a folder and yield their contents."""
+    @dlt.defer
+    def _read_file(item: DriveNode) -> TDataItem:
+        print(f"  Processing {item.name}")
         try:
-            for item in folder.dir():
-                print(f"  Processing {item}")
-                try:
-                    with folder[item].open(stream=True) as response:
-                        data = response.json()
-                        for record in data:
-                            yield record
-                except Exception as e:
-                    print(f"  Error reading {item}: {e}")
-        except KeyError:
-            print(f"  {folder.name} folder not found")
+            with item.open(stream=True) as response:
+                return response.json()
+        except Exception as e:
+            print(f"  Error reading {item}: {e}")
 
     @dlt.resource(
         name="items",
@@ -98,7 +93,9 @@ def arc_timeline_source(
     )
     def items(exports_data):
         """Extract base timeline item data from export."""
-        yield from _read_folder_json(exports_data["export"]["items"])
+        files = exports_data["export"]["items"]
+        for file in files.dir():
+            yield _read_file(files[file])
 
     @dlt.resource(
         name="samples",
@@ -116,7 +113,9 @@ def arc_timeline_source(
     )
     def samples(exports_data):
         """Extract sample data with reference to timeline_items via timelineItemId."""
-        yield from _read_folder_json(exports_data["export"]["samples"])
+        files = exports_data["export"]["samples"]
+        for file in files.dir():
+            yield _read_file(files[file])
 
     @dlt.resource(
         name="places",
@@ -127,6 +126,8 @@ def arc_timeline_source(
     )
     def places(exports_data):
         """Extract place data from export."""
-        yield from _read_folder_json(exports_data["export"]["places"])
+        files = exports_data["export"]["places"]
+        for file in files.dir():
+            yield _read_file(files[file])
 
     return metadata, items, samples, places

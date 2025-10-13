@@ -20,4 +20,3 @@ def load_arc_timeline() -> None:
 
 if __name__ == "__main__":
     load_arc_timeline()
-
