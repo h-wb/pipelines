@@ -9,9 +9,12 @@ A collection of data pipelines using [dlt](https://dlthub.com/) for various data
 ├── src/
 │   ├── sources/
 │   │   ├── __init__.py
-│   │   └── listenbrainz.py      # ListenBrainz data source
+│   │   ├── listenbrainz.py      # ListenBrainz data source
+│   │   └── arc_timeline.py      # Arc Timeline data source
 │   └── pipelines/
-│       └── listenbrainz.py      # ListenBrainz pipeline
+│       ├── __init__.py
+│       ├── listenbrainz.py      # ListenBrainz pipeline
+│       └── arc_timeline.py      # Arc Timeline pipeline
 ├── pyproject.toml               # Project configuration
 ├── .env.example                 # Environment variables template
 └── README.md
@@ -46,9 +49,17 @@ A collection of data pipelines using [dlt](https://dlthub.com/) for various data
 ### Available Pipelines
 
 #### ListenBrainz Pipeline
+Extract listening history from ListenBrainz.
 ```bash
 uv run python src/pipelines/listenbrainz.py
 ```
+
+#### Arc Timeline Pipeline
+Extract Arc Timeline data from Arc Editor exports in iCloud Drive (`Arc Editor/Exports` folder).
+```bash
+uv run python src/pipelines/arc_timeline.py
+```
+
 
 ### Configuration
 
@@ -66,6 +77,20 @@ And in `.dlt/secrets.toml`:
 [sources.listenbrainz]
 access_token = "your_api_token"
 ```
+
+#### Arc Timeline Configuration
+Set these in your `.dlt/config.toml`:
+```toml
+[sources.arc_timeline]
+apple_id = "your_apple_id@icloud.com"
+```
+
+And in `.dlt/secrets.toml`:
+```toml
+[sources.arc_timeline]
+password = "your_icloud_password"
+```
+
 
 ## Development
 
