@@ -60,6 +60,9 @@ Extract Arc Timeline data from Arc Editor exports in iCloud Drive (`Arc Editor/E
 uv run python src/pipelines/arc_timeline.py
 ```
 
+### Run with Prefect
+
+`prefect deploy --prefect-file prefect.yaml`
 
 ### Configuration
 
@@ -91,6 +94,40 @@ And in `.dlt/secrets.toml`:
 password = "your_icloud_password"
 ```
 
+
+## Prefect Integration
+
+The pipelines support both local development (using `.dlt/` config files) and Prefect deployments (using Prefect Secret blocks).
+
+### Local Development
+Run pipelines directly using dlt config files:
+```bash
+uv run python src/pipelines/listenbrainz.py
+uv run python src/pipelines/arc_timeline.py
+```
+
+### Prefect Deployments
+1. **Set up Prefect Secret blocks** (one-time setup):
+   ```bash
+   uv run python setup_prefect_blocks.py
+   ```
+
+2. **Use Prefect flows**:
+   ```python
+   from src.pipelines.listenbrainz import load_listenbrainz_from_prefect_blocks
+   from src.pipelines.arc_timeline import load_arc_timeline_from_prefect_blocks
+   
+   # Run flows that use Prefect blocks
+   load_listenbrainz_from_prefect_blocks()
+   load_arc_timeline_from_prefect_blocks()
+   ```
+
+3. **Or pass credentials directly**:
+   ```python
+   from src.pipelines.listenbrainz import load_listenbrainz
+   
+   load_listenbrainz(username="your_user", access_token="your_token")
+   ```
 
 ## Development
 
