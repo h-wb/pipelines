@@ -56,3 +56,6 @@ htmlcov/
 
 # uv
 uv.lock
+
+# mise
+mise.local.toml
