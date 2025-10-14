@@ -10,7 +10,7 @@ def load_listenbrainz() -> None:
     """Load ListenBrainz listening history."""
     pipeline = dlt.pipeline(
         pipeline_name="listenbrainz",
-        destination=dlt.destinations.duckdb("/root/.prefect/data.db"),
+        destination="duckdb",
         dataset_name="listenbrainz_data",
     )
 
