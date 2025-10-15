@@ -59,3 +59,6 @@ uv.lock
 
 # mise
 mise.local.toml
+
+# prefect
+profiles.toml

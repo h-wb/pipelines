@@ -25,6 +25,8 @@ deployments:
     work_queue_name: default
     job_variables: 
       env:
-        LISTENBRAINZ__USERNAME: "{{ prefect.blocks.secret.listenbrainz-username }}"
-        LISTENBRAINZ__ACCESS_TOKEN: "{{ prefect.blocks.secret.listenbrainz-token }}"
-        LISTENBRAINZ__START_DATE: "{{ prefect.blocks.secret.start-date }}"
+        LISTENBRAINZ__USERNAME: "{{ $LISTENBRAINZ__USERNAME }}"
+        LISTENBRAINZ__ACCESS_TOKEN: "{{ $LISTENBRAINZ__ACCESS_TOKEN }}"
+        LISTENBRAINZ__START_DATE: "{{ $LISTENBRAINZ__START_DATE }}"
+        DESTINATION__DUCKDB__DESTINATION_NAME: "{{ $DESTINATION__DUCKDB__DESTINATION_NAME }}"
+        RUNTIME__LOG_LEVEL: 'DEBUG'
