@@ -58,7 +58,7 @@ htmlcov/
 uv.lock
 
 # mise
-mise.local.toml
+mise.*.toml
 
 # prefect
 profiles.toml

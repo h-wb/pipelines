@@ -1,5 +1,14 @@
 name: dlt
 prefect-version: 3.4.22
+definitions:
+  work_pools:
+    default_work_pool: &default_work_pool
+      name: local-pool
+      work_queue_name: default
+  base_env: &base_env
+    RUNTIME__LOG_LEVEL: "{{ $RUNTIME__LOG_LEVEL }}"
+    PREFECT_LOGGING_EXTRA_LOGGERS: "{{ $PREFECT_LOGGING_EXTRA_LOGGERS }}"
+    PREFECT_LOGGING_LOG_PRINTS: "{{ $PREFECT_LOGGING_LOG_PRINTS }}"
 
 pull:
 - prefect.deployments.steps.git_clone:
@@ -21,12 +30,11 @@ deployments:
   entrypoint: src/pipelines/listenbrainz.py:load_listenbrainz
   parameters: {}
   work_pool:
-    name: local-pool
-    work_queue_name: default
-    job_variables: 
+    <<: *default_work_pool
+    job_variables:
       env:
+        <<: *base_env
         LISTENBRAINZ__USERNAME: "{{ $LISTENBRAINZ__USERNAME }}"
         LISTENBRAINZ__ACCESS_TOKEN: "{{ $LISTENBRAINZ__ACCESS_TOKEN }}"
         LISTENBRAINZ__START_DATE: "{{ $LISTENBRAINZ__START_DATE }}"
-        DESTINATION__DUCKDB__DESTINATION_NAME: "{{ $DESTINATION__DUCKDB__DESTINATION_NAME }}"
-        RUNTIME__LOG_LEVEL: 'DEBUG'
+        DESTINATION__DUCKDB__DESTINATION_NAME: "{{ $DESTINATION__DUCKDB__DESTINATION_NAME }}listenbrainz"

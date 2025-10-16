@@ -5,7 +5,7 @@ from src.sources import listenbrainz_source
 from prefect import flow
 
 
-@flow(log_prints=True)
+@flow
 def load_listenbrainz() -> None:
     """Load ListenBrainz listening history."""
     pipeline = dlt.pipeline(
