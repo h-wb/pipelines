@@ -3,6 +3,7 @@
 import dlt
 from dlt.common.pendulum import pendulum
 from dlt.sources import TDataItem
+from prefect import pause_flow_run
 from pyicloud import PyiCloudService
 from pyicloud.services.drive import DriveNode
 
@@ -19,7 +20,7 @@ def arc_timeline_source(
     if api.requires_2fa:
         print("Two-factor authentication required.")
         print("Enter the code you received on one of your approved devices:")
-        code = input("Code: ")
+        code = pause_flow_run(wait_for_input=str)
         result = api.validate_2fa_code(code)
 
         if not result:

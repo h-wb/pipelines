@@ -38,3 +38,21 @@ deployments:
         LISTENBRAINZ__ACCESS_TOKEN: "{{ $LISTENBRAINZ__ACCESS_TOKEN }}"
         LISTENBRAINZ__START_DATE: "{{ $LISTENBRAINZ__START_DATE }}"
         DESTINATION__DUCKDB__DESTINATION_NAME: "{{ $DESTINATION__DUCKDB__DESTINATION_NAME }}listenbrainz"
+
+- name: load_arc_timeline
+  version: null
+  tags: []
+  description: null
+  schedule:
+    cron: '0 0 * * 0'
+  flow_name: load_arc_timeline
+  entrypoint: src/pipelines/arc_timeline.py:load_arc_timeline
+  parameters: {}
+  work_pool:
+    <<: *default_work_pool
+    job_variables:
+      env:
+        <<: *base_env
+        ARC_TIMELINE__APPLE_ID: "{{ $ARC_TIMELINE__APPLE_ID }}"
+        ARC_TIMELINE__PASSWORD: "{{ $ARC_TIMELINE__PASSWORD }}"
+        DESTINATION__DUCKDB__DESTINATION_NAME: "{{ $DESTINATION__DUCKDB__DESTINATION_NAME }}arc_timeline"
