@@ -2,16 +2,4 @@
 uv = "latest"
 
 [env]
-MISE_ENV = "prod"
 _.python.venv = {path = ".venv", create = true}
-
-[tasks.prefect]
-description = "Start Prefect server and worker"
-run = """
-#!/bin/bash
-trap 'kill 0' EXIT
-prefect server start &
-sleep 5
-prefect worker start --pool "local-pool" &
-wait
-"""

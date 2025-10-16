@@ -35,13 +35,7 @@ A collection of data pipelines using [dlt](https://dlthub.com/) for various data
 3. **Configure environment variables**:
    ```bash
    cp .env.example .env
-   ```
-
-4. **OR - Set up dlt configuration**:
-   ```bash
-   # Create config files (if not already done)
-   mkdir -p .dlt
-   # Copy .env.example to .dlt/config.toml and .dlt/secrets.toml
+   # Edit .env with your configuration
    ```
 
 ## Usage
@@ -60,74 +54,72 @@ Extract Arc Timeline data from Arc Editor exports in iCloud Drive (`Arc Editor/E
 uv run python src/pipelines/arc_timeline.py
 ```
 
-### Run with Prefect
+### Deploy with Prefect
 
-`prefect deploy --prefect-file prefect.yaml`
+#### Prerequisites
+1. Set up required environment variables (locally or on remote server):
+   ```bash
+   export LISTENBRAINZ__USERNAME="your_username"
+   export LISTENBRAINZ__ACCESS_TOKEN="your_token"
+   export LISTENBRAINZ__START_DATE="2025-10-05"
+   export DESTINATION__DUCKDB__DESTINATION_NAME="/path/to/db"
+   ```
+
+   Or set them in your mise environment file (e.g., `.mise.prod.toml`):
+   ```toml
+   [env]
+   LISTENBRAINZ__USERNAME = "your_username"
+   LISTENBRAINZ__ACCESS_TOKEN = "your_token"
+   LISTENBRAINZ__START_DATE = "2025-10-05"
+   DESTINATION__DUCKDB__DESTINATION_NAME = "/path/to/db"
+   ```
+
+2. Make sure you have a Prefect work pool created:
+   ```bash
+   prefect work-pool create local-pool --type process
+   ```
+
+#### Deployment Steps
+
+1. **Deploy to Prefect** (from your local machine or remote server):
+   ```bash
+   # Set the environment if using mise environments
+   export MISE_ENV=prod  # or whatever environment you're deploying to
+
+   # Deploy the flows
+   prefect deploy --prefect-file prefect.yaml
+   ```
+
+2. **Start Prefect worker** (on your remote server ONLY):
+   ```bash
+   # On the remote server where you want flows to execute
+   prefect worker start --pool "local-pool"
+   ```
+
+   ⚠️ **Important**: Only run the worker on the machine where you want the flows to execute.
+   Do NOT run workers locally if you want flows to run on a remote server.
+
+3. **Monitor deployments**:
+   - View in Prefect UI or use:
+   ```bash
+   prefect deployment run load_listenbrainz/load_listenbrainz --watch
+   ```
 
 ### Configuration
 
-Each pipeline uses dlt's configuration system. Configuration examples are in `.env.example`.
-
-#### ListenBrainz Configuration
-Set these in your `.dlt/config.toml`:
-```toml
-[sources.listenbrainz]
-username = "your_username"
-```
-
-And in `.dlt/secrets.toml`:
-```toml
-[sources.listenbrainz]
-access_token = "your_api_token"
-```
-
-#### Arc Timeline Configuration
-Set these in your `.dlt/config.toml`:
-```toml
-[sources.arc_timeline]
-apple_id = "your_apple_id@icloud.com"
-```
-
-And in `.dlt/secrets.toml`:
-```toml
-[sources.arc_timeline]
-password = "your_icloud_password"
-```
+Each pipeline uses dlt's configuration system via environment variables. Configuration examples are in `.env.example`.
 
 
 ## Prefect Integration
 
-The pipelines support both local development (using `.dlt/` config files) and Prefect deployments (using Prefect Secret blocks).
+The pipelines use environment variables for configuration in both local and Prefect deployments.
 
 ### Local Development
-Run pipelines directly using dlt config files:
+Run pipelines directly:
 ```bash
 uv run python src/pipelines/listenbrainz.py
 uv run python src/pipelines/arc_timeline.py
 ```
-
-### Prefect Deployments
-1. **Set up Prefect Secret blocks** (one-time setup):
-   ```bash
-   uv run python setup_prefect_blocks.py
-   ```
-
-2. **Use Prefect flows**:
-   ```python
-   from src.pipelines.listenbrainz import load_listenbrainz_from_prefect_blocks
-   from src.pipelines.arc_timeline import load_arc_timeline_from_prefect_blocks
-   
-   # Run flows that use Prefect blocks
-   load_listenbrainz_from_prefect_blocks()
-   load_arc_timeline_from_prefect_blocks()
-   ```
-
-3. **Or pass credentials directly**:
-   ```python
-   from src.pipelines.listenbrainz import load_listenbrainz
-   
-   load_listenbrainz(username="your_user", access_token="your_token")
-   ```
 
 ## Development
 
