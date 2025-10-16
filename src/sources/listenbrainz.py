@@ -40,7 +40,7 @@ def listenbrainz_source(
                     "endpoint": {
                         "path": f"/1/user/{username}/listens",
                         "params": {
-                            "count": 25,
+                            "count": 1000,
                             "min_ts": "{incremental.last_value}",
                         },
                         "paginator": JSONResponseCursorPaginator(
