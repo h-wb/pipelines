@@ -10,11 +10,13 @@ A collection of data pipelines using [dlt](https://dlthub.com/) for various data
 │   ├── sources/
 │   │   ├── __init__.py
 │   │   ├── listenbrainz.py      # ListenBrainz data source
-│   │   └── arc_timeline.py      # Arc Timeline data source
+│   │   ├── arc_timeline.py      # Arc Timeline data source
+│   │   └── bikeshare.py         # Bike Share Toronto data source
 │   └── pipelines/
 │       ├── __init__.py
 │       ├── listenbrainz.py      # ListenBrainz pipeline
-│       └── arc_timeline.py      # Arc Timeline pipeline
+│       ├── arc_timeline.py      # Arc Timeline pipeline
+│       └── bikeshare.py         # Bike Share Toronto pipeline
 ├── pyproject.toml               # Project configuration
 ├── .env.example                 # Environment variables template
 └── README.md
@@ -54,23 +56,52 @@ Extract Arc Timeline data from Arc Editor exports in iCloud Drive (`Arc Editor/E
 uv run python src/pipelines/arc_timeline.py
 ```
 
+#### Bike Share Toronto Pipeline
+Extract trip history from Bike Share Toronto mobile API.
+
+```bash
+uv run python src/pipelines/bikeshare.py
+```
+
 ### Deploy with Prefect
 
 #### Prerequisites
 1. Set up required environment variables (locally or on remote server):
    ```bash
+   # ListenBrainz
    export LISTENBRAINZ__USERNAME="your_username"
    export LISTENBRAINZ__ACCESS_TOKEN="your_token"
    export LISTENBRAINZ__START_DATE="2025-10-05"
+
+   # Arc Timeline
+   export ARC_TIMELINE__APPLE_ID="your_apple_id@icloud.com"
+   export ARC_TIMELINE__PASSWORD="your_password"
+
+   # Bike Share Toronto (Mobile API)
+   export BIKESHARE__MEMBER_ID="your_member_id"
+   export BIKESHARE__AUTHORIZATION_TOKEN="your_auth_token"
+
+   # DuckDB destination
    export DESTINATION__DUCKDB__DESTINATION_NAME="/path/to/db"
    ```
 
    Or set them in your mise environment file (e.g., `.mise.prod.toml`):
    ```toml
    [env]
+   # ListenBrainz
    LISTENBRAINZ__USERNAME = "your_username"
    LISTENBRAINZ__ACCESS_TOKEN = "your_token"
    LISTENBRAINZ__START_DATE = "2025-10-05"
+
+   # Arc Timeline
+   ARC_TIMELINE__APPLE_ID = "your_apple_id@icloud.com"
+   ARC_TIMELINE__PASSWORD = "your_password"
+
+   # Bike Share Toronto (Mobile API)
+   BIKESHARE__MEMBER_ID = "your_member_id"
+   BIKESHARE__AUTHORIZATION_TOKEN = "your_auth_token"
+
+   # DuckDB destination
    DESTINATION__DUCKDB__DESTINATION_NAME = "/path/to/db"
    ```
 
@@ -119,6 +150,7 @@ Run pipelines directly:
 ```bash
 uv run python src/pipelines/listenbrainz.py
 uv run python src/pipelines/arc_timeline.py
+uv run python src/pipelines/bikeshare.py
 ```
 
 ## Development

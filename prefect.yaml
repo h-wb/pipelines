@@ -56,3 +56,21 @@ deployments:
         ARC_TIMELINE__APPLE_ID: "{{ $ARC_TIMELINE__APPLE_ID }}"
         ARC_TIMELINE__PASSWORD: "{{ $ARC_TIMELINE__PASSWORD }}"
         DESTINATION__DUCKDB__DESTINATION_NAME: "{{ $DESTINATION__DUCKDB__DESTINATION_NAME }}arc_timeline"
+
+- name: load_bikeshare
+  version: null
+  tags: []
+  description: null
+  schedule:
+    cron: '0 0 * * *'
+  flow_name: load_bikeshare
+  entrypoint: src/pipelines/bikeshare.py:load_bikeshare
+  parameters: {}
+  work_pool:
+    <<: *default_work_pool
+    job_variables:
+      env:
+        <<: *base_env
+        BIKESHARE__MEMBER_ID: "{{ $BIKESHARE__MEMBER_ID }}"
+        BIKESHARE__AUTHORIZATION_TOKEN: "{{ $BIKESHARE__AUTHORIZATION_TOKEN }}"
+        DESTINATION__DUCKDB__DESTINATION_NAME: "{{ $DESTINATION__DUCKDB__DESTINATION_NAME }}bikeshare"
