@@ -81,8 +81,15 @@ uv run python src/pipelines/bikeshare.py
    export BIKESHARE__MEMBER_ID="your_member_id"
    export BIKESHARE__AUTHORIZATION_TOKEN="your_auth_token"
 
-   # DuckDB destination
-   export DESTINATION__DUCKDB__DESTINATION_NAME="/path/to/db"
+   # PostgreSQL destination
+   export DESTINATION__POSTGRES__CREDENTIALS__HOST="localhost"
+   export DESTINATION__POSTGRES__CREDENTIALS__PORT="5432"
+   export DESTINATION__POSTGRES__CREDENTIALS__DATABASE="your_database"
+   export DESTINATION__POSTGRES__CREDENTIALS__USERNAME="your_username"
+   export DESTINATION__POSTGRES__CREDENTIALS__PASSWORD="your_password"
+
+   # DuckDB destination (alternative)
+   # export DESTINATION__DUCKDB__DESTINATION_NAME="/path/to/db"
    ```
 
    Or set them in your mise environment file (e.g., `.mise.prod.toml`):
@@ -101,8 +108,15 @@ uv run python src/pipelines/bikeshare.py
    BIKESHARE__MEMBER_ID = "your_member_id"
    BIKESHARE__AUTHORIZATION_TOKEN = "your_auth_token"
 
-   # DuckDB destination
-   DESTINATION__DUCKDB__DESTINATION_NAME = "/path/to/db"
+   # PostgreSQL destination
+   DESTINATION__POSTGRES__CREDENTIALS__HOST = "localhost"
+   DESTINATION__POSTGRES__CREDENTIALS__PORT = "5432"
+   DESTINATION__POSTGRES__CREDENTIALS__DATABASE = "your_database"
+   DESTINATION__POSTGRES__CREDENTIALS__USERNAME = "your_username"
+   DESTINATION__POSTGRES__CREDENTIALS__PASSWORD = "your_password"
+
+   # DuckDB destination (alternative)
+   # DESTINATION__DUCKDB__DESTINATION_NAME = "/path/to/db"
    ```
 
 2. Make sure you have a Prefect work pool created:
