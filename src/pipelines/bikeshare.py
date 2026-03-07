@@ -9,7 +9,7 @@ def load_bikeshare() -> None:
     """Load Bike Share Toronto trip history."""
     pipeline = dlt.pipeline(
         pipeline_name="bikeshare",
-        destination="duckdb",
+        destination="postgres",
         dataset_name="bikeshare_data",
     )
 
