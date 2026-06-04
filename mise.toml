@@ -3,3 +3,23 @@ uv = "latest"
 
 [env]
 _.python.venv = {path = ".venv", create = true}
+
+[tasks.deploy]
+description = "Deploy all flows to Prefect"
+run = "prefect deploy --prefect-file prefect.yaml"
+
+[tasks.worker]
+description = "Start Prefect worker"
+run = "prefect worker start --pool local-pool"
+
+[tasks."run:listenbrainz"]
+description = "Run listenbrainz pipeline locally"
+run = "python -m src.pipelines.listenbrainz"
+
+[tasks."run:bikeshare"]
+description = "Run bikeshare pipeline locally"
+run = "python -m src.pipelines.bikeshare"
+
+[tasks."run:apple-health"]
+description = "Run apple health pipeline locally (pass files as args, or uses APPLE_HEALTH__DATA_DIR)"
+run = "python -m src.pipelines.apple_health"

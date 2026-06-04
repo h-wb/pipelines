@@ -9,11 +9,10 @@ description = "Data pipelines using dlt (data load tool)"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "dlt[postgres,duckdb]>=0.4.0",
-    "pendulum>=2.1.0",
-    "prefect>=3.4.22",
-    "pyicloud>=1.0.0",
-    "requests>=2.31.0",
+    "dlt[postgres]>=1.27.2",
+    "pendulum>=3.2.0",
+    "prefect>=3.7.3",
+    "requests>=2.34.2",
 ]
 
 [dependency-groups]
