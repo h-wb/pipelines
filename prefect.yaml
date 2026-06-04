@@ -48,7 +48,7 @@ deployments:
   tags: []
   description: null
   schedule:
-    cron: '0 * * * *'
+    cron: '0 0 * * *'
   flow_name: load_apple_health
   entrypoint: src/pipelines/apple_health.py:load_apple_health
   parameters: {}
