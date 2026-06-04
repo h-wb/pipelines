@@ -16,6 +16,8 @@ def load_apple_health(file_paths: list[str] | None = None) -> None:
         data_dir = os.environ["APPLE_HEALTH__DATA_DIR"]
         file_paths = [str(p) for p in Path(data_dir).glob("*.json")]
 
+    print(f"Loading {len(file_paths)} file(s): {file_paths}")
+
     pipeline = dlt.pipeline(
         pipeline_name="apple_health",
         destination="postgres",
