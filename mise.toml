@@ -6,7 +6,7 @@ _.python.venv = {path = ".venv", create = true}
 
 [tasks.deploy]
 description = "Deploy all flows to Prefect"
-run = "prefect deploy --prefect-file prefect.yaml"
+run = "prefect deploy --all --prefect-file prefect.yaml"
 
 [tasks.worker]
 description = "Start Prefect worker"
