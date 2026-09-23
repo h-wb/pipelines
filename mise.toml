@@ -20,6 +20,10 @@ run = "python -m src.pipelines.listenbrainz"
 description = "Run bikeshare pipeline locally"
 run = "python -m src.pipelines.bikeshare"
 
+[tasks."run:github"]
+description = "Run github pipeline locally"
+run = "python -m src.pipelines.github"
+
 [tasks."run:apple-health"]
 description = "Run apple health pipeline locally (uses APPLE_HEALTH__DATA_DIR and APPLE_HEALTH__CUTOFF)"
 run = "python -m src.pipelines.apple_health"
