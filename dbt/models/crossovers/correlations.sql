@@ -23,9 +23,11 @@ select
     case offset_days when 0 then 'Same day' else 'Next day' end as timing,
     period,
     corr(va, vb) as r,
-    count(*) as days
+    count(*) as days,
+    -- Same-day pairs are symmetric; flag one of each A/B, B/A pair so lists can skip it
+    offset_days = 0 and metric_a > metric_b as is_mirror
 from pairs,
 lateral (values ('All time'), (extract(year from day)::text)) p (period)
-group by 1, 2, 3, 4
+group by metric_a, metric_b, offset_days, timing, period
 -- corr() is null when one side never varies (e.g. no rides before 2022)
 having count(*) >= 30 and corr(va, vb) is not null
