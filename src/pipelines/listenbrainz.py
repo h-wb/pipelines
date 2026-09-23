@@ -22,7 +22,8 @@ def load_listenbrainz(full_refresh: bool = False) -> None:
 
     load_info = pipeline.run(
         listenbrainz_source(),
-        refresh="drop_resources" if full_refresh else None,
+        # truncate, don't drop: dbt views depend on the tables
+        refresh="drop_data" if full_refresh else None,
     )
     print(load_info)
 

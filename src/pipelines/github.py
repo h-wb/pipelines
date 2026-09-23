@@ -22,7 +22,7 @@ def load_github(full_refresh: bool = False, export_dir: Optional[str] = None) ->
 
     Args:
         full_refresh: When True, drop and reload every resource from scratch.
-        export_dir: Seed from this extracted export: drops and reloads the
+        export_dir: Seed from this extracted export: empties and reloads the
             repo-level and export resources (plus stars, reloaded in full).
     """
     pipeline = dlt.pipeline(
@@ -36,7 +36,8 @@ def load_github(full_refresh: bool = False, export_dir: Optional[str] = None) ->
         source = source.with_resources(*REPO_RESOURCES, *EXPORT_RESOURCES, "stars")
     load_info = pipeline.run(
         source,
-        refresh="drop_resources" if full_refresh or export_dir else None,
+        # truncate, don't drop: dbt views depend on the tables
+        refresh="drop_data" if full_refresh or export_dir else None,
     )
     print(load_info)
 
