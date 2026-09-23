@@ -4,6 +4,7 @@ with l as (
     select
         *,
         extract(isodow from day)::int as weekday,
+        trim(to_char(day, 'Day')) as day_name,
         case when cover_release_mbid is not null
             then 'https://coverartarchive.org/release/' || cover_release_mbid || '/front-250' end as cover_url,
         row_number() over (partition by artist order by started_at) = 1 as is_new_artist,

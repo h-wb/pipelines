@@ -6,6 +6,7 @@ select
     ended_at,
     day,
     extract(isodow from day)::int as weekday,
+    trim(to_char(day, 'Day')) as day_name,
     extract(hour from started_at at time zone '{{ var("timezone") }}')::int as hour,
     minutes,
     start_station,
