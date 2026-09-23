@@ -17,3 +17,21 @@ sources:
       - name: trips
       - name: trips__start_location
       - name: trips__end_location
+  # GitHub, raw (load_github). export_* = one-shot seed from the account-data export
+  - name: github
+    schema: github_data
+    tables:
+      - name: repos
+      - name: commits
+      - name: external_commits
+      - name: pull_requests
+      - name: issues
+      - name: external_issues
+      - name: issue_comments
+      - name: releases
+      - name: export_commits
+      - name: export_pull_requests
+      - name: export_issues
+      - name: export_issue_comments
+      - name: export_releases
+      - name: export_bots

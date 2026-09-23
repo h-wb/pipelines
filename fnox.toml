@@ -22,7 +22,7 @@ BIKESHARE__MEMBER_ID           = { provider = "protonpass", value = "pass://dlt/
 BIKESHARE__AUTHORIZATION_TOKEN = { provider = "protonpass", value = "pass://dlt/bikeshare/authorization-token" }
 GITHUB__ACCESS_TOKEN           = { provider = "protonpass", value = "pass://dlt/github/access-token" }
 # JSON list of commit author emails that are "mine" (kept out of this public repo)
-GITHUB_EXPORT__AUTHOR_EMAILS   = { provider = "protonpass", value = "pass://dlt/github/author-emails" }
+GITHUB__AUTHOR_EMAILS          = { provider = "protonpass", value = "pass://dlt/github/author-emails" }
 
 [profiles.prod.secrets]
 DESTINATION__POSTGRES__CREDENTIALS__PASSWORD = { provider = "protonpass", value = "pass://dlt/postgres-metabase/password" }

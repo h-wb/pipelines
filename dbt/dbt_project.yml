@@ -26,7 +26,12 @@ models:
     biking:
       +schema: biking
       +materialized: table
+    github:
+      +schema: github
+      +materialized: table
 
 vars:
   # Local time for the listening and biking data (the health data carries its own offsets)
   timezone: America/Toronto
+  # Rows from the authored-search resources carry no author; they are all mine
+  github_login: h-wb

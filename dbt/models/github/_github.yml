@@ -1,0 +1,33 @@
+version: 2
+
+models:
+  - name: github_commits
+    description: >
+      Every commit in my repos (all branches, any author, line stats) plus mine elsewhere:
+      the export's git log for history, the nightly API after. is_mine is by author email
+      (GITHUB__AUTHOR_EMAILS); forks include upstream history (filter on is_fork_repo).
+    columns:
+      - name: url
+        data_tests: [unique, not_null]
+  - name: github_pull_requests
+    description: >
+      Pull requests in my repos from any author (Renovate included, see is_bot) plus the ones
+      I opened elsewhere (is_external_repo). status = open / merged / closed.
+    columns:
+      - name: url
+        data_tests: [unique, not_null]
+  - name: github_issues
+    description: Issues (not PRs) in my repos from any author, plus mine elsewhere.
+    columns:
+      - name: url
+        data_tests: [unique, not_null]
+  - name: github_issue_comments
+    description: Comments on issues and pull requests in my repos.
+    columns:
+      - name: url
+        data_tests: [unique, not_null]
+  - name: github_releases
+    description: Releases published in my repos.
+    columns:
+      - name: url
+        data_tests: [unique, not_null]

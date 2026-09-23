@@ -74,6 +74,7 @@ deployments:
     job_variables:
       env:
         <<: *base_env
+        GITHUB__AUTHOR_EMAILS: "{{ $GITHUB__AUTHOR_EMAILS }}"
 
 - name: load_bikeshare
   version: null
