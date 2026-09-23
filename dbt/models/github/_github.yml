@@ -31,3 +31,8 @@ models:
     columns:
       - name: url
         data_tests: [unique, not_null]
+  - name: github_contributions
+    description: GitHub's contribution calendar (the profile heatmap), one row per day since joining.
+    columns:
+      - name: day
+        data_tests: [unique, not_null]

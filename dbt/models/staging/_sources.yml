@@ -22,6 +22,7 @@ sources:
     schema: github_data
     tables:
       - name: repos
+      - name: contributions_daily
       - name: commits
       - name: external_commits
       - name: pull_requests
