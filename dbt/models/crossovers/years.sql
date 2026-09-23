@@ -28,7 +28,7 @@ select
     (select sum(duration_min) / 60 from workouts w where w.year = y.year) as workout_hours,
     (select mode() within group (order by workout_type) from workouts w where w.year = y.year) as top_workout_type,
     (select count(*) from rides r where r.year = y.year) as rides,
-    (select sum(km) from rides r where r.year = y.year) as ride_km,
+    (select sum(estimated_km) from rides r where r.year = y.year) as ride_km,
     max(b.best_sleep_month) as best_sleep_month,
     max(d.biggest_step_day) as biggest_step_day,
     max(d.biggest_step_count) as biggest_step_count

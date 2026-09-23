@@ -15,3 +15,5 @@ sources:
     schema: bikeshare_data
     tables:
       - name: trips
+      - name: trips__start_location
+      - name: trips__end_location

@@ -1,7 +1,8 @@
 -- Bike rides with the heart rate and energy measured during them
 select
     t.*,
-    t.km / nullif(t.minutes / 60, 0) as kmh,
+    -- straight-line, so a lower bound on the real speed
+    t.direct_km / nullif(t.minutes / 60, 0) as direct_kmh,
     hr.avg_bpm,
     hr.max_bpm,
     hr.samples as hr_samples,

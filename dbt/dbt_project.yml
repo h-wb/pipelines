@@ -20,6 +20,12 @@ models:
     crossovers:
       +schema: crossovers
       +materialized: table
+    music:
+      +schema: music
+      +materialized: table
+    biking:
+      +schema: biking
+      +materialized: table
 
 vars:
   # Local time for the listening and biking data (the health data carries its own offsets)

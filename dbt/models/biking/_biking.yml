@@ -1,0 +1,18 @@
+version: 2
+
+models:
+  - name: biking_rides
+    description: Every Bike Share ride with route, ride type and straight-line distance/speed (Bike Share only estimates distance).
+    columns:
+      - name: ride_id
+        data_tests: [unique, not_null]
+  - name: stations
+    description: Stations with coordinates and how often they were used.
+    columns:
+      - name: station
+        data_tests: [unique, not_null]
+  - name: routes
+    description: Start → end station pairs with ride counts and times.
+    columns:
+      - name: route
+        data_tests: [unique, not_null]

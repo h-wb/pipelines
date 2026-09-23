@@ -1,0 +1,32 @@
+version: 2
+
+models:
+  - name: music_listens
+    description: Every listen with service, cover art, first-time flags and session id.
+    columns:
+      - name: listen_id
+        data_tests: [unique, not_null]
+  - name: sessions
+    description: Listening sessions (a new one starts after 30 minutes of silence).
+    columns:
+      - name: session_id
+        data_tests: [unique, not_null]
+  - name: artists
+    description: One row per artist with totals, first/last listen and peak month.
+    columns:
+      - name: artist
+        data_tests: [unique]
+  - name: monthly_top
+    description: Top artist and track of every month.
+    columns:
+      - name: month
+        data_tests: [unique, not_null]
+  - name: music_daily
+    description: Every day since the first listen, including silent days, with streak ids.
+    columns:
+      - name: day
+        data_tests: [unique, not_null]
+  - name: streaks
+    description: Runs of consecutive days with at least one listen.
+  - name: on_repeat
+    description: Tracks played 5+ times on the same day.
