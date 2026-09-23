@@ -92,32 +92,17 @@ uv run python src/pipelines/bikeshare.py
    # export DESTINATION__DUCKDB__DESTINATION_NAME="/path/to/db"
    ```
 
-   Or set them in your mise environment file (e.g., `.mise.prod.toml`):
-   ```toml
-   [env]
-   # ListenBrainz
-   LISTENBRAINZ__USERNAME = "your_username"
-   LISTENBRAINZ__ACCESS_TOKEN = "your_token"
-   LISTENBRAINZ__START_DATE = "2025-10-05"
+   In this repo, config and secrets are split:
+   - **Non-secret config** lives in `mise.toml` (local defaults) and `mise.prod.toml`
+     (prod, the default env via `.miserc.toml`). Both are committed.
+   - **Secrets** live in the Proton Pass vault `dlt` and are mapped to env vars in
+     `fnox.toml` (references only, safe to commit). Every mise task runs under
+     `fnox --if-missing error exec`; `FNOX_PROFILE=prod` (set in `mise.prod.toml`)
+     adds the warehouse + Prefect credentials to the shared pipeline tokens.
+   - `mise.local.toml` / `mise.*.local.toml` stay gitignored for personal overrides.
 
-   # Arc Timeline
-   ARC_TIMELINE__APPLE_ID = "your_apple_id@icloud.com"
-   ARC_TIMELINE__PASSWORD = "your_password"
-
-   # Bike Share Toronto (Mobile API)
-   BIKESHARE__MEMBER_ID = "your_member_id"
-   BIKESHARE__AUTHORIZATION_TOKEN = "your_auth_token"
-
-   # PostgreSQL destination
-   DESTINATION__POSTGRES__CREDENTIALS__HOST = "localhost"
-   DESTINATION__POSTGRES__CREDENTIALS__PORT = "5432"
-   DESTINATION__POSTGRES__CREDENTIALS__DATABASE = "your_database"
-   DESTINATION__POSTGRES__CREDENTIALS__USERNAME = "your_username"
-   DESTINATION__POSTGRES__CREDENTIALS__PASSWORD = "your_password"
-
-   # DuckDB destination (alternative)
-   # DESTINATION__DUCKDB__DESTINATION_NAME = "/path/to/db"
-   ```
+   Add a secret with `fnox set NAME` (or a new field in the vault + a line in
+   `fnox.toml`); check everything resolves with `fnox check`.
 
 2. Make sure you have a Prefect work pool created:
    ```bash
@@ -128,11 +113,11 @@ uv run python src/pipelines/bikeshare.py
 
 1. **Deploy to Prefect** (from your local machine or remote server):
    ```bash
-   # Set the environment if using mise environments
-   export MISE_ENV=prod  # or whatever environment you're deploying to
+   # prod env + fnox secrets are applied by the task
+   mise run deploy
 
-   # Deploy the flows
-   prefect deploy --prefect-file prefect.yaml
+   # any other prefect CLI call, with the same secrets
+   mise run prefect -- deployment run load-github/load_github --watch
    ```
 
 2. **Start Prefect worker** (on your remote server ONLY):

@@ -1,0 +1,17 @@
+# Prod config (MISE_ENV=prod, the default via .miserc.toml). No secrets here:
+# they come from fnox.toml (Proton Pass vault "dlt"), profile selected below.
+
+[env]
+FNOX_PROFILE = "prod"
+
+RUNTIME__LOG_LEVEL = "INFO"
+PREFECT_SERVER_ALLOW_EPHEMERAL_MODE = "false"
+PREFECT_LOGGING_EXTRA_LOGGERS = "dlt"
+PREFECT_LOGGING_LOG_PRINTS = "true"
+DESTINATION__POSTGRES__CREDENTIALS__HOST = "postgres-metabase-rw.automation.svc"
+DESTINATION__POSTGRES__CREDENTIALS__PORT = "5432"
+DESTINATION__POSTGRES__CREDENTIALS__DATABASE = "metabase"
+DESTINATION__POSTGRES__CREDENTIALS__USERNAME = "metabase"
+LISTENBRAINZ__START_DATE = "2019-06-11T09:57:59+0000"
+APPLE_HEALTH__DATA_DIR = "/root/.prefect/data/health"
+APPLE_HEALTH__CUTOFF = "2026-06-04"

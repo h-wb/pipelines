@@ -1,0 +1,28 @@
+# fnox secret map for the dlt pipelines. Contains only ProtonPass references
+# (no secret values), so it is safe to commit.
+#
+# Secrets are injected as environment variables by the mise tasks, which run
+# under `fnox --if-missing error exec -- ...` (see mise.toml). Non-secret config
+# (usernames, start dates, hosts, log levels) lives in mise.toml / mise.prod.toml.
+#
+#   default profile -> local runs (`mise run run:listenbrainz`, ...)
+#   prod profile    -> adds the warehouse + Prefect credentials for
+#                      `MISE_ENV=prod mise run deploy` and ad-hoc prefect CLI use
+#
+# Auth is handled by fnox via the Proton Pass CLI (pass-cli); first use
+# triggers `pass-cli login`.
+
+[providers.protonpass]
+type = "proton-pass"
+vault = "dlt"
+
+[secrets]
+LISTENBRAINZ__ACCESS_TOKEN     = { provider = "protonpass", value = "pass://dlt/listenbrainz/access-token" }
+BIKESHARE__MEMBER_ID           = { provider = "protonpass", value = "pass://dlt/bikeshare/member-id" }
+BIKESHARE__AUTHORIZATION_TOKEN = { provider = "protonpass", value = "pass://dlt/bikeshare/authorization-token" }
+GITHUB__ACCESS_TOKEN           = { provider = "protonpass", value = "pass://dlt/github/access-token" }
+
+[profiles.prod.secrets]
+DESTINATION__POSTGRES__CREDENTIALS__PASSWORD = { provider = "protonpass", value = "pass://dlt/postgres-metabase/password" }
+PREFECT_API_URL                              = { provider = "protonpass", value = "pass://dlt/prefect/api-url" }
+PREFECT_API_AUTH_STRING                      = { provider = "protonpass", value = "pass://dlt/prefect/api-auth-string" }

@@ -1,33 +1,48 @@
 [tools]
 uv = "latest"
+"github:protonpass/pass-cli" = "latest"   # Proton Pass CLI (fnox backend)
+"github:jdx/fnox" = "latest"              # injects secrets from fnox.toml as env vars
 
+# Non-secret config. Local defaults here, prod overrides in mise.prod.toml
+# (prod is the default env, see .miserc.toml). Secrets come from fnox.toml:
+# every task below runs under `fnox exec`, and FNOX_PROFILE picks the profile.
+# `--if-missing error` fails fast instead of running with a secret unset.
 [env]
 _.python.venv = {path = ".venv", create = true}
+RUNTIME__LOG_LEVEL = "DEBUG"
+RUNTIME__HTTP_SHOW_ERROR_BODY = "true"
+LISTENBRAINZ__USERNAME = "Chocoboco"
+LISTENBRAINZ__START_DATE = "2025-10-04"
+GITHUB__USERNAME = "h-wb"
 
 [tasks.deploy]
 description = "Deploy all flows to Prefect"
-run = "prefect deploy --all --prefect-file prefect.yaml"
+run = "fnox --if-missing error exec -- prefect deploy --all --prefect-file prefect.yaml"
+
+[tasks.prefect]
+description = "Run the prefect CLI with secrets (e.g. mise run prefect -- deployment ls)"
+run = "fnox --if-missing error exec -- prefect"
 
 [tasks.worker]
 description = "Start Prefect worker"
-run = "prefect worker start --pool local-pool"
+run = "fnox --if-missing error exec -- prefect worker start --pool local-pool"
 
 [tasks."run:listenbrainz"]
 description = "Run listenbrainz pipeline locally"
-run = "python -m src.pipelines.listenbrainz"
+run = "fnox --if-missing error exec -- python -m src.pipelines.listenbrainz"
 
 [tasks."run:bikeshare"]
 description = "Run bikeshare pipeline locally"
-run = "python -m src.pipelines.bikeshare"
+run = "fnox --if-missing error exec -- python -m src.pipelines.bikeshare"
 
 [tasks."run:github"]
 description = "Run github pipeline locally"
-run = "python -m src.pipelines.github"
+run = "fnox --if-missing error exec -- python -m src.pipelines.github"
 
 [tasks."run:apple-health"]
 description = "Run apple health pipeline locally (uses APPLE_HEALTH__DATA_DIR and APPLE_HEALTH__CUTOFF)"
-run = "python -m src.pipelines.apple_health"
+run = "fnox --if-missing error exec -- python -m src.pipelines.apple_health"
 
 [tasks."run:dbt"]
 description = "Build and test the dbt models (needs DESTINATION__POSTGRES__CREDENTIALS__*)"
-run = "dbt build --project-dir dbt --profiles-dir dbt"
+run = "fnox --if-missing error exec -- dbt build --project-dir dbt --profiles-dir dbt"
