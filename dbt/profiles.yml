@@ -1,0 +1,13 @@
+# Reuses the credentials dlt already gets from the environment
+pipelines:
+  target: prod
+  outputs:
+    prod:
+      type: postgres
+      host: "{{ env_var('DESTINATION__POSTGRES__CREDENTIALS__HOST') }}"
+      port: "{{ env_var('DESTINATION__POSTGRES__CREDENTIALS__PORT', '5432') | int }}"
+      user: "{{ env_var('DESTINATION__POSTGRES__CREDENTIALS__USERNAME') }}"
+      password: "{{ env_var('DESTINATION__POSTGRES__CREDENTIALS__PASSWORD') }}"
+      dbname: "{{ env_var('DESTINATION__POSTGRES__CREDENTIALS__DATABASE') }}"
+      schema: staging
+      threads: 4

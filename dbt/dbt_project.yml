@@ -1,0 +1,26 @@
+name: pipelines
+version: "1.0.0"
+profile: pipelines
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  pipelines:
+    staging:
+      +schema: staging
+      +materialized: view
+    intermediate:
+      +schema: intermediate
+      +materialized: table
+    health:
+      +schema: health
+      +materialized: table
+    crossovers:
+      +schema: crossovers
+      +materialized: table
+
+vars:
+  # Local time for the listening and biking data (the health data carries its own offsets)
+  timezone: America/Toronto

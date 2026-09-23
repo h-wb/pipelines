@@ -60,6 +60,21 @@ deployments:
         APPLE_HEALTH__DATA_DIR: "{{ $APPLE_HEALTH__DATA_DIR }}"
         APPLE_HEALTH__CUTOFF: "{{ $APPLE_HEALTH__CUTOFF }}"
 
+- name: run_dbt
+  version: null
+  tags: []
+  description: null
+  schedule:
+    cron: '0 3 * * *'
+  flow_name: run_dbt
+  entrypoint: src/pipelines/transform.py:run_dbt
+  parameters: {}
+  work_pool:
+    <<: *default_work_pool
+    job_variables:
+      env:
+        <<: *base_env
+
 - name: load_bikeshare
   version: null
   tags: []

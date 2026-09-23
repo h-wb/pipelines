@@ -23,3 +23,7 @@ run = "python -m src.pipelines.bikeshare"
 [tasks."run:apple-health"]
 description = "Run apple health pipeline locally (uses APPLE_HEALTH__DATA_DIR and APPLE_HEALTH__CUTOFF)"
 run = "python -m src.pipelines.apple_health"
+
+[tasks."run:dbt"]
+description = "Build and test the dbt models (needs DESTINATION__POSTGRES__CREDENTIALS__*)"
+run = "dbt build --project-dir dbt --profiles-dir dbt"

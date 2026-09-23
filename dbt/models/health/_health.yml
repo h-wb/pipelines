@@ -1,0 +1,13 @@
+version: 2
+
+models:
+  - name: daily_summary
+    description: One row per day of Apple Health data (activity, heart, body, sleep).
+    columns:
+      - name: day
+        data_tests: [unique, not_null]
+  - name: workout_summary
+    description: One row per workout.
+    columns:
+      - name: workout_id
+        data_tests: [unique, not_null]

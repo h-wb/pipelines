@@ -1,0 +1,17 @@
+version: 2
+
+# Raw tables loaded by the dlt pipelines
+sources:
+  - name: apple_health
+    schema: apple_health_data
+    tables:
+      - name: metrics
+      - name: workouts
+  - name: listenbrainz
+    schema: listenbrainz_data
+    tables:
+      - name: listens
+  - name: bikeshare
+    schema: bikeshare_data
+    tables:
+      - name: trips

@@ -1,0 +1,27 @@
+version: 2
+
+models:
+  - name: listens
+    description: Every ListenBrainz listen with the workout, bike ride and heart rate at the time.
+    columns:
+      - name: listen_id
+        data_tests: [unique, not_null]
+  - name: rides
+    description: Bike Share rides with heart rate, energy and what was playing.
+    columns:
+      - name: ride_id
+        data_tests: [unique, not_null]
+  - name: daily
+    description: One row per day combining health, listening, biking and workouts.
+    columns:
+      - name: day
+        data_tests: [unique, not_null]
+  - name: nights
+    description: Listening after midnight vs that night's sleep.
+  - name: correlations
+    description: Correlation (r) between pairs of daily metrics, same day and next day, all time and per year.
+  - name: years
+    description: Year in review across all sources.
+    columns:
+      - name: year
+        data_tests: [unique, not_null]
