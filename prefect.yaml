@@ -58,6 +58,7 @@ deployments:
       env:
         <<: *base_env
         APPLE_HEALTH__DATA_DIR: "{{ $APPLE_HEALTH__DATA_DIR }}"
+        APPLE_HEALTH__CUTOFF: "{{ $APPLE_HEALTH__CUTOFF }}"
 
 - name: load_bikeshare
   version: null
