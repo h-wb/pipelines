@@ -35,8 +35,10 @@ def listenbrainz_source(
             "resources": [
                 {
                     "name": "listens",
-                    "write_disposition": "append",
-                    "primary_key": "listened_at",
+                    # merge (not append) so re-fetched windows update instead of duplicating;
+                    # listened_at alone isn't unique (two listens can share a second)
+                    "write_disposition": "merge",
+                    "primary_key": ["listened_at", "recording_msid"],
                     "endpoint": {
                         "path": f"/1/user/{username}/listens",
                         "params": {
