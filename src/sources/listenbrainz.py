@@ -1,11 +1,16 @@
 """ListenBrainz data source implementation."""
 
+import time
+
 import dlt
 from dlt.common.pendulum import pendulum
 from dlt.sources.rest_api import rest_api_source
 from dlt.sources.helpers.rest_client.paginators import BasePaginator
 
 PAGE_SIZE = 1000
+# ListenBrainz serves an HTML bot check (HTTP 200) to clients paging too fast,
+# which breaks full refreshes; ~124 pages at this pace is ~3 minutes
+PAGE_PAUSE_S = 1.5
 
 
 class ListenBrainzPaginator(BasePaginator):
@@ -32,6 +37,7 @@ class ListenBrainzPaginator(BasePaginator):
         self._min_ts = next_min_ts
 
     def update_request(self, request) -> None:
+        time.sleep(PAGE_PAUSE_S)
         request.params["min_ts"] = self._min_ts
 
 
