@@ -1,11 +1,12 @@
--- Pairwise correlations between daily metrics: same day and next day, all time and per year
+-- Pairwise correlations between daily metrics: same day and next day, all time and per year.
+-- Bedtime is left out: Auto Export's sleep start includes naps, so it isn't a reliable bedtime.
 with long as (
     select day, metric, value
     from {{ ref('daily') }},
     lateral (values
         ('Steps', steps::float), ('Active energy', active_kcal), ('Exercise min', exercise_min),
         ('Daylight min', daylight_min), ('Resting HR', resting_hr), ('HRV', hrv_ms), ('Sleep h', sleep_h),
-        ('Bedtime', bedtime_h), ('Listens', listens::float), ('Late listens', late_listens::float),
+        ('Listens', listens::float), ('Late listens', late_listens::float),
         ('Ride min', ride_min), ('Workout min', workout_min)
     ) v (metric, value)
     where value is not null
@@ -26,4 +27,5 @@ select
 from pairs,
 lateral (values ('All time'), (extract(year from day)::text)) p (period)
 group by 1, 2, 3, 4
-having count(*) >= 30
+-- corr() is null when one side never varies (e.g. no rides before 2022)
+having count(*) >= 30 and corr(va, vb) is not null
