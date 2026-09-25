@@ -13,7 +13,7 @@ dependencies = [
     "dbt-postgres>=1.11.0",
     "dlt[postgres]>=1.27.2",
     "pendulum>=3.2.0",
-    "prefect==3.8.6",
+    "prefect>=3.4,<4",  # a range, not a pin: deployments install into the shared worker env, so keep the image's prefect
     "requests>=2.34.2",
 ]
 
