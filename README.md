@@ -14,7 +14,7 @@ per source ([ListenBrainz](docs/sources/listenbrainz.md), [GitHub](docs/sources/
 ```
 src/sources/     one dlt source per service (extract only, raw records)
 src/pipelines/   one Prefect @flow per source (+ transform.py: run_dbt)
-dbt/             staging views + mart schemas (music, health, biking, github, crossovers)
+dbt/             staging views + mart schemas (music, health, biking, github, browser, crossovers)
 prefect.yaml     deployments: schedules, parameters, env
 fnox.toml        secret references (Proton Pass vault "dlt")
 mise.toml        tools, local config, tasks; mise.prod.toml: prod config
