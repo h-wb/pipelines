@@ -29,7 +29,7 @@ outlives the service's own retention and can be joined across sources.
 | [GitHub](sources/github.md) | commits, PRs, issues, comments, releases, stars, events, contribution calendar | daily 01:00 | `github_data` | `github` | GitHub (30) |
 | [Apple Health](sources/apple-health.md) | metrics, workouts, state of mind, medications | weekly Sun 00:00 | `apple_health_data` | `health`, `crossovers` | Health (24), crossovers |
 | [Bike Share Toronto](sources/bikeshare.md) | every rental | daily 00:00 | `bikeshare_data` | `biking`, `crossovers` | Biking (3), Rides (26) |
-| [Browser history](sources/browser-history.md) | Zen (Firefox) visits, time on page, typing | daily 02:00 | `browser_history_data` | `browser` | – |
+| [Browser history](sources/browser-history.md) | Zen (Firefox) visits, time on page, typing | daily 02:00 | `browser_history_data` | `browser` | Browser (31) |
 | Dawarich | location history | in progress, not deployed | `dawarich_data` | – | – |
 
 Crossover dashboards (collection "Crossovers"): Music & Heart (25), Rides (26),

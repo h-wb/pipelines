@@ -7,7 +7,7 @@ including how long each page was in view and how much I typed on it.
 - **Code**: [`src/sources/browser_history.py`](../../src/sources/browser_history.py), [`src/pipelines/browser_history.py`](../../src/pipelines/browser_history.py)
 - **Raw schema**: `browser_history_data.zen_*`
 - **dbt**: `staging.stg_browser__{visits, page_interactions}` → `browser.{visits, domains_daily}`
-- **Dashboards**: none yet
+- **Dashboard**: Browser (31): Overview (pages, hours in view, top sites, how I got there) / When (weekday × hour heatmap, hour and weekday charts, recent visits); Date, Group by and Site filters
 
 ## Where the data comes from
 
