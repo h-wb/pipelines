@@ -1,0 +1,13 @@
+version: 2
+
+models:
+  - name: browser_visits
+    description: >
+      Every Zen visit (history before 2025-10-23 is Arc's, imported into Zen) with URL,
+      domain, visit type and local day/hour. is_navigation excludes redirect hops,
+      reloads and embeds.
+    columns:
+      - name: visit_id
+        data_tests: [unique, not_null]
+  - name: browser_domains_daily
+    description: Per site per local day, navigations plus time in view and typing (Firefox page interactions).

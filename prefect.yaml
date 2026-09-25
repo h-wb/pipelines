@@ -109,3 +109,19 @@ deployments:
         <<: *base_env
         GITHUB__USERNAME: "{{ $GITHUB__USERNAME }}"
         GITHUB__ACCESS_TOKEN: "{{ $GITHUB__ACCESS_TOKEN }}"
+
+- name: load_browser_history
+  version: null
+  tags: []
+  description: null
+  schedule:
+    cron: '0 2 * * *'
+  flow_name: load_browser_history
+  entrypoint: src/pipelines/browser_history.py:load_browser_history
+  parameters: {}
+  work_pool:
+    <<: *default_work_pool
+    job_variables:
+      env:
+        <<: *base_env
+        BROWSER_HISTORY__DATA_DIR: "{{ $BROWSER_HISTORY__DATA_DIR }}"

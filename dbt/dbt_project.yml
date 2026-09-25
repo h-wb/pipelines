@@ -29,6 +29,9 @@ models:
     github:
       +schema: github
       +materialized: table
+    browser:
+      +schema: browser
+      +materialized: table
 
 vars:
   # Local time for the listening and biking data (the health data carries its own offsets)

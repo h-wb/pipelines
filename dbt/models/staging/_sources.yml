@@ -36,3 +36,11 @@ sources:
       - name: export_issue_comments
       - name: export_releases
       - name: export_bots
+  # Zen (Firefox) history, raw moz_* tables from the places.sqlite snapshot (load_browser_history)
+  - name: browser_history
+    schema: browser_history_data
+    tables:
+      - name: zen_places
+      - name: zen_historyvisits
+      - name: zen_places_metadata
+      - name: zen_origins

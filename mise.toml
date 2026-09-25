@@ -14,6 +14,7 @@ RUNTIME__HTTP_SHOW_ERROR_BODY = "true"
 LISTENBRAINZ__USERNAME = "Chocoboco"
 LISTENBRAINZ__START_DATE = "2025-10-04"
 GITHUB__USERNAME = "h-wb"
+BROWSER_HISTORY__DATA_DIR = "{{env.HOME}}/Nextcloud/Hugo/Documents/data/browser"
 
 [tasks.deploy]
 description = "Deploy all flows to Prefect"
@@ -38,6 +39,10 @@ run = "fnox --if-missing error exec -- python -m src.pipelines.bikeshare"
 [tasks."run:github"]
 description = "Run github pipeline locally"
 run = "fnox --if-missing error exec -- python -m src.pipelines.github"
+
+[tasks."run:browser-history"]
+description = "Run browser history pipeline locally"
+run = "fnox --if-missing error exec -- python -m src.pipelines.browser_history"
 
 [tasks."run:apple-health"]
 description = "Run apple health pipeline locally (uses APPLE_HEALTH__DATA_DIR and APPLE_HEALTH__CUTOFF)"
