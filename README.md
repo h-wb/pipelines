@@ -1,171 +1,43 @@
-# DLT Pipelines
+# Pipelines
 
-A collection of data pipelines using [dlt](https://dlthub.com/) for various data sources.
+Personal data warehouse: [dlt](https://dlthub.com/) pipelines that mirror the
+services I use into Postgres, dbt models on top, Metabase dashboards, all
+scheduled by Prefect in the homelab ([h-wb/home-ops](https://github.com/h-wb/home-ops)).
 
+**Documentation: [`docs/`](docs/README.md)** — architecture, conventions, one page
+per source ([ListenBrainz](docs/sources/listenbrainz.md), [GitHub](docs/sources/github.md),
+[Apple Health](docs/sources/apple-health.md), [Bike Share](docs/sources/bikeshare.md),
+[browser history](docs/sources/browser-history.md)) and an [operations runbook](docs/operations.md).
 
-## Project Structure
+## Layout
 
 ```
-├── src/
-│   ├── sources/
-│   │   ├── __init__.py
-│   │   ├── listenbrainz.py      # ListenBrainz data source
-│   │   ├── arc_timeline.py      # Arc Timeline data source
-│   │   └── bikeshare.py         # Bike Share Toronto data source
-│   └── pipelines/
-│       ├── __init__.py
-│       ├── listenbrainz.py      # ListenBrainz pipeline
-│       ├── arc_timeline.py      # Arc Timeline pipeline
-│       └── bikeshare.py         # Bike Share Toronto pipeline
-├── pyproject.toml               # Project configuration
-├── .env.example                 # Environment variables template
-└── README.md
+src/sources/     one dlt source per service (extract only, raw records)
+src/pipelines/   one Prefect @flow per source (+ transform.py: run_dbt)
+dbt/             staging views + mart schemas (music, health, biking, github, crossovers)
+prefect.yaml     deployments: schedules, parameters, env
+fnox.toml        secret references (Proton Pass vault "dlt")
+mise.toml        tools, local config, tasks; mise.prod.toml: prod config
+docs/            documentation
 ```
 
 ## Setup
 
-1. **Install dev dependencies** (using mise):
-   ```bash
-   mise install
-   ```
-
-2. **Create virtual environment and install dependencies**:
-   ```bash
-   uv sync
-   ```
-
-3. **Configure environment variables**:
-   ```bash
-   cp .env.example .env
-   # Edit .env with your configuration
-   ```
-
-## Usage
-
-### Available Pipelines
-
-#### ListenBrainz Pipeline
-Extract listening history from ListenBrainz.
 ```bash
-uv run python src/pipelines/listenbrainz.py
-```
-
-#### Arc Timeline Pipeline
-Extract Arc Timeline data from Arc Editor exports in iCloud Drive (`Arc Editor/Exports` folder).
-```bash
-uv run python src/pipelines/arc_timeline.py
-```
-
-#### Bike Share Toronto Pipeline
-Extract trip history from Bike Share Toronto mobile API.
-
-```bash
-uv run python src/pipelines/bikeshare.py
-```
-
-### Deploy with Prefect
-
-#### Prerequisites
-1. Set up required environment variables (locally or on remote server):
-   ```bash
-   # ListenBrainz
-   export LISTENBRAINZ__USERNAME="your_username"
-   export LISTENBRAINZ__ACCESS_TOKEN="your_token"
-   export LISTENBRAINZ__START_DATE="2025-10-05"
-
-   # Arc Timeline
-   export ARC_TIMELINE__APPLE_ID="your_apple_id@icloud.com"
-   export ARC_TIMELINE__PASSWORD="your_password"
-
-   # Bike Share Toronto (Mobile API)
-   export BIKESHARE__MEMBER_ID="your_member_id"
-   export BIKESHARE__AUTHORIZATION_TOKEN="your_auth_token"
-
-   # PostgreSQL destination
-   export DESTINATION__POSTGRES__CREDENTIALS__HOST="localhost"
-   export DESTINATION__POSTGRES__CREDENTIALS__PORT="5432"
-   export DESTINATION__POSTGRES__CREDENTIALS__DATABASE="your_database"
-   export DESTINATION__POSTGRES__CREDENTIALS__USERNAME="your_username"
-   export DESTINATION__POSTGRES__CREDENTIALS__PASSWORD="your_password"
-
-   # DuckDB destination (alternative)
-   # export DESTINATION__DUCKDB__DESTINATION_NAME="/path/to/db"
-   ```
-
-   In this repo, config and secrets are split:
-   - **Non-secret config** lives in `mise.toml` (local defaults) and `mise.prod.toml`
-     (prod, the default env via `.miserc.toml`). Both are committed.
-   - **Secrets** live in the Proton Pass vault `dlt` and are mapped to env vars in
-     `fnox.toml` (references only, safe to commit). Every mise task runs under
-     `fnox --if-missing error exec`; `FNOX_PROFILE=prod` (set in `mise.prod.toml`)
-     adds the warehouse + Prefect credentials to the shared pipeline tokens.
-   - `mise.local.toml` / `mise.*.local.toml` stay gitignored for personal overrides.
-
-   Add a secret with `fnox set NAME` (or a new field in the vault + a line in
-   `fnox.toml`); check everything resolves with `fnox check`.
-
-2. Make sure you have a Prefect work pool created:
-   ```bash
-   prefect work-pool create local-pool --type process
-   ```
-
-#### Deployment Steps
-
-1. **Deploy to Prefect** (from your local machine or remote server):
-   ```bash
-   # prod env + fnox secrets are applied by the task
-   mise run deploy
-
-   # any other prefect CLI call, with the same secrets
-   mise run prefect -- deployment run load-github/load_github --watch
-   ```
-
-2. **Start Prefect worker** (on your remote server ONLY):
-   ```bash
-   # On the remote server where you want flows to execute
-   prefect worker start --pool "local-pool"
-   ```
-
-   ⚠️ **Important**: Only run the worker on the machine where you want the flows to execute.
-   Do NOT run workers locally if you want flows to run on a remote server.
-
-3. **Monitor deployments**:
-   - View in Prefect UI or use:
-   ```bash
-   prefect deployment run load_listenbrainz/load_listenbrainz --watch
-   ```
-
-### Configuration
-
-Each pipeline uses dlt's configuration system via environment variables. Configuration examples are in `.env.example`.
-
-
-## Prefect Integration
-
-The pipelines use environment variables for configuration in both local and Prefect deployments.
-
-### Local Development
-Run pipelines directly:
-```bash
-uv run python src/pipelines/listenbrainz.py
-uv run python src/pipelines/arc_timeline.py
-uv run python src/pipelines/bikeshare.py
-```
-
-## Development
-
-Install development dependencies:
-```bash
+mise install      # uv, fnox, pass-cli
 uv sync --dev
+fnox check        # every secret in fnox.toml resolves (first use: pass-cli login)
 ```
 
-Run linting:
+## Common tasks
+
 ```bash
+mise run deploy                                   # register all deployments (prod env + secrets)
+mise run prefect -- deployment run load-github/load_github --watch
+mise run run:listenbrainz                         # run a pipeline locally (see mise.toml for all)
+mise run run:dbt                                  # build + test the dbt models
 uv run ruff check src/
-uv run black src/
 ```
 
-Run type checking:
-```bash
-uv run mypy src/
-```
+Secrets are never in files here: add a field to the Proton Pass `dlt` vault and a
+reference in `fnox.toml`. Details in [docs/README.md](docs/README.md#secrets-and-config).
