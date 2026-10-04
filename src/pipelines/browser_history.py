@@ -4,6 +4,8 @@ import dlt
 from src.sources.browser_history import browser_history_source
 from prefect import flow
 
+from src.pipelines.transform import refresh_models
+
 
 @flow
 def load_browser_history(full_refresh: bool = False) -> None:
@@ -24,6 +26,7 @@ def load_browser_history(full_refresh: bool = False) -> None:
         refresh="drop_data" if full_refresh else None,
     )
     print(load_info)
+    refresh_models("browser_history")
 
 
 if __name__ == "__main__":

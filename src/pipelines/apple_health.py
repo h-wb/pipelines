@@ -3,6 +3,7 @@
 import dlt
 from prefect import flow
 
+from src.pipelines.transform import refresh_models
 from src.sources.apple_health import apple_health
 
 
@@ -16,6 +17,7 @@ def load_apple_health() -> None:
     )
     load_info = pipeline.run(apple_health())
     print(load_info)
+    refresh_models("apple_health")
 
 
 if __name__ == "__main__":

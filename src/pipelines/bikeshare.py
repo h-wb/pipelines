@@ -4,6 +4,8 @@ import dlt
 from src.sources.bikeshare import bikeshare
 from prefect import flow
 
+from src.pipelines.transform import refresh_models
+
 @flow
 def load_bikeshare() -> None:
     """Load Bike Share Toronto trip history."""
@@ -15,6 +17,7 @@ def load_bikeshare() -> None:
 
     load_info = pipeline.run(bikeshare())
     print(load_info)
+    refresh_models("bikeshare")
 
 
 if __name__ == "__main__":

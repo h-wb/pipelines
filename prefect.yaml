@@ -14,6 +14,8 @@ definitions:
     DESTINATION__POSTGRES__CREDENTIALS__DATABASE: "{{ $DESTINATION__POSTGRES__CREDENTIALS__DATABASE }}"
     DESTINATION__POSTGRES__CREDENTIALS__USERNAME: "{{ $DESTINATION__POSTGRES__CREDENTIALS__USERNAME }}"
     DESTINATION__POSTGRES__CREDENTIALS__PASSWORD: "{{ $DESTINATION__POSTGRES__CREDENTIALS__PASSWORD }}"
+    # every flow runs dbt now, and the github models read this
+    GITHUB__AUTHOR_EMAILS: "{{ $GITHUB__AUTHOR_EMAILS }}"
 
 pull:
 - prefect.deployments.steps.git_clone:
@@ -74,7 +76,6 @@ deployments:
     job_variables:
       env:
         <<: *base_env
-        GITHUB__AUTHOR_EMAILS: "{{ $GITHUB__AUTHOR_EMAILS }}"
 
 - name: load_bikeshare
   version: null

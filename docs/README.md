@@ -6,7 +6,7 @@ outlives the service's own retention and can be joined across sources.
 ```
  source service ──(API / export / file drop)──▶ dlt source ──▶ Postgres  <source>_data   (raw)
                                                                    │
-                                                          dbt (nightly 03:00)
+                                                dbt (after each load + nightly 03:00)
                                                                    ▼
                                                      staging views + mart schemas ──▶ Metabase
 ```
@@ -33,8 +33,9 @@ outlives the service's own retention and can be joined across sources.
 | Dawarich | location history | in progress, not deployed | `dawarich_data` | – | – |
 
 Crossover dashboards (collection "Crossovers"): Music & Heart (25), Rides (26),
-Late nights (27), Correlations (28), Year in review (29). dbt `run_dbt` runs
-daily at 03:00, after every load.
+Late nights (27), Correlations (28), Year in review (29). Each load flow
+rebuilds its own downstream models (`dbt build --select source:<name>+`);
+`run_dbt` rebuilds everything daily at 03:00.
 
 ## How a run works
 

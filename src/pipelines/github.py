@@ -15,6 +15,8 @@ import dlt
 from src.sources.github import EXPORT_RESOURCES, REPO_RESOURCES, github_source
 from prefect import flow
 
+from src.pipelines.transform import refresh_models
+
 
 @flow
 def load_github(full_refresh: bool = False, export_dir: Optional[str] = None) -> None:
@@ -40,6 +42,7 @@ def load_github(full_refresh: bool = False, export_dir: Optional[str] = None) ->
         refresh="drop_data" if full_refresh or export_dir else None,
     )
     print(load_info)
+    refresh_models("github")
 
 
 if __name__ == "__main__":

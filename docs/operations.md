@@ -17,6 +17,19 @@ mise run prefect -- flow-run logs <flow-run-id>
 A deployment only accepts parameters that exist in its registered schema, so
 after adding a flow parameter run `mise run deploy` before passing it.
 
+## dbt
+
+Every load flow ends with a dbt build of the models downstream of its source;
+a failure there is logged as a warning and the load still completes. `run_dbt`
+(nightly) builds everything, or a subset with `-p select=source:github+`.
+
+Builds are serialised by the global concurrency limit `dbt`. It lives in the
+Prefect server, not in `prefect.yaml`; recreate it after a server rebuild:
+
+```bash
+mise run prefect -- gcl create dbt --limit 1
+```
+
 ## Full refresh
 
 `full_refresh=true` truncates the source's tables and resets its incremental

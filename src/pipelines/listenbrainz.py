@@ -4,6 +4,8 @@ import dlt
 from src.sources import listenbrainz_source
 from prefect import flow
 
+from src.pipelines.transform import refresh_models
+
 
 @flow
 def load_listenbrainz(full_refresh: bool = False) -> None:
@@ -26,6 +28,7 @@ def load_listenbrainz(full_refresh: bool = False) -> None:
         refresh="drop_data" if full_refresh else None,
     )
     print(load_info)
+    refresh_models("listenbrainz")
 
 
 if __name__ == "__main__":
