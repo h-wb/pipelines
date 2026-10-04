@@ -54,6 +54,10 @@ deployments:
   flow_name: load_apple_health
   entrypoint: src/pipelines/apple_health.py:load_apple_health
   parameters: {}
+  # n8n starts a run per Auto Export file; exports arriving together queue up
+  concurrency_limit:
+    limit: 1
+    collision_strategy: ENQUEUE
   work_pool:
     <<: *default_work_pool
     job_variables:

@@ -30,6 +30,13 @@ Prefect server, not in `prefect.yaml`; recreate it after a server rebuild:
 mise run prefect -- gcl create dbt --limit 1
 ```
 
+## Triggers from n8n
+
+`load_apple_health` is started by the n8n workflow "Apple Health → Files:
+Ingest Exports" right after it writes an export (HTTP Request to
+`/api/deployments/<id>/create_flow_run`, n8n credential "Prefect API"). The
+weekly cron stays as a fallback.
+
 ## Full refresh
 
 `full_refresh=true` truncates the source's tables and resets its incremental
