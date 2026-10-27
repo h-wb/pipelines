@@ -1,5 +1,5 @@
 # Prod config (MISE_ENV=prod, the default via .miserc.toml). No secrets here:
-# they come from fnox.toml (Proton Pass vault "dlt"), profile selected below.
+# they come from fnox.toml (Proton Pass vault "env-dlt"), profile selected below.
 
 [env]
 FNOX_PROFILE = "prod"
