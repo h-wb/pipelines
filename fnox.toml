@@ -14,17 +14,17 @@
 
 [providers.protonpass]
 type = "proton-pass"
-vault = "dlt"
+vault = "env-dlt"
 
 [secrets]
-LISTENBRAINZ__ACCESS_TOKEN     = { provider = "protonpass", value = "pass://dlt/listenbrainz/access-token" }
-BIKESHARE__MEMBER_ID           = { provider = "protonpass", value = "pass://dlt/bikeshare/member-id" }
-BIKESHARE__AUTHORIZATION_TOKEN = { provider = "protonpass", value = "pass://dlt/bikeshare/authorization-token" }
-GITHUB__ACCESS_TOKEN           = { provider = "protonpass", value = "pass://dlt/github/access-token" }
+LISTENBRAINZ__ACCESS_TOKEN     = { provider = "protonpass", value = "pass://env-dlt/listenbrainz/access-token" }
+BIKESHARE__MEMBER_ID           = { provider = "protonpass", value = "pass://env-dlt/bikeshare/member-id" }
+BIKESHARE__AUTHORIZATION_TOKEN = { provider = "protonpass", value = "pass://env-dlt/bikeshare/authorization-token" }
+GITHUB__ACCESS_TOKEN           = { provider = "protonpass", value = "pass://env-dlt/github/access-token" }
 # JSON list of commit author emails that are "mine" (kept out of this public repo)
-GITHUB__AUTHOR_EMAILS          = { provider = "protonpass", value = "pass://dlt/github/author-emails" }
+GITHUB__AUTHOR_EMAILS          = { provider = "protonpass", value = "pass://env-dlt/github/author-emails" }
 
 [profiles.prod.secrets]
-DESTINATION__POSTGRES__CREDENTIALS__PASSWORD = { provider = "protonpass", value = "pass://dlt/postgres-metabase/password" }
-PREFECT_API_URL                              = { provider = "protonpass", value = "pass://dlt/prefect/api-url" }
-PREFECT_API_AUTH_STRING                      = { provider = "protonpass", value = "pass://dlt/prefect/api-auth-string" }
+DESTINATION__POSTGRES__CREDENTIALS__PASSWORD = { provider = "protonpass", value = "pass://env-dlt/postgres-metabase/password" }
+PREFECT_API_URL                              = { provider = "protonpass", value = "pass://env-dlt/prefect/api-url" }
+PREFECT_API_AUTH_STRING                      = { provider = "protonpass", value = "pass://env-dlt/prefect/api-auth-string" }
