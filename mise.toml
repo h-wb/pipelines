@@ -15,6 +15,18 @@ LISTENBRAINZ__USERNAME = "Chocoboco"
 LISTENBRAINZ__START_DATE = "2025-10-04"
 GITHUB__USERNAME = "h-wb"
 BROWSER_HISTORY__DATA_DIR = "{{env.HOME}}/Nextcloud/Hugo/Documents/data/browser"
+# fnox/pass-cli here use an agent session that only sees the env-dlt vault.
+PROTON_PASS_SESSION_DIR = "{{env.HOME}}/.local/state/pass-cli/dlt"
+PROTON_PASS_AGENT_REASON = "dlt fnox"
+
+[tasks."pass:login"]
+description = "Log the repo's scoped Proton Pass session in (agent token from the macOS Keychain)"
+quiet = true
+run = '''
+mkdir -p "$PROTON_PASS_SESSION_DIR" && chmod 700 "$PROTON_PASS_SESSION_DIR"
+pass-cli info >/dev/null 2>&1 && { echo "already logged in"; exit 0; }
+PROTON_PASS_PERSONAL_ACCESS_TOKEN="$(security find-generic-password -s pass-cli-dlt -a "$USER" -w)" pass-cli login
+'''
 
 [tasks.deploy]
 description = "Deploy all flows to Prefect"
