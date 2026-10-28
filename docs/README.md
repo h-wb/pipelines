@@ -56,12 +56,16 @@ rebuilds its own downstream models (`dbt build --select source:<name>+`);
 
 ## Secrets and config
 
-- Secrets live in the Proton Pass vault **`dlt`** (one item per service) and are
-  mapped to env vars in [`fnox.toml`](../fnox.toml) (references only). Every mise
-  task runs under `fnox --if-missing error exec`; the `prod` profile adds the
-  warehouse and Prefect credentials.
-- Non-secret config is in [`mise.toml`](../mise.toml) (local defaults) and
-  [`mise.prod.toml`](../mise.prod.toml) (prod, the default env via `.miserc.toml`).
+- Secrets live in the Proton Pass vault **`env-dlt`** (one item per service) and are
+  mapped to env vars in [`fnox.toml`](../fnox.toml) (references only). Mise injects only the
+  keys listed in each task's `secrets = [...]` grant, including warehouse and
+  Prefect credentials only where needed.
+  Run `mise run pass:login` first (macOS Keychain or Paseo's `PROTON_PASS_TOKEN`).
+  `mise secrets ls` lists names and grants without fetching values; ad-hoc
+  commands use `mise x --secrets KEY -- <command>`.
+- Shared non-secret config is in [`mise.toml`](../mise.toml); machine overrides
+  go in gitignored `mise.local.toml`. No repo mise environment is selected, so
+  the machine keeps its dotfiles layers (including pod/Paseo settings).
 - dlt resolves `<PIPELINE_NAME>__<KEY>` env vars (e.g. `GITHUB__ACCESS_TOKEN`),
   so the env prefix must match the pipeline name.
 - `prefect.yaml` copies the needed env vars into each deployment at deploy time.
@@ -74,8 +78,8 @@ rebuilds its own downstream models (`dbt build --select source:<name>+`);
 1. `src/sources/<name>.py`: extract only, raw records, merge keys, incremental
    cursor with an overlap. `src/pipelines/<name>.py`: the `@flow`, with
    `full_refresh` using `refresh="drop_data"` (truncate; dbt views depend on the tables).
-2. Secrets: a field in the Proton Pass `dlt` vault + a line in `fnox.toml`;
-   config in `mise*.toml`; env vars in the deployment block of `prefect.yaml`.
+2. Secrets: a field in the Proton Pass `env-dlt` vault + a line in `fnox.toml`;
+   task secret grants and config in `mise*.toml`; env vars in the deployment block of `prefect.yaml`.
 3. `mise run deploy`, then a first run with `mise run prefect -- deployment run <flow>/<deployment> --watch`.
 4. dbt: raw tables in `dbt/models/staging/_sources.yml`, `stg_<source>__*` views,
    marts in a `dbt/models/<topic>/` schema.

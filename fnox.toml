@@ -1,20 +1,21 @@
 # fnox secret map for the dlt pipelines. Contains only ProtonPass references
 # (no secret values), so it is safe to commit.
 #
-# Secrets are injected as environment variables by the mise tasks, which run
-# under `fnox --if-missing error exec -- ...` (see mise.toml). Non-secret config
-# (usernames, start dates, hosts, log levels) lives in mise.toml / mise.prod.toml.
+# mise injects only the keys granted by each task's `secrets = [...]` list
+# (see mise.toml). Nothing is loaded into the activated shell. Non-secret config
+# (usernames, start dates, hosts, log levels) lives in mise.toml; machine
+# overrides belong in gitignored mise.local.toml. No mise environment switch
+# is needed: the machine keeps its pod/paseo or workstation layers.
 #
-#   default profile -> local runs (`mise run run:listenbrainz`, ...)
-#   prod profile    -> adds the warehouse + Prefect credentials for
-#                      `MISE_ENV=prod mise run deploy` and ad-hoc prefect CLI use
-#
-# Auth is handled by fnox via the Proton Pass CLI (pass-cli); first use
-# triggers `pass-cli login`.
+# Auth uses the repo-scoped pass-cli session: `mise run pass:login`.
+# Workstations read pass-cli-dlt from the macOS Keychain; Paseo uses
+# PROTON_PASS_TOKEN from the pod environment. See mise.toml for the session dir.
+# One-off commands: `mise x --secrets KEY -- <command>`.
 
 [providers.protonpass]
 type = "proton-pass"
 vault = "env-dlt"
+agent_reason = "dlt fnox"
 
 [secrets]
 LISTENBRAINZ__ACCESS_TOKEN     = { provider = "protonpass", value = "pass://env-dlt/listenbrainz/access-token" }
@@ -24,7 +25,7 @@ GITHUB__ACCESS_TOKEN           = { provider = "protonpass", value = "pass://env-
 # JSON list of commit author emails that are "mine" (kept out of this public repo)
 GITHUB__AUTHOR_EMAILS          = { provider = "protonpass", value = "pass://env-dlt/github/author-emails" }
 
-[profiles.prod.secrets]
+# Warehouse and Prefect credentials, granted only to tasks that need them.
 DESTINATION__POSTGRES__CREDENTIALS__PASSWORD = { provider = "protonpass", value = "pass://env-dlt/postgres-metabase/password" }
 PREFECT_API_URL                              = { provider = "protonpass", value = "pass://env-dlt/prefect/api-url" }
 PREFECT_API_AUTH_STRING                      = { provider = "protonpass", value = "pass://env-dlt/prefect/api-auth-string" }

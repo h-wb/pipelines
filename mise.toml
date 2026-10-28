@@ -1,65 +1,137 @@
+min_version = "2026.10.4"   # task secret grants require mise secrets
+
 [tools]
 uv = "latest"
 "github:protonpass/pass-cli" = "latest"   # Proton Pass CLI (fnox backend)
-"github:jdx/fnox" = "latest"              # injects secrets from fnox.toml as env vars
+"github:jdx/fnox" = "latest"              # fetches secrets for explicitly granted tasks
 
-# Non-secret config. Local defaults here, prod overrides in mise.prod.toml
-# (prod is the default env, see .miserc.toml). Secrets come from fnox.toml:
-# every task below runs under `fnox exec`, and FNOX_PROFILE picks the profile.
-# `--if-missing error` fails fast instead of running with a secret unset.
+[settings]
+experimental = true
+
+[secrets.fnox]
+
+# Shared non-secret defaults. Override machine-specific settings in the
+# gitignored mise.local.toml, without changing the machine's mise environments.
+# mise grants each task only its listed fnox secrets; nothing enters the shell.
 [env]
 _.python.venv = {path = ".venv", create = true}
-RUNTIME__LOG_LEVEL = "DEBUG"
+RUNTIME__LOG_LEVEL = "INFO"
 RUNTIME__HTTP_SHOW_ERROR_BODY = "true"
 LISTENBRAINZ__USERNAME = "Chocoboco"
-LISTENBRAINZ__START_DATE = "2025-10-04"
+LISTENBRAINZ__START_DATE = "2019-06-11T09:57:59+0000"
 GITHUB__USERNAME = "h-wb"
-BROWSER_HISTORY__DATA_DIR = "{{env.HOME}}/Nextcloud/Hugo/Documents/data/browser"
-# fnox/pass-cli here use an agent session that only sees the env-dlt vault.
+PREFECT_SERVER_ALLOW_EPHEMERAL_MODE = "false"
+PREFECT_LOGGING_EXTRA_LOGGERS = "dlt"
+PREFECT_LOGGING_LOG_PRINTS = "true"
+DESTINATION__POSTGRES__CREDENTIALS__HOST = "postgres-metabase-rw.automation.svc"
+DESTINATION__POSTGRES__CREDENTIALS__PORT = "5432"
+DESTINATION__POSTGRES__CREDENTIALS__DATABASE = "metabase"
+DESTINATION__POSTGRES__CREDENTIALS__USERNAME = "metabase"
+# Data mounts on the Prefect worker; override for local imports.
+BROWSER_HISTORY__DATA_DIR = "/root/.prefect/data/browser"
+APPLE_HEALTH__DATA_DIR = "/root/.prefect/data/health"
+APPLE_HEALTH__CUTOFF = "2026-06-04"
+# The workstation agent only sees env-dlt; the pod token also reads this vault.
+# Both use this repo session (shared by its Paseo worktrees).
 PROTON_PASS_SESSION_DIR = "{{env.HOME}}/.local/state/pass-cli/dlt"
 PROTON_PASS_AGENT_REASON = "dlt fnox"
 
 [tasks."pass:login"]
-description = "Log the repo's scoped Proton Pass session in (agent token from the macOS Keychain)"
+description = "Log the repo's Proton Pass session in (macOS Keychain or PROTON_PASS_TOKEN on Paseo)"
 quiet = true
 run = '''
 mkdir -p "$PROTON_PASS_SESSION_DIR" && chmod 700 "$PROTON_PASS_SESSION_DIR"
 pass-cli info >/dev/null 2>&1 && { echo "already logged in"; exit 0; }
-PROTON_PASS_PERSONAL_ACCESS_TOKEN="$(security find-generic-password -s pass-cli-dlt -a "$USER" -w)" pass-cli login
+if command -v security >/dev/null 2>&1; then
+    token="$(security find-generic-password -s pass-cli-dlt -a "$USER" -w)"
+elif [ -n "${PROTON_PASS_TOKEN:-}" ]; then
+    token="$PROTON_PASS_TOKEN"
+else
+    echo "pass:login: need the macOS Keychain (security) or PROTON_PASS_TOKEN in env" >&2
+    exit 1
+fi
+PROTON_PASS_PERSONAL_ACCESS_TOKEN="$token" pass-cli login
 '''
 
 [tasks.deploy]
 description = "Deploy all flows to Prefect"
-run = "fnox --if-missing error exec -- prefect deploy --all --prefect-file prefect.yaml"
+secrets = [
+  "DESTINATION__POSTGRES__CREDENTIALS__PASSWORD",
+  "PREFECT_API_URL",
+  "PREFECT_API_AUTH_STRING",
+  "GITHUB__AUTHOR_EMAILS",
+  "LISTENBRAINZ__ACCESS_TOKEN",
+  "BIKESHARE__MEMBER_ID",
+  "BIKESHARE__AUTHORIZATION_TOKEN",
+  "GITHUB__ACCESS_TOKEN",
+]
+run = "prefect deploy --all --prefect-file prefect.yaml"
 
 [tasks.prefect]
 description = "Run the prefect CLI with secrets (e.g. mise run prefect -- deployment ls)"
-run = "fnox --if-missing error exec -- prefect"
+secrets = ["PREFECT_API_URL", "PREFECT_API_AUTH_STRING"]
+run = "prefect"
 
 [tasks.worker]
 description = "Start Prefect worker"
-run = "fnox --if-missing error exec -- prefect worker start --pool local-pool"
+secrets = ["PREFECT_API_URL", "PREFECT_API_AUTH_STRING"]
+run = "prefect worker start --pool local-pool"
 
 [tasks."run:listenbrainz"]
 description = "Run listenbrainz pipeline locally"
-run = "fnox --if-missing error exec -- python -m src.pipelines.listenbrainz"
+secrets = [
+  "DESTINATION__POSTGRES__CREDENTIALS__PASSWORD",
+  "PREFECT_API_URL",
+  "PREFECT_API_AUTH_STRING",
+  "GITHUB__AUTHOR_EMAILS",
+  "LISTENBRAINZ__ACCESS_TOKEN",
+]
+run = "python -m src.pipelines.listenbrainz"
 
 [tasks."run:bikeshare"]
 description = "Run bikeshare pipeline locally"
-run = "fnox --if-missing error exec -- python -m src.pipelines.bikeshare"
+secrets = [
+  "DESTINATION__POSTGRES__CREDENTIALS__PASSWORD",
+  "PREFECT_API_URL",
+  "PREFECT_API_AUTH_STRING",
+  "GITHUB__AUTHOR_EMAILS",
+  "BIKESHARE__MEMBER_ID",
+  "BIKESHARE__AUTHORIZATION_TOKEN",
+]
+run = "python -m src.pipelines.bikeshare"
 
 [tasks."run:github"]
 description = "Run github pipeline locally"
-run = "fnox --if-missing error exec -- python -m src.pipelines.github"
+secrets = [
+  "DESTINATION__POSTGRES__CREDENTIALS__PASSWORD",
+  "PREFECT_API_URL",
+  "PREFECT_API_AUTH_STRING",
+  "GITHUB__AUTHOR_EMAILS",
+  "GITHUB__ACCESS_TOKEN",
+]
+run = "python -m src.pipelines.github"
 
 [tasks."run:browser-history"]
 description = "Run browser history pipeline locally"
-run = "fnox --if-missing error exec -- python -m src.pipelines.browser_history"
+secrets = [
+  "DESTINATION__POSTGRES__CREDENTIALS__PASSWORD",
+  "PREFECT_API_URL",
+  "PREFECT_API_AUTH_STRING",
+  "GITHUB__AUTHOR_EMAILS",
+]
+run = "python -m src.pipelines.browser_history"
 
 [tasks."run:apple-health"]
 description = "Run apple health pipeline locally (uses APPLE_HEALTH__DATA_DIR and APPLE_HEALTH__CUTOFF)"
-run = "fnox --if-missing error exec -- python -m src.pipelines.apple_health"
+secrets = [
+  "DESTINATION__POSTGRES__CREDENTIALS__PASSWORD",
+  "PREFECT_API_URL",
+  "PREFECT_API_AUTH_STRING",
+  "GITHUB__AUTHOR_EMAILS",
+]
+run = "python -m src.pipelines.apple_health"
 
 [tasks."run:dbt"]
 description = "Build and test the dbt models (needs DESTINATION__POSTGRES__CREDENTIALS__*)"
-run = "fnox --if-missing error exec -- dbt build --project-dir dbt --profiles-dir dbt"
+secrets = ["DESTINATION__POSTGRES__CREDENTIALS__PASSWORD", "GITHUB__AUTHOR_EMAILS"]
+run = "dbt build --project-dir dbt --profiles-dir dbt"

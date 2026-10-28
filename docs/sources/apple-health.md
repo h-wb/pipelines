@@ -38,7 +38,7 @@ automatic exports from overlapping.
 
 ## Secrets and config
 
-No secrets. `APPLE_HEALTH__DATA_DIR`, `APPLE_HEALTH__CUTOFF` in `mise.prod.toml`.
+No secrets. `APPLE_HEALTH__DATA_DIR`, `APPLE_HEALTH__CUTOFF` in `mise.toml` (override locally in `mise.local.toml`).
 
 ## Quirks
 
