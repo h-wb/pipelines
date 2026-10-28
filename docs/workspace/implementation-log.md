@@ -325,3 +325,45 @@ Next: the decision-012 runtime on the cluster — CI image build from `uv.lock`,
 the Kubernetes work pool and worker controller in home-ops, the ExternalSecret
 for the installation secrets, and the NFS artifacts mount; then cutover.
 
+
+## 2026-10-28 — Workspace runtime: image, Kubernetes worker, secrets (decision 012)
+
+Implemented:
+
+- `Dockerfile`: one image for the runtime side (flow runs, the Kubernetes
+  worker, later the workspace server) — Python 3.12, `uv sync --locked --no-dev`
+  in a build stage, tzdata for schedule timezones, `PIPELINES_CODE_REVISION` set
+  at build time, config path defaulting to the in-Job NFS location.
+  `.github/workflows/image.yml` builds `ghcr.io/h-wb/pipelines` on push to main
+  (branch, semver, and `sha-<long>` tags), following the sento image workflow.
+- home-ops (`automation/prefect`, branch `feat/prefect-workspace-worker`): a
+  `workspace-worker` controller on the pipelines image running
+  `prefect worker start --pool workspace-k8s --type kubernetes`, with an init
+  container that creates the pool (or updates its base job template) on every
+  start; a namespaced Role for Jobs, pods, and logs; and the `pipelines`
+  ExternalSecret (Bitwarden Secrets Manager → `pipelines-secret`).
+- The pool's base job template (`workspace-job-template.yaml`): the default
+  prefect-kubernetes template extended with the NFS export mounted at
+  `/workspace/data` (fixed path so artifact storage paths resolve everywhere)
+  and the flow-run environment — warehouse coordinates in the clear, the four
+  installation secrets via `secretKeyRef` (the Kubernetes worker preserves
+  `valueFrom` entries and merges them with per-deployment env).
+- mise tasks `workspace:deploy` (deployments apply) and `workspace:refresh`,
+  with the reconciliation environment (pool, cluster config path, image, job
+  variables) and fnox grants for `WORKSPACE_METADATA_URL`.
+
+Validation:
+
+- `uv sync --locked --no-dev --python 3.12` installs and imports cleanly
+  (prefect 3.9.0 matching the server, prefect-kubernetes, dbt, dlt, croniter).
+- The custom base job template is accepted by a real Prefect API on pool
+  creation, and renders Jobs with the NFS volume/mount, the secret env entries,
+  and the deployment's job variables (namespace, image).
+- home-ops: `kustomize build` clean, `helm template` against app-template 5.3.0
+  clean, repo lint clean on the touched files (a pre-existing `hk.pkl` failure
+  is unchanged).
+
+Not yet verified end to end: the image build runs in CI on push to main
+(merge home-ops only after that image exists), the Bitwarden `pipelines` item
+and the ProtonPass `env-dlt/workspace/*` secrets must be created, and the first
+`workspace:deploy` against the real server is the remaining cutover step.
