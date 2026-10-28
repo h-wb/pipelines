@@ -54,6 +54,18 @@ class ResourceDefinition:
 
 
 @dataclass(frozen=True)
+class ModelBinding:
+    """The dbt source that reads this integration, and the one schema it reads.
+
+    dbt source schemas are fixed in `dbt/models/staging/_sources.yml`, so models
+    only see a connection bound to exactly that dataset.
+    """
+
+    dbt_source: str
+    dataset_name: str
+
+
+@dataclass(frozen=True)
 class IntegrationDefinition:
     name: str
     settings_model: type[StrictModel]
@@ -62,6 +74,7 @@ class IntegrationDefinition:
     capabilities: tuple[str, ...]
     resources: tuple[ResourceDefinition, ...]
     input_format: str | None = None
+    models: ModelBinding | None = None
 
 
 INTEGRATIONS = MappingProxyType(
@@ -77,6 +90,7 @@ INTEGRATIONS = MappingProxyType(
                     "listens", ("listened_at", "recording_msid"), "listened_at"
                 ),
             ),
+            models=ModelBinding("listenbrainz", "listenbrainz_data"),
         ),
         "apple_health": IntegrationDefinition(
             name="apple_health",
@@ -91,6 +105,7 @@ INTEGRATIONS = MappingProxyType(
                 ResourceDefinition("state_of_mind", ("id",), None),
                 ResourceDefinition("medications", ("displayText", "start"), None),
             ),
+            models=ModelBinding("apple_health", "apple_health_data"),
         ),
     }
 )

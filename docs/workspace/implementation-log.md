@@ -60,3 +60,58 @@ Next slice:
 3. Add a supported API sync in an isolated destination with truthful load/build status.
 4. Then implement explicit artifact registration/parsing, replacing path/mtime assumptions
    for new manual imports while keeping the legacy scanner available during migration.
+
+## 2026-10-28 — Operation records, shared runner, and status
+
+Codex's session ended at its usage limit before the slice-1 checks finished; Claude
+completed them, opened draft PR #2, then implemented this slice.
+
+Implemented (decisions 005–007):
+
+- `src/core/operations.py`: SQLite/PostgreSQL metadata store with versioned schema,
+  operations, attempts, per-connection locks, and a status projection.
+- `src/core/runner.py`: one execution path that registers/adopts the operation,
+  locks the connection, loads with dlt, and records ingestion and dbt separately.
+- `src/core/secrets.py`: per-connection `env`/`fnox` resolution, value-free errors.
+- `ModelBinding` in the registry ties each integration to the dbt source and the
+  single dataset its models read.
+- `pipelines-workspace status` and `run <connection> --duckdb PATH` (local only).
+- `src/pipelines/workspace.py:sync_connection` Prefect flow, not deployed.
+- Explicit `sqlalchemy>=2.0,<3` dependency.
+
+Validation:
+
+- `ruff check`, `ruff format --check`, and `mypy` clean on the new packages, the
+  flow module, and tests.
+- 24 tests pass in the repo `.venv` (Python 3.14.7) and in an isolated
+  `uv sync --locked --python 3.12 --no-dev --group test` environment (3.12.15).
+  The new tests cover: generated datasets skip models and read as stale; dbt
+  failure keeps the load and marks analysis stale; ingestion failure redacts the
+  token; Prefect retries add attempts to one operation; requested operations are
+  adopted and cannot be rebound or adopted cross-connection; the same connection is
+  locked while another runs; a metadata outage after loading returns
+  `recorded=False`; no load happens without registration; records survive reopening
+  and unknown schema versions are refused; CLI `run` then `status` on a file import.
+- The flow module imports under Python 3.12 / Prefect 3.9.0 with parameters
+  `connection_id`, `operation_id`, `config_path`.
+- Not run: anything against Postgres (advisory locks, `workspace_meta` schema), a
+  real Prefect run, or a live ListenBrainz/fnox run.
+
+Milestone status:
+
+| Milestone | Status |
+| --- | --- |
+| 0: baseline/runtime boundary | Unchanged: work-pool isolation, worker secrets, storage, and Postgres proof pending |
+| 1: contracts/registry | Done for the two reference integrations |
+| 2: execution/status | Operation/attempt model, worker entry point, locking, separate dbt outcome, and status done locally; Prefect submission, reconciliation of running attempts, schedule plan/apply, self-contained model selection, and Postgres/worker proof pending |
+| 3: import inbox | Not implemented |
+| 4+: interface/migration/analyses | Not started |
+
+Next slice:
+
+1. Runtime decisions (decision 007), then an isolated Postgres schema run of the
+   store and runner, and one `sync_connection` deployment against a test dataset.
+2. `request` command that creates an operation and submits it to that deployment;
+   `status --refresh` reconciling unverified attempts with Prefect flow run state.
+3. Explicit artifact import for Apple Health (milestone 3), which can proceed
+   locally in parallel.

@@ -80,3 +80,69 @@ extra, which the resolved dlt 1.31.0 does not provide; retain marimo separately.
 A local venv is evidence of dependency/source compatibility, not an actual Prefect
 worker isolation solution. Validate the process/container execution mechanism,
 mounts, secret injection, and restart behavior separately before production changes.
+
+## 005 — Operation and attempt records in a small SQLAlchemy metadata store
+
+Status: accepted for the execution slice, 2026-10-28.
+
+An **operation** is one requested or observed sync of one connection; an **attempt**
+is one execution of it. A Prefect flow run maps to exactly one operation (unique
+`backend_run_id`), so Prefect retries become attempts 2, 3, … rather than new
+operations. A CLI-requested operation is created first and adopted by the flow run
+that receives its `operation_id`; adopting it from another connection or binding it
+to a second backend run is rejected. Schedules and n8n triggers pass no operation
+ID and register their own on entry, so every execution path is visible.
+
+Each attempt records ingestion (`running|succeeded|failed|blocked`) and
+transformation (`pending|succeeded|failed|skipped|not_run`) separately, plus dlt
+load IDs and a redacted error (credential values replaced with `***`, length
+capped). Status is a projection of these records; Prefect keeps execution logs and
+dlt keeps cursors. Nothing here copies dlt state.
+
+Store: SQLAlchemy Core, one code path for SQLite (local/tests) and PostgreSQL
+(schema `workspace_meta` in the existing instance). `schema_info` holds a version;
+`migrate()` creates version 1 and refuses unknown versions. Real migrations
+(Alembic or hand-written) come with the first schema change. SQLAlchemy is now an
+explicit dependency; it was previously only transitive through Prefect.
+
+Not yet: reconciling `running` attempts with Prefect (crash/cancel leaves them
+`running`, reported as unverified), submitting requested operations to Prefect,
+and per-resource partial-load tracking beyond dlt's own package resume.
+
+## 006 — Runner ordering: register, lock, load, record, model
+
+Status: accepted for the execution slice, 2026-10-28.
+
+`src/core/runner.py:run_connection` is the only execution path:
+
+1. Register or adopt the operation. If the metadata store is unavailable, nothing
+   loads: new executions require registration.
+2. Take the connection lock (keyed by dlt pipeline name). If held, record a
+   `blocked` attempt and raise `ConnectionBusy`; do not queue or wait. PostgreSQL
+   uses a session advisory lock; SQLite uses `flock` on a file beside the database.
+   Both release when the holding process dies. Legacy flows do not take this lock,
+   so a workspace connection bound to a legacy pipeline name must not run alongside
+   its legacy deployment. Cutover disables the legacy deployment first.
+3. Resolve credentials for this connection only, then run dlt.
+4. Record load success. If that write fails, log it and return `recorded=False`;
+   never report a committed load as failed.
+5. Run dbt only when the connection writes the dataset the dbt source reads
+   (`ModelBinding` in the registry); otherwise `skipped` with the reason. A dbt
+   failure is recorded and leaves ingestion `succeeded` and analysis `stale`. This
+   replaces the legacy `refresh_models` behavior of logging and moving on.
+
+The dbt selector stays `source:<name>+`, matching the legacy flows, so it still
+includes crossover models that need other sources. Narrowing to self-contained
+models is milestone 2 work tied to the dbt project, not to the runner.
+
+## 007 — Prefect entry point exists but is not deployed
+
+Status: accepted, 2026-10-28; deployment blocked on runtime decisions.
+
+`src/pipelines/workspace.py:sync_connection` wraps the runner with Postgres, dbt,
+and the flow run ID. It is deliberately absent from `prefect.yaml`. Deploying it
+requires, in order: a decision on worker isolation (home-ops change or existing
+work-pool facility), worker-side credential resolution (fnox on the worker or
+explicit injection; `resolve_credentials` supports both `env` and `fnox`), a
+workspace configuration and `WORKSPACE_METADATA_URL` on the worker, and an isolated
+Postgres schema check. `run` in the CLI targets local DuckDB only until then.
