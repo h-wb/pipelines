@@ -115,3 +115,49 @@ Next slice:
    `status --refresh` reconciling unverified attempts with Prefect flow run state.
 3. Explicit artifact import for Apple Health (milestone 3), which can proceed
    locally in parallel.
+
+## 2026-10-28 — Artifact submission and explicit import (milestone 3, local)
+
+Implemented (decision 008):
+
+- `src/integrations/formats.py`: stdlib format validation for Health Auto Export
+  JSON, plus parser versions.
+- `src/core/artifacts.py`: atomic, content-addressed file receipt and submission.
+- Metadata schema version 2 (`artifacts` table, import fields on operations) with an
+  in-place upgrade from version 1.
+- `import_artifact` in the runner. Syncs and imports now share one locked
+  execution path that takes a source factory.
+- `apple_health_artifact` source and the shared `select_rows` rule. Legacy scanner
+  behavior is unchanged (its test still passes).
+- CLI: `submit`, `import [--replay]`, `artifacts`.
+
+Validation:
+
+- Lint, format, and mypy clean. 36 tests pass on Python 3.14.7 (with
+  `-W error::ResourceWarning`) and in an isolated Python 3.12.15 environment.
+- New tests: cutoff/role selection; invalid files rejected before storage;
+  per-connection identity and role conflicts; repeat skipped, replay merge-safe,
+  overlapping exports merged; changed contents with an unchanged mtime skipped by the
+  legacy scanner but imported explicitly; failed imports retried and never marked
+  imported; parser version bump reimports; crash window after commit reimports
+  without duplicates; tampered stored copy refused; interrupted copy leaves no
+  file; version 1 metadata upgraded in place with data kept; CLI submit/import/list.
+- Not run: Postgres, Prefect, real exports.
+
+Milestone status:
+
+| Milestone | Status |
+| --- | --- |
+| 0: baseline/runtime boundary | Unchanged; runtime decisions pending |
+| 1: contracts/registry | Done for the two reference integrations |
+| 2: execution/status | Local parts done; Prefect submission/reconciliation and worker proof pending |
+| 3: import inbox | Submission, storage, validation, import, replay, and inspection done locally for Apple Health; worker entry point, n8n migration, retention operations, and reconciliation-based replay pending |
+| 4+: interface/migration/analyses | Not started |
+
+Next slice:
+
+1. Runtime decisions (decision 007), then Postgres and one test deployment.
+2. A Prefect entry point for imports and a path for n8n to `submit` instead of
+   dropping files into the scanned directory.
+3. Milestone 4 can start against the local store: the CLI operations are the
+   application services a small interface would call.

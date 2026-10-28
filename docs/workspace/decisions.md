@@ -60,7 +60,7 @@ and credential resolution belong to the next layer.
 
 Apple Health's current directory scanner remains a compatibility path. Explicit
 artifact import will use a dedicated parser with origin/cutoff metadata and will
-bypass modification-time scanning. Native XML and generic CSV are separate format
+bypass modification-time scanning. (Implemented by decision 008.) Native XML and generic CSV are separate format
 implementations, not implied by the integration's presence in the catalog.
 
 ## 004 — Lock application dependencies; validate outside the worker
@@ -146,3 +146,44 @@ work-pool facility), worker-side credential resolution (fnox on the worker or
 explicit injection; `resolve_credentials` supports both `env` and `fnox`), a
 workspace configuration and `WORKSPACE_METADATA_URL` on the worker, and an isolated
 Postgres schema check. `run` in the CLI targets local DuckDB only until then.
+
+## 008 — Content-addressed artifacts and explicit, versioned imports
+
+Status: accepted for the import slice, 2026-10-28.
+
+**Receipt and import are separate records.** An artifact records bytes received
+for one connection: SHA-256, size, input format, role, original name, storage path,
+retention (`keep`), and received time. Identity is (workspace, connection, SHA-256):
+identical bytes from two accounts are two artifacts. Imports are operations
+(`kind` `import` or `replay`) carrying `artifact_id`, `parser_version`, and
+`options`, executed by the shared runner under the connection lock.
+
+**Storage.** Files are copied to a temporary name in the destination directory,
+fsynced, and renamed to `<root>/<workspace>/<connection>/<sha256>` with mode 0440.
+An interrupted copy is deleted and never registered. Validation runs before the
+copy, so invalid files are neither stored nor recorded. Import re-hashes the
+stored copy and refuses a missing or changed file. Local disk only for now.
+
+**Role is metadata, not a path.** For Apple Health, `historical`/`ongoing` replace
+the `/manual/` path test, with the cutoff still taken from connection settings.
+Both paths share `select_rows` in `src/sources/apple_health.py`, so the rule is
+defined once. The artifact source has no incremental cursor and does not touch the
+legacy scanner's `filesystem` state, so explicit imports and the compatibility
+scanner can coexist on one connection.
+
+**When an artifact counts as imported.** It counts as imported when an attempt
+succeeded with the same parser version and the same options (role and cutoff).
+Bumping `PARSER_VERSIONS` or changing the cutoff makes the next plain `import` load
+it again. `--replay` always loads. Replays are merge-only: they cannot remove rows
+an older parser produced wrongly. That needs the scoped reconciliation the plan
+describes, not yet built. If the load committed but its completion was not recorded
+(crash window), the artifact is not marked imported and the next import reloads it;
+merge keys make that safe for the current Apple Health resources.
+
+**Schema version 2** adds `artifacts` and the three operation columns. `migrate()`
+upgrades version 1 in place (create missing tables, `ALTER TABLE ... ADD COLUMN`,
+bump the version) in one transaction, and refuses versions it does not know.
+
+Not yet: archive formats and resource limits, retention/deletion operations, a
+Prefect entry point for imports, migrating the n8n drop folder to `submit`,
+transformation-only retries, and native Apple Health XML or other formats.

@@ -54,6 +54,31 @@ leaves it running here.
 Both commands use the metadata store at `--metadata` (a SQLAlchemy URL), defaulting
 to `$WORKSPACE_METADATA_URL` or `sqlite:///.workspace/metadata.sqlite` (gitignored).
 
+### Importing an export file
+
+```bash
+uv run --locked pipelines-workspace submit health ~/Downloads/export.json --role historical
+uv run --locked pipelines-workspace import health <artifact-id> --duckdb /tmp/mirror.duckdb
+uv run --locked pipelines-workspace artifacts health
+```
+
+`submit` validates the file's format, copies it into artifact storage
+(`--artifacts`, default `$WORKSPACE_ARTIFACT_DIR` or `.workspace/artifacts`, named
+by SHA-256 and read-only), and registers it. It does not load anything. Invalid
+files are rejected before anything is stored. Submitting identical bytes again
+returns the existing artifact; submitting them with a different role is refused.
+
+`--role` replaces the legacy `manual/` folder convention for Apple Health:
+`historical` contributes rows dated before the connection's `cutoff`, `ongoing`
+contributes rows from the cutoff onwards.
+
+`import` parses exactly that artifact, with no modification-time cursor, under the
+connection lock, into a local DuckDB file. An artifact already imported with the
+same parser version and options prints `already_imported` and loads nothing;
+`--replay` loads it again (merge-safe: rows keep their source keys). A failed
+import never counts as imported. `artifacts` lists each artifact with every import
+attempt, its parser version, and options.
+
 The Prefect flow `src/pipelines/workspace.py:sync_connection` uses the same runner
 against Postgres and runs dbt. It is not in `prefect.yaml`; see decision 007.
 
@@ -97,7 +122,10 @@ The test group adds DuckDB for synthetic source compatibility checks. HTTP calls
 from the API source are intercepted; account tokens are fake and destinations are
 temporary files. The checks exercise real dlt extraction/loading, independent
 account namespaces, repeat imports, and restoration of committed cursor state into
-a fresh local working directory. `tests/test_operations.py` drives the shared runner the
+a fresh local working directory. `tests/test_artifacts.py` covers explicit imports: invalid, duplicate, and
+overlapping files, changed contents under an unchanged modification time, failed,
+interrupted, and crash-window imports, parser version changes, and the metadata
+schema upgrade. `tests/test_operations.py` drives the shared runner the
 same way: retries, request adoption, same-connection locking, dbt failure, redaction,
 metadata outage after a load, and restart persistence. None of this proves
 Postgres-specific behavior (including advisory locks), Prefect worker execution,

@@ -18,10 +18,11 @@ from typing import Any, Literal
 
 import sqlalchemy as sa
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 POSTGRES_SCHEMA = "workspace_meta"
 
 Origin = Literal["local", "request", "prefect"]
+Role = Literal["historical", "ongoing"]
 Ingestion = Literal["running", "succeeded", "failed", "blocked"]
 Transformation = Literal["pending", "succeeded", "failed", "skipped", "not_run"]
 
@@ -49,6 +50,35 @@ operations = sa.Table(
     # Prefect retries reuse the flow run ID; it identifies one operation.
     sa.Column("backend_run_id", sa.String(64), unique=True),
     sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+    # Imports only (schema version 2): what was parsed, by which parser, how.
+    sa.Column("artifact_id", sa.String(36)),
+    sa.Column("parser_version", sa.Integer),
+    sa.Column("options", sa.Text),
+)
+
+# Columns added to `operations` by version 2, as portable DDL fragments.
+OPERATION_COLUMNS_V2 = (
+    "artifact_id VARCHAR(36)",
+    "parser_version INTEGER",
+    "options TEXT",
+)
+
+artifacts = sa.Table(
+    "artifacts",
+    metadata,
+    sa.Column("id", sa.String(36), primary_key=True),
+    sa.Column("workspace_id", sa.String(24), nullable=False),
+    sa.Column("connection_id", sa.String(24), nullable=False),
+    sa.Column("sha256", sa.String(64), nullable=False),
+    sa.Column("size", sa.BigInteger, nullable=False),
+    sa.Column("input_format", sa.String(64), nullable=False),
+    sa.Column("role", sa.String(16), nullable=False),
+    sa.Column("original_name", sa.String(255), nullable=False),
+    sa.Column("storage_path", sa.Text, nullable=False),
+    sa.Column("retention", sa.String(16), nullable=False),
+    sa.Column("received_at", sa.DateTime(timezone=True), nullable=False),
+    # Identical bytes from two accounts are two artifacts.
+    sa.UniqueConstraint("workspace_id", "connection_id", "sha256"),
 )
 
 attempts = sa.Table(
@@ -92,6 +122,9 @@ class Operation:
     code_revision: str
     backend_run_id: str | None
     created_at: datetime
+    artifact_id: str | None = None
+    parser_version: int | None = None
+    options: str | None = None
 
 
 def _now() -> datetime:
@@ -118,17 +151,33 @@ class MetadataStore:
         self.url = engine.url
 
     def migrate(self) -> None:
+        """Create the schema, or upgrade it in one transaction."""
+        postgres = self.engine.dialect.name == "postgresql"
         with self.engine.begin() as db:
-            if self.engine.dialect.name == "postgresql":
+            if postgres:
                 db.execute(sa.text(f"CREATE SCHEMA IF NOT EXISTS {POSTGRES_SCHEMA}"))
-            metadata.create_all(db)
-            version = db.execute(sa.select(schema_info.c.version)).scalar()
-            if version is None:
-                db.execute(schema_info.insert().values(version=SCHEMA_VERSION))
-            elif version != SCHEMA_VERSION:
+            existing = sa.inspect(db).has_table(
+                "schema_info", schema=POSTGRES_SCHEMA if postgres else None
+            )
+            version = (
+                db.execute(sa.select(schema_info.c.version)).scalar()
+                if existing
+                else None
+            )
+            if version is not None and not 1 <= version <= SCHEMA_VERSION:
                 raise OperationError(
                     f"Metadata schema version {version} is not supported"
                 )
+            # Adds tables that do not exist yet; never alters existing ones.
+            metadata.create_all(db)
+            if version is None:
+                db.execute(schema_info.insert().values(version=SCHEMA_VERSION))
+                return
+            if version < 2:
+                table = f"{POSTGRES_SCHEMA}.operations" if postgres else "operations"
+                for column in OPERATION_COLUMNS_V2:
+                    db.execute(sa.text(f"ALTER TABLE {table} ADD COLUMN {column}"))
+            db.execute(schema_info.update().values(version=SCHEMA_VERSION))
 
     def create_operation(self, **values: Any) -> Operation:
         values = {"id": str(uuid.uuid4()), "created_at": _now(), **values}
@@ -272,6 +321,79 @@ class MetadataStore:
             "requested_not_started": pending,
         }
 
+    def register_artifact(self, **values: Any) -> tuple[dict[str, Any], bool]:
+        """Record received bytes; returns (artifact, newly_registered).
+
+        Resubmitting identical bytes to the same connection returns the existing
+        artifact. Resubmitting them with a different role is refused: the role
+        decides which rows the file contributes.
+        """
+        scope = sa.and_(
+            artifacts.c.workspace_id == values["workspace_id"],
+            artifacts.c.connection_id == values["connection_id"],
+            artifacts.c.sha256 == values["sha256"],
+        )
+        with self.engine.begin() as db:
+            row = db.execute(artifacts.select().where(scope)).first()
+            if row is None:
+                values = {"id": str(uuid.uuid4()), "received_at": _now(), **values}
+                db.execute(artifacts.insert().values(**values))
+                row = db.execute(artifacts.select().where(scope)).one()
+                created = True
+            else:
+                created = False
+        artifact = _artifact(row)
+        if artifact["role"] != values["role"]:
+            raise OperationError(
+                f"Identical file was already submitted as {artifact['role']}"
+            )
+        return artifact, created
+
+    def get_artifact(self, workspace_id: str, artifact_id: str) -> dict[str, Any]:
+        with self.engine.connect() as db:
+            row = db.execute(
+                artifacts.select().where(
+                    artifacts.c.workspace_id == workspace_id,
+                    artifacts.c.id == artifact_id,
+                )
+            ).first()
+        if row is None:
+            raise OperationError("Unknown artifact")
+        return _artifact(row)
+
+    def artifact_imports(self, artifact_id: str) -> list[dict[str, Any]]:
+        """Every import attempt of one artifact, oldest first."""
+        with self.engine.connect() as db:
+            rows = db.execute(
+                sa.select(
+                    attempts,
+                    operations.c.parser_version,
+                    operations.c.options,
+                )
+                .select_from(attempts.join(operations))
+                .where(operations.c.artifact_id == artifact_id)
+                .order_by(attempts.c.id)
+            ).all()
+        result = []
+        for row in rows:
+            attempt = _attempt(row)
+            attempt["parser_version"] = row.parser_version
+            attempt["options"] = json.loads(row.options) if row.options else None
+            result.append(attempt)
+        return result
+
+    def list_artifacts(self, workspace_id: str, connection_id: str) -> list[dict]:
+        with self.engine.connect() as db:
+            rows = db.execute(
+                artifacts.select()
+                .where(
+                    artifacts.c.workspace_id == workspace_id,
+                    artifacts.c.connection_id == connection_id,
+                )
+                .order_by(artifacts.c.received_at)
+            ).all()
+        return [_artifact(row) for row in rows]
+
     @contextmanager
     def connection_lock(self, pipeline_name: str) -> Iterator[None]:
         """Serialize executions sharing one dlt pipeline state, across processes.
@@ -327,3 +449,9 @@ def _attempt(row: Any) -> dict[str, Any]:
         "error_type": data["error_type"],
         "error_message": data["error_message"],
     }
+
+
+def _artifact(row: Any) -> dict[str, Any]:
+    data: dict[str, Any] = row._asdict()
+    data["received_at"] = _iso(_aware(data["received_at"]))
+    return data

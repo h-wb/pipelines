@@ -1,8 +1,9 @@
 """Workspace CLI.
 
 `integrations`, `validate`, and `connections` are read-only: no network, credential
-lookup, or runtime imports. `status` reads the metadata store. `run` executes a
-connection into a local DuckDB file, never into the production warehouse.
+lookup, or runtime imports. `status` and `artifacts` read the metadata store.
+`submit` stores and registers a file without loading it. `run` and `import` load
+into a local DuckDB file, never into the production warehouse.
 """
 
 import argparse
@@ -17,6 +18,7 @@ from src.core.config import ConfigurationError, load_workspace
 from src.integrations.registry import INTEGRATIONS
 
 DEFAULT_METADATA = "sqlite:///.workspace/metadata.sqlite"
+DEFAULT_ARTIFACTS = ".workspace/artifacts"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -31,7 +33,28 @@ def main(argv: list[str] | None = None) -> int:
     run = commands.add_parser("run", help="Sync a connection into a local DuckDB file")
     run.add_argument("connection")
     run.add_argument("--duckdb", type=Path, required=True)
-    for command in (status, run):
+    submit = commands.add_parser("submit", help="Store and register an export file")
+    submit.add_argument("connection")
+    submit.add_argument("file", type=Path)
+    submit.add_argument("--role", choices=("historical", "ongoing"), required=True)
+    submit.add_argument(
+        "--artifacts",
+        type=Path,
+        default=Path(os.environ.get("WORKSPACE_ARTIFACT_DIR", DEFAULT_ARTIFACTS)),
+        help="Directory for retained original files",
+    )
+    load = commands.add_parser(
+        "import", help="Load a registered artifact into a local DuckDB file"
+    )
+    load.add_argument("connection")
+    load.add_argument("artifact")
+    load.add_argument("--duckdb", type=Path, required=True)
+    load.add_argument(
+        "--replay", action="store_true", help="Load again even if already imported"
+    )
+    listing = commands.add_parser("artifacts", help="List artifacts and their imports")
+    listing.add_argument("connection", nargs="?")
+    for command in (status, run, submit, load, listing):
         command.add_argument(
             "--metadata",
             default=os.environ.get("WORKSPACE_METADATA_URL", DEFAULT_METADATA),
@@ -94,29 +117,70 @@ def _with_store(args: argparse.Namespace, workspace: Any, store: Any, ids: list)
     from src.core.operations import OperationError
 
     store.migrate()
+    selected = [args.connection] if args.connection else ids
     if args.command == "status":
-        selected = [args.connection] if args.connection else ids
         result = [store.connection_status(workspace.id, c) for c in selected]
-        print(json.dumps(result, indent=2))
-        return 0
+        return _print(result)
+    if args.command == "artifacts":
+        result = [
+            {**artifact, "imports": store.artifact_imports(artifact["id"])}
+            for c in selected
+            for artifact in store.list_artifacts(workspace.id, c)
+        ]
+        return _print(result)
+    connection = next(
+        c for c in workspace.connections if c.config.id == args.connection
+    )
+    if args.command == "submit":
+        from src.core.artifacts import submit_artifact
+        from src.integrations.formats import InvalidArtifact
+
+        try:
+            artifact, created = submit_artifact(
+                workspace,
+                connection,
+                args.file,
+                args.role,
+                store=store,
+                root=args.artifacts,
+            )
+        except (InvalidArtifact, OperationError, OSError) as error:
+            print(f"Submit failed: {error}", file=sys.stderr)
+            return 1
+        return _print({"artifact": artifact, "new": created})
 
     import dlt
 
-    from src.core.runner import IngestionFailed, run_connection
+    from src.core.runner import (
+        AlreadyImported,
+        IngestionFailed,
+        import_artifact,
+        run_connection,
+    )
     from src.core.secrets import SecretResolutionError, resolve_credentials
 
+    common: dict[str, Any] = {
+        "store": store,
+        "destination": dlt.destinations.duckdb(credentials=str(args.duckdb)),
+        "resolve_credentials": resolve_credentials,
+        "origin": "local",
+        "pipelines_dir": str(args.duckdb.parent / f"{args.duckdb.stem}.dlt"),
+    }
     try:
-        outcome = run_connection(
-            workspace,
-            args.connection,
-            store=store,
-            destination=dlt.destinations.duckdb(credentials=str(args.duckdb)),
-            resolve_credentials=resolve_credentials,
-            origin="local",
-            pipelines_dir=str(args.duckdb.parent / f"{args.duckdb.stem}.dlt"),
-        )
+        if args.command == "run":
+            outcome = run_connection(workspace, args.connection, **common)
+        else:
+            outcome = import_artifact(
+                workspace, args.connection, args.artifact, replay=args.replay, **common
+            )
+    except AlreadyImported as error:
+        return _print({"already_imported": True, "operation_id": error.operation_id})
     except (IngestionFailed, SecretResolutionError, OperationError) as error:
         print(f"Run failed: {error}", file=sys.stderr)
         return 1
-    print(json.dumps(asdict(outcome), indent=2))
+    return _print(asdict(outcome))
+
+
+def _print(result: Any) -> int:
+    print(json.dumps(result, indent=2))
     return 0

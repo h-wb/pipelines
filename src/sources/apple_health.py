@@ -33,18 +33,39 @@ def apple_health(data_dir: str = dlt.config.value, cutoff: str = dlt.config.valu
     def rows(items):
         for item in items:
             manual = "/manual/" in item["file_url"]
-            data = json.loads(item.read_bytes())["data"]
-            for key, (table, primary_key, ts_field) in TABLES.items():
-                hints = dlt.mark.make_hints(
-                    table_name=table, primary_key=primary_key, write_disposition="merge"
-                )
-                for row in _rows(key, data.get(key, [])):
-                    # Local date prefix of "YYYY-MM-DD HH:MM:SS -ZZZZ"
-                    if (row[ts_field][:10] < cutoff) != manual:
-                        continue
-                    yield dlt.mark.with_hints(row, hints)
+            yield from select_rows(json.loads(item.read_bytes())["data"], cutoff, manual)
 
     return files | rows
+
+
+@dlt.source(name="apple_health")
+def apple_health_artifact(path: str, cutoff: str, historical: bool):
+    """One explicitly selected Auto Export file, with no modification-time cursor.
+
+    ``historical`` replaces the ``manual/`` path convention: True keeps rows dated
+    before ``cutoff``, False keeps rows from ``cutoff`` onwards.
+    """
+
+    @dlt.resource(name="apple_health_artifact")
+    def rows():
+        with open(path, "rb") as handle:
+            data = json.load(handle)["data"]
+        yield from select_rows(data, cutoff, historical)
+
+    return rows
+
+
+def select_rows(data, cutoff, historical):
+    """Rows of one export on the selected side of the cutoff, with table hints."""
+    for key, (table, primary_key, ts_field) in TABLES.items():
+        hints = dlt.mark.make_hints(
+            table_name=table, primary_key=primary_key, write_disposition="merge"
+        )
+        for row in _rows(key, data.get(key, [])):
+            # Local date prefix of "YYYY-MM-DD HH:MM:SS -ZZZZ"
+            if (row[ts_field][:10] < cutoff) != historical:
+                continue
+            yield dlt.mark.with_hints(row, hints)
 
 
 def _rows(key, entries):

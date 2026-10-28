@@ -4,7 +4,7 @@ Callers supply resolved credentials. This module does not resolve secret referen
 set environment variables, choose a destination, or start a pipeline.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from src.core.config import ResolvedConnection
 from src.integrations.registry import AppleHealthSettings, ListenBrainzSettings
@@ -34,3 +34,19 @@ def create_source(
 
         return apple_health(data_dir=settings.data_dir, cutoff=settings.cutoff)
     raise ValueError("No source adapter for the validated integration")
+
+
+def create_artifact_source(
+    connection: ResolvedConnection, path: str, options: dict[str, Any]
+) -> "DltSource":
+    """A source over one stored artifact, interpreted with recorded options."""
+    settings = connection.settings
+    if isinstance(settings, AppleHealthSettings):
+        from src.sources.apple_health import apple_health_artifact
+
+        return apple_health_artifact(
+            path=path,
+            cutoff=options["cutoff"],
+            historical=options["role"] == "historical",
+        )
+    raise ValueError("No artifact parser for the validated integration")

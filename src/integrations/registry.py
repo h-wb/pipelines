@@ -97,7 +97,7 @@ INTEGRATIONS = MappingProxyType(
             settings_model=AppleHealthSettings,
             credential_names=(),
             input_modes=("file",),
-            capabilities=("directory_import",),
+            capabilities=("directory_import", "artifact_import"),
             input_format="health_auto_export_json",
             resources=(
                 ResourceDefinition("metrics", ("metric_name", "date", "source"), None),

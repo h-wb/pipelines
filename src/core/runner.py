@@ -4,6 +4,7 @@ Every execution path calls `run_connection`, so local runs, CLI requests, Prefec
 schedules, and external (n8n) triggers all leave the same operation record.
 """
 
+import json
 import logging
 import os
 import subprocess
@@ -43,6 +44,14 @@ class RunOutcome:
 
 class IngestionFailed(RuntimeError):
     """The load failed; its redacted cause is on the attempt record."""
+
+
+class AlreadyImported(OperationError):
+    """The artifact was loaded before with the same parser and options."""
+
+    def __init__(self, operation_id: str):
+        super().__init__(f"Already imported by operation {operation_id}")
+        self.operation_id = operation_id
 
 
 def code_revision() -> str:
@@ -142,31 +151,134 @@ def run_connection(
     metadata failure is logged and reported as `recorded=False`, never as a failed
     load. A dbt failure leaves ingestion succeeded and the analysis stale.
     """
-    connection = next(
-        (c for c in workspace.connections if c.config.id == connection_id), None
-    )
-    if connection is None:
-        raise OperationError("Unknown connection")
+    connection = _connection(workspace, connection_id)
     operation = _adopt_operation(
         store, workspace, connection, origin, operation_id, backend_run_id
     )
 
+    from src.integrations.sources import create_source
+
+    return _run_locked(
+        store,
+        operation.id,
+        connection,
+        lambda credentials: create_source(connection, credentials),
+        destination,
+        resolve_credentials,
+        transform,
+        pipelines_dir,
+    )
+
+
+def import_artifact(
+    workspace: ResolvedWorkspace,
+    connection_id: str,
+    artifact_id: str,
+    *,
+    store: MetadataStore,
+    destination: Any,
+    resolve_credentials: Callable[[ResolvedConnection], dict[str, str]],
+    origin: Origin,
+    replay: bool = False,
+    transform: Callable[[str], None] | None = None,
+    pipelines_dir: str | None = None,
+) -> RunOutcome:
+    """Parse one registered artifact and load its rows, bypassing file cursors.
+
+    An artifact already imported with the same parser version and options is not
+    loaded again unless `replay` is set; replays are merge-safe because records
+    keep their source keys. A failed attempt never marks the artifact imported.
+    """
+    from src.core.artifacts import stored_copy_is_intact
+    from src.integrations.formats import PARSER_VERSIONS
+    from src.integrations.sources import create_artifact_source
+
+    connection = _connection(workspace, connection_id)
+    artifact = store.get_artifact(workspace.id, artifact_id)
+    if artifact["connection_id"] != connection.config.id:
+        raise OperationError("Artifact belongs to a different connection")
+    parser_version = PARSER_VERSIONS[artifact["input_format"]]
+    options = {"role": artifact["role"], **artifact_options(connection)}
+    if not replay:
+        for previous in store.artifact_imports(artifact_id):
+            if (
+                previous["ingestion"] == "succeeded"
+                and previous["parser_version"] == parser_version
+                and previous["options"] == options
+            ):
+                raise AlreadyImported(previous["operation_id"])
+    if not stored_copy_is_intact(artifact):
+        raise OperationError(
+            "Stored artifact is missing or does not match its checksum"
+        )
+    operation = store.create_operation(
+        workspace_id=workspace.id,
+        connection_id=connection.config.id,
+        integration=connection.integration.name,
+        kind="replay" if replay else "import",
+        origin=origin,
+        pipeline_name=connection.binding.pipeline_name,
+        dataset_name=connection.binding.dataset_name,
+        config_revision=workspace.revision,
+        code_revision=code_revision(),
+        backend_run_id=None,
+        artifact_id=artifact_id,
+        parser_version=parser_version,
+        options=json.dumps(options, sort_keys=True),
+    )
+    return _run_locked(
+        store,
+        operation.id,
+        connection,
+        lambda credentials: create_artifact_source(
+            connection, artifact["storage_path"], options
+        ),
+        destination,
+        resolve_credentials,
+        transform,
+        pipelines_dir,
+    )
+
+
+def artifact_options(connection: ResolvedConnection) -> dict[str, Any]:
+    """Connection settings that change how an artifact is interpreted."""
+    return {"cutoff": getattr(connection.settings, "cutoff", None)}
+
+
+def _connection(workspace: ResolvedWorkspace, connection_id: str) -> ResolvedConnection:
+    for connection in workspace.connections:
+        if connection.config.id == connection_id:
+            return connection
+    raise OperationError("Unknown connection")
+
+
+def _run_locked(
+    store: MetadataStore,
+    operation_id: str,
+    connection: ResolvedConnection,
+    make_source: Callable[[dict[str, str]], Any],
+    destination: Any,
+    resolve_credentials: Callable[[ResolvedConnection], dict[str, str]],
+    transform: Callable[[str], None] | None,
+    pipelines_dir: str | None,
+) -> RunOutcome:
     try:
         with store.connection_lock(connection.binding.pipeline_name):
-            attempt, number = store.start_attempt(operation.id, "running")
+            attempt, number = store.start_attempt(operation_id, "running")
             return _execute(
                 store,
-                operation.id,
+                operation_id,
                 attempt,
                 number,
                 connection,
+                make_source,
                 destination,
                 resolve_credentials,
                 transform,
                 pipelines_dir,
             )
     except ConnectionBusy as error:
-        attempt, _ = store.start_attempt(operation.id, "blocked")
+        attempt, _ = store.start_attempt(operation_id, "blocked")
         store.update_attempt(
             attempt, error_type="ConnectionBusy", error_message=str(error)
         )
@@ -179,14 +291,13 @@ def _execute(
     attempt: int,
     number: int,
     connection: ResolvedConnection,
+    make_source: Callable[[dict[str, str]], Any],
     destination: Any,
     resolve_credentials: Callable[[ResolvedConnection], dict[str, str]],
     transform: Callable[[str], None] | None,
     pipelines_dir: str | None,
 ) -> RunOutcome:
     import dlt
-
-    from src.integrations.sources import create_source
 
     secrets: list[str] = []
     try:
@@ -202,7 +313,7 @@ def _execute(
             destination=destination,
             **options,
         )
-        info = pipeline.run(create_source(connection, credentials))
+        info = pipeline.run(make_source(credentials))
     except Exception as error:  # noqa: BLE001 - any failure is recorded, then raised
         error_type, message = redact(error, secrets)
         store.update_attempt(
