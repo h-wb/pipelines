@@ -62,12 +62,40 @@ class Links(StrictModel):
     metabase: WebUrl | None = None
 
 
+class Schedule(StrictModel):
+    """When the orchestrator should sync the connection. Not an execution input."""
+
+    cron: str = Field(max_length=100)
+    timezone: str = "UTC"
+
+    @field_validator("cron")
+    @classmethod
+    def valid_cron(cls, value: str) -> str:
+        from croniter import croniter  # type: ignore[import-untyped]
+
+        if not croniter.is_valid(value):
+            raise ValueError("expected a cron expression")
+        return value
+
+    @field_validator("timezone")
+    @classmethod
+    def known_timezone(cls, value: str) -> str:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError("expected an IANA time zone") from None
+        return value
+
+
 class ConnectionConfig(StrictModel):
     id: Identifier
     integration: Identifier
     settings: dict[str, Any]
     credentials: dict[str, SecretReference] = Field(default_factory=dict)
     binding: Binding | None = None
+    schedule: Schedule | None = None
     # Metabase dashboard name -> ID, shown as links next to the connection.
     dashboards: dict[
         Annotated[str, StringConstraints(min_length=1, max_length=100)],

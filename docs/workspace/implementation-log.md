@@ -273,3 +273,55 @@ Validation:
 Next: unchanged, still gated by the runtime decisions (decision 007). Decision 011
 narrows the worker's secret needs to `WORKSPACE_SECRET_KEY`, the metadata
 database, and a Postgres writer role.
+
+## 2026-10-28 — Prefect orchestrator: schedules, submission, reconciliation (decisions 012, 013)
+
+Design discussion: keep Prefect (cluster and single machine) rather than build a
+workspace-owned scheduler; a draft "local backend" with its own cron loop was
+dropped because a SQLite-backed `prefect server` plus a process worker already
+gives the same behaviour. The workspace owns desired state, Prefect owns
+execution, and the workspace only reconciles (plan/apply deployments, submit,
+observe). Decision 012 settles the runtime question: one versioned image, one
+Kubernetes Job per flow run (not yet built — CI image and home-ops worker come
+next).
+
+Implemented:
+
+- `src/adapters/prefect.py`: the orchestrator adapter. Deployment specs compared
+  field by field against Prefect (parameters, schedule, work pool, image, job
+  variables); `plan` reports creates/updates/deletes (hand edits show as drift),
+  `apply` upserts each connection's deployment of `sync_connection` with a
+  concurrency limit of 1 and workspace tags; `submit` runs the deployment with
+  the operation ID as idempotency key and binds the flow run; `observe` closes
+  unverified attempts from the flow run's state.
+- Connections get an optional `schedule` (`{"cron", "timezone"}`), validated with
+  `croniter` and `zoneinfo`; not part of the execution revision. New ingestion
+  outcomes `lost` and `cancelled`, recorded by `refresh` and kept apart from
+  `failed`.
+- Metadata: `unverified()` (running attempts and submitted operations with no
+  attempt) and `close_unverified()`.
+- Service: `deployments_plan`, `deployments_apply`, `refresh`; the orchestrator,
+  when configured, is also the executor. CLI: `deployments plan|apply` and
+  `refresh` (refuse with exit 2 when `WORKSPACE_PREFECT_POOL` is unset);
+  `serve` submits to Prefect instead of subprocesses when configured. Environment:
+  `WORKSPACE_PREFECT_POOL`, `WORKSPACE_PREFECT_CONFIG_PATH`, `WORKSPACE_IMAGE`,
+  `WORKSPACE_PREFECT_JOB_VARIABLES`. API: `POST /api/refresh`,
+  `GET /api/deployments/plan`.
+- `croniter` and `prefect-kubernetes` declared; the lockfile grew with the
+  Kubernetes client libraries (no existing package changed version).
+
+Validation:
+
+- Lint, format, and mypy clean on the workspace slice. 70 tests pass on
+  Python 3.14.7, including three against a real temporary Prefect API
+  (`prefect_test_harness`, no worker): plan/apply converge, schedule drift and
+  hand-edited parameters are updates, a removed connection is a delete; submit is
+  idempotent on the operation ID; observe closes crashed as `lost`, cancelled as
+  `cancelled`, leaves pending/running alone, and is stable on re-runs; invalid
+  cron and unknown timezones are rejected. Two CLI tests cover the unset-pool
+  refusal and that the credential commands still work without the orchestrator.
+
+Next: the decision-012 runtime on the cluster — CI image build from `uv.lock`,
+the Kubernetes work pool and worker controller in home-ops, the ExternalSecret
+for the installation secrets, and the NFS artifacts mount; then cutover.
+

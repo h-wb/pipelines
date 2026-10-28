@@ -48,8 +48,8 @@ the redacted cause is on the attempt record.
 transformation outcome, load IDs, redacted error), the last successful ingestion
 and transformation, whether analysis is `current`, `stale`, or `no_data`, and how
 many requested operations have not started. A `running` attempt is marked
-`verified: false`: nothing reconciles it with Prefect yet, so a killed worker
-leaves it running here.
+`verified: false` until the flow records its outcome or `refresh` (below) closes
+it from the orchestrator's state.
 
 Both commands use the metadata store at `--metadata` (a SQLAlchemy URL), defaulting
 to `$WORKSPACE_METADATA_URL` or `sqlite:///.workspace/metadata.sqlite` (gitignored).
@@ -108,6 +108,39 @@ managed elsewhere: `{"provider": "fnox", "key": "LISTENBRAINZ__ACCESS_TOKEN"}` o
 Key rotation: set `WORKSPACE_SECRET_KEY="<new>,<old>"`, run
 `pipelines-workspace rotate-secrets`, then drop the old key.
 
+### Schedules and the Prefect orchestrator
+
+A connection can declare a `schedule` (decision 013), validated with `croniter`
+and `zoneinfo`:
+
+```json
+"schedule": {"cron": "0 3 * * *", "timezone": "Europe/Paris"}
+```
+
+Prefect is the single orchestrator, on a cluster or on one machine (`prefect
+server` plus a process worker). The workspace only reconciles with it; set
+`WORKSPACE_PREFECT_POOL` to enable the integration:
+
+```bash
+export WORKSPACE_PREFECT_POOL=workspace-k8s
+# Where flow runs find the configuration (worker or Job mount):
+export WORKSPACE_PREFECT_CONFIG_PATH=/srv/pipelines/workspace.json
+# Optional, for image-based work pools:
+export WORKSPACE_IMAGE=ghcr.io/h-wb/pipelines:abc
+
+uv run --locked pipelines-workspace deployments plan
+uv run --locked pipelines-workspace deployments apply
+uv run --locked pipelines-workspace refresh
+```
+
+Each connection gets one deployment of `sync_connection`
+(`sync-connection/<workspace>-<connection>`) with a concurrency limit of 1.
+`plan` reports creates, updates, and removals against what Prefect has — hand
+edits in Prefect show as drift; `apply` performs them. With the pool configured,
+`serve` submits requested syncs as Prefect flow runs (idempotent on the operation
+ID) instead of subprocesses. `refresh` closes attempts whose flow run ended
+without recording an outcome: crashed becomes `lost`, cancelled `cancelled`.
+
 Installation secrets (the master key, Postgres roles, Prefect and Metabase
 credentials) are environment variables provided by whoever deploys. They are not
 stored by the workspace.
@@ -134,7 +167,8 @@ Dashboard and Prefect run links appear when `links` and `dashboards` are configu
 ```
 
 Requests run as `pipelines-workspace execute <operation>` subprocesses against
-the same local DuckDB file. Requests for one connection queue behind each other.
+the same local DuckDB file; with `WORKSPACE_PREFECT_POOL` set they are submitted
+as Prefect flow runs instead. Requests for one connection queue behind each other.
 
 The JSON API takes `Authorization: Bearer $WORKSPACE_API_TOKEN`:
 
@@ -149,6 +183,7 @@ The JSON API takes `Authorization: Bearer $WORKSPACE_API_TOKEN`:
 | `POST /api/connections` | Add a connection: `{"integration", "id", "settings", "credentials"}`; returns the check result |
 | `PUT /api/connections/{id}/credentials/{name}` | Replace a credential: `{"value": "..."}` (204) |
 | `POST /api/connections/{id}/check`, `DELETE /api/connections/{id}` | Test or remove a connection |
+| `POST /api/refresh`, `GET /api/deployments/plan` | Reconcile with Prefect (needs `WORKSPACE_PREFECT_POOL`) |
 
 The artifact endpoint is the replacement for the n8n receiver (decision 009):
 point Health Auto Export's REST automation at it with the bearer header.

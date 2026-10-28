@@ -77,6 +77,9 @@ class WorkspaceService:
     # None when WORKSPACE_SECRET_KEY is not set: built-in secrets are unavailable,
     # external (env/fnox) references still work.
     secrets: SecretStore | None = None
+    # The Prefect adapter when an orchestrator is configured (decision 013). It is
+    # then also the executor; without it, requests run as local subprocesses.
+    orchestrator: Any = None
 
     def resolver(self) -> Callable[[ResolvedConnection], dict[str, str]]:
         return make_resolver(self.secrets)
@@ -432,3 +435,26 @@ class WorkspaceService:
         ]
         self._write_config(raw, revision)
         self.store.delete_secrets(workspace.id, connection_id)
+
+    # ---- Orchestrator -------------------------------------------------------------
+
+    def _orchestrator(self) -> Any:
+        if self.orchestrator is None:
+            raise OperationError(
+                "No orchestrator configured (set WORKSPACE_PREFECT_POOL)"
+            )
+        return self.orchestrator
+
+    def deployments_plan(self) -> list[dict[str, Any]]:
+        return list(self._orchestrator().plan(self.workspace()))
+
+    def deployments_apply(self) -> list[dict[str, Any]]:
+        workspace = self.workspace()
+        orchestrator = self._orchestrator()
+        changes = orchestrator.plan(workspace)
+        orchestrator.apply(workspace, changes)
+        return list(changes)
+
+    def refresh(self) -> list[dict[str, Any]]:
+        """Reconcile unverified runs with the orchestrator."""
+        return list(self._orchestrator().observe(self.workspace()))

@@ -25,7 +25,9 @@ LOCK_POLL_SECONDS = 1.0
 
 Origin = Literal["local", "request", "prefect"]
 Role = Literal["historical", "ongoing"]
-Ingestion = Literal["running", "succeeded", "failed", "blocked"]
+# `lost` (the run crashed) and `cancelled` come from reconciling with the
+# orchestrator; they are kept apart from `failed`, which the runner recorded itself.
+Ingestion = Literal["running", "succeeded", "failed", "blocked", "lost", "cancelled"]
 Transformation = Literal["pending", "succeeded", "failed", "skipped", "not_run"]
 
 metadata = sa.MetaData()
@@ -549,6 +551,71 @@ class MetadataStore:
             return {"state": "unknown", "message": None, "at": None, "source": None}
         at, state, message, source = max(evidence, key=lambda item: item[0])
         return {"state": state, "message": message, "at": _iso(at), "source": source}
+
+    def unverified(self, workspace_id: str) -> list[dict[str, Any]]:
+        """Submitted work whose outcome only the orchestrator knows.
+
+        Attempts still `running`, and operations bound to a backend run that never
+        started an attempt (the run died before registering).
+        """
+        with self.engine.connect() as db:
+            running = db.execute(
+                sa.select(
+                    attempts.c.id,
+                    operations.c.id.label("operation_id"),
+                    operations.c.backend_run_id,
+                )
+                .select_from(attempts.join(operations))
+                .where(
+                    operations.c.workspace_id == workspace_id,
+                    attempts.c.ingestion == "running",
+                    operations.c.backend_run_id.is_not(None),
+                )
+            ).all()
+            unstarted = db.execute(
+                sa.select(
+                    operations.c.id.label("operation_id"), operations.c.backend_run_id
+                )
+                .select_from(operations.outerjoin(attempts))
+                .where(
+                    operations.c.workspace_id == workspace_id,
+                    operations.c.backend_run_id.is_not(None),
+                    attempts.c.id.is_(None),
+                )
+            ).all()
+        return [
+            {
+                "attempt_id": row.id,
+                "operation_id": row.operation_id,
+                "backend_run_id": row.backend_run_id,
+            }
+            for row in running
+        ] + [
+            {
+                "attempt_id": None,
+                "operation_id": row.operation_id,
+                "backend_run_id": row.backend_run_id,
+            }
+            for row in unstarted
+        ]
+
+    def close_unverified(
+        self,
+        operation_id: str,
+        attempt_id: int | None,
+        outcome: Ingestion,
+        message: str,
+    ) -> None:
+        """Record what the orchestrator says happened to a run we never heard back from."""
+        if attempt_id is None:
+            attempt_id, _ = self.start_attempt(operation_id, outcome)
+        self.update_attempt(
+            attempt_id,
+            ingestion=outcome,
+            transformation="not_run",
+            error_type="Orchestrator",
+            error_message=message,
+        )
 
     def register_artifact(self, **values: Any) -> tuple[dict[str, Any], bool]:
         """Record received bytes; returns (artifact, newly_registered).

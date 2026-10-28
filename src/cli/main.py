@@ -90,8 +90,23 @@ def main(argv: list[str] | None = None) -> int:
         "rotate-secrets",
         help="Re-encrypt stored secrets with the first key of WORKSPACE_SECRET_KEY",
     )
+    deployments = commands.add_parser(
+        "deployments",
+        help="Reconcile Prefect deployments with the workspace (needs WORKSPACE_PREFECT_POOL)",
+    )
+    deployments.add_argument("action", choices=("plan", "apply"))
+    refresh = commands.add_parser(
+        "refresh", help="Close runs Prefect reports as crashed or cancelled"
+    )
     commands_with_store = (status, run, submit, load, listing, execute, serve)
-    for command in (*commands_with_store, credential, check, rotate):
+    for command in (
+        *commands_with_store,
+        credential,
+        check,
+        rotate,
+        deployments,
+        refresh,
+    ):
         command.add_argument(
             "--metadata",
             default=os.environ.get("WORKSPACE_METADATA_URL", DEFAULT_METADATA),
@@ -169,6 +184,8 @@ def _operate(args: argparse.Namespace, workspace: Any) -> int:
             return _serve(args, store, secrets)
         if args.command in ("set-credential", "check", "rotate-secrets"):
             return _credentials(args, store, secrets)
+        if args.command in ("deployments", "refresh"):
+            return _orchestrate(args, store, secrets)
         return _with_store(args, workspace, store, ids, secrets)
     except SecretKeyError as error:
         print(str(error), file=sys.stderr)
@@ -184,6 +201,43 @@ def _secret_store(store: Any) -> Any:
     if not os.environ.get(KEY_VARIABLE):
         return None
     return SecretStore(store, SecretBox.from_environment())
+
+
+def _orchestrator(args: argparse.Namespace, store: Any) -> Any:
+    """The Prefect adapter, configured from the installation's environment."""
+    pool = os.environ.get("WORKSPACE_PREFECT_POOL")
+    if not pool:
+        return None
+    from src.adapters.prefect import PrefectOrchestrator
+
+    return PrefectOrchestrator(
+        store,
+        pool,
+        # Where flow runs find the configuration (worker or Job mount).
+        os.environ.get("WORKSPACE_PREFECT_CONFIG_PATH", str(args.config.resolve())),
+        image=os.environ.get("WORKSPACE_IMAGE") or None,
+        job_variables=json.loads(
+            os.environ.get("WORKSPACE_PREFECT_JOB_VARIABLES", "{}")
+        ),
+    )
+
+
+def _orchestrate(args: argparse.Namespace, store: Any, secrets: Any) -> int:
+    from src.core.service import WorkspaceService
+
+    store.migrate()
+    orchestrator = _orchestrator(args, store)
+    if orchestrator is None:
+        print("Set WORKSPACE_PREFECT_POOL to use Prefect", file=sys.stderr)
+        return 2
+    service = WorkspaceService(
+        args.config, store, Path(DEFAULT_ARTIFACTS), orchestrator, secrets, orchestrator
+    )
+    if args.command == "refresh":
+        return _print(service.refresh())
+    if args.action == "plan":
+        return _print(service.deployments_plan())
+    return _print({"applied": service.deployments_apply()})
 
 
 def _credentials(args: argparse.Namespace, store: Any, secrets: Any) -> int:
@@ -322,7 +376,8 @@ def _serve(args: argparse.Namespace, store: Any, secrets: Any) -> int:
         print("Set WORKSPACE_API_TOKEN (16+ characters) to serve", file=sys.stderr)
         return 2
     store.migrate()
-    executor = SubprocessExecutor(
+    orchestrator = _orchestrator(args, store)
+    executor = orchestrator or SubprocessExecutor(
         [
             "--config",
             str(args.config.resolve()),
@@ -340,7 +395,12 @@ def _serve(args: argparse.Namespace, store: Any, secrets: Any) -> int:
             file=sys.stderr,
         )
     service = WorkspaceService(
-        args.config.resolve(), store, args.artifacts.resolve(), executor, secrets
+        args.config.resolve(),
+        store,
+        args.artifacts.resolve(),
+        executor,
+        secrets,
+        orchestrator,
     )
     uvicorn.run(create_app(service, token), host=args.host, port=args.port)
     return 0

@@ -105,9 +105,9 @@ Store: SQLAlchemy Core, one code path for SQLite (local/tests) and PostgreSQL
 (Alembic or hand-written) come with the first schema change. SQLAlchemy is now an
 explicit dependency; it was previously only transitive through Prefect.
 
-Not yet: reconciling `running` attempts with Prefect (crash/cancel leaves them
-`running`, reported as unverified), submitting requested operations to Prefect,
-and per-resource partial-load tracking beyond dlt's own package resume.
+Not yet: per-resource partial-load tracking beyond dlt's own package resume.
+Reconciling `running` attempts and submitting requested operations to Prefect
+are now built (decision 013).
 
 ## 006 — Runner ordering: register, lock, load, record, model
 
@@ -261,9 +261,10 @@ default; put TLS in front of it before exposing it.
 the dbt models read. Previously this showed as `stale`, which implied it would
 catch up.
 
-Not yet: Prefect executor and `status --refresh` reconciliation, a structured
-config editor (JSON textarea for now), multi-user accounts, exercising the flow
-against this installation (expired credentials, outages) on the test setup.
+Not yet: a structured config editor (JSON textarea for now), multi-user accounts,
+exercising the flow against this installation (expired credentials, outages) on
+the test setup. The Prefect executor and reconciliation are now built
+(decision 013).
 
 ## 011 — Connection secrets: encrypted in the workspace, pluggable backends
 
@@ -328,3 +329,76 @@ decrypts that connection's secrets.
 
 Not yet: OAuth flows (consent, refresh-token rotation), external backends beyond
 env/fnox, and per-user key separation for a hosted multi-user version.
+
+## 012 — Keep Prefect; run each flow in its own Kubernetes Job from a versioned image
+
+Status: accepted, 2026-10-28. Settles runtime question 1 of decision 007.
+
+**Prefect stays** as the cluster orchestrator. It is deployed, Python-native,
+works with dlt, and its UI is the "execution details" page the workspace links
+to. Dagster's asset, freshness, and lineage model overlaps the workspace itself
+(it would duplicate or replace the product layer). Airflow is heavier.
+Kestra and Windmill are less Python-native. Bare CronJobs would mean rebuilding
+retries, run history, and logs. The failures so far (a dependency conflict that
+broke the worker, the server's SQLAlchemy pin) come from installing code into one
+shared worker environment. Changing orchestrator would not fix them; isolation
+does.
+
+Prefect is also the single-machine orchestrator (decision 013): a `prefect server`
+on SQLite plus a process worker, bundled for installation. The workspace does not
+build its own scheduler.
+
+**Runtime.** Observed: one long-lived process worker (`local-pool`) that clones
+`main` and `uv pip install`s into its own environment on each run. All flows
+share its 6 Gi limit, and it has no permissions to create Jobs. Replacement:
+
+- One image, `ghcr.io/h-wb/pipelines`, built in CI from `uv.lock` (Python 3.12,
+  Prefect matching the server), following the `sento` image workflow. The same
+  image runs flow runs, the Kubernetes worker, and later the workspace server.
+  Nothing is installed at run time. The image digest identifies code and
+  dependencies (`PIPELINES_CODE_REVISION` is set at build time).
+- A Kubernetes work pool (`workspace-k8s`). Each flow run is its own Job with its
+  own resource limits; a crash affects one run.
+- home-ops: a second worker controller running the image
+  (`prefect worker start --type kubernetes`), a namespaced Role to manage Jobs,
+  Pods, and logs, an ExternalSecret (Bitwarden Secrets Manager, the cluster's
+  existing source) with the installation secrets from decision 011, and the
+  existing NFS export mounted for artifacts.
+- The legacy deployments stay on `local-pool` until their connection is cut over;
+  both pools run side by side.
+
+## 013 — Prefect is the orchestrator; the workspace only reconciles with it
+
+Status: accepted, 2026-10-28. An earlier draft (same day, never built) also
+specified a workspace-owned "local backend" with its own cron loop for
+installations without Prefect. That draft was dropped because it reinvents what
+Prefect already does on one machine: a SQLite-backed `prefect server` and a
+process worker give the same scheduling, retries, run history, and logs as the
+cluster. One orchestrator in every installation means less code and one
+behaviour to reason about.
+
+The workspace owns the **desired** state: connections and their optional
+`schedule` (`{"cron": "...", "timezone": "..."}`, not part of the execution
+revision). Prefect owns **execution**. The glue does three things, all through
+Prefect's own APIs:
+
+1. **Deployments from configuration.** Each connection gets one deployment of
+   `sync_connection` (`sync-connection/<workspace>-<connection>`). Its parameters
+   (`connection_id`, config path), schedule, work pool, image, and a concurrency
+   limit of 1 (Prefect queues overlapping runs of one connection) all come from
+   the workspace. `plan` lists creates, updates, and removals against what Prefect
+   has, so hand edits in Prefect show as drift. `apply` performs them. A
+   deployment per connection, rather than one deployment with per-schedule
+   parameters (also supported by Prefect 3.9), keeps per-connection pause,
+   concurrency, and run history in the Prefect UI.
+2. **Submit.** A request becomes `run_deployment(..., timeout=0,
+   idempotency_key=<operation ID>)`, so retrying an ambiguous submission returns
+   the same flow run. The flow run ID is bound to the operation; the flow adopts
+   it on entry (decision 005). Scheduled runs register their own operation.
+3. **Observe.** Attempts still `running` (and submitted operations with no attempt)
+   are compared with their flow run's state. Crashed becomes `lost` and cancelled
+   becomes `cancelled`, both kept apart from `failed`. Pending or running is left
+   alone.
+
+The subprocess executor remains for development and tests only (manual requests,
+no schedules). It is not a product mode.

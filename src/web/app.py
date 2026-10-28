@@ -244,6 +244,14 @@ def create_app(
         service.remove_connection(connection_id)
         return Response(status_code=204)
 
+    @app.post("/api/refresh")
+    def api_refresh() -> list:
+        return service.refresh()
+
+    @app.get("/api/deployments/plan")
+    def api_deployments_plan() -> list:
+        return service.deployments_plan()
+
     @app.get("/api/config")
     def api_config() -> dict:
         return service.configuration()
