@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge, when, attempt_cells %}
+{% block title %}{{ c.id }}{% endblock %}
+{% block body %}
+<h1>{{ c.id }} <span class="muted">{{ c.integration }}</span></h1>
+<p>
+  Data loaded {{ when(c.status.last_ingestion_success) }} ·
+  analysis {{ badge(c.status.analysis) }}{% if c.status.analysis_detail %} <span class="muted">({{ c.status.analysis_detail }})</span>{% endif %} ·
+  configuration {{ badge(c.configuration) }}
+  {% for d in c.dashboards %} · <a href="{{ d.url }}" target="_blank" rel="noopener">{{ d.name }}</a>{% endfor %}
+</p>
+<p class="muted">Dataset <code>{{ c.binding.dataset_name }}</code> · resources {{ c.resources | join(", ") }}</p>
+
+{% if c.can_sync %}
+<form class="inline" method="post" action="/connections/{{ c.id }}/sync"><button>{{ c.sync_label }}</button></form>
+{% endif %}
+
+{% if c.accepts_files %}
+<h2>Add an export</h2>
+<form method="post" action="/connections/{{ c.id }}/upload" enctype="multipart/form-data">
+  <input type="file" name="file" required>
+  <select name="role" required>
+    {% for r in roles %}<option value="{{ r }}"{% if r == "ongoing" %} selected{% endif %}>{{ r }}</option>{% endfor %}
+  </select>
+  <label><input type="checkbox" name="import_now" value="true" checked> import now</label>
+  <button>Upload</button>
+</form>
+<p class="muted">Historical files contribute rows before the connection’s cutoff; ongoing files contribute rows from it on.</p>
+
+<h2>Files</h2>
+<table>
+  <tr><th>Received</th><th>File</th><th>Role</th><th>Last import</th><th></th></tr>
+  {% for a in c.artifacts %}
+  {% set last = a.imports[-1] if a.imports else None %}
+  <tr>
+    <td>{{ when(a.received_at) }}</td>
+    <td>{{ a.original_name }}<div class="muted"><code>{{ a.sha256[:12] }}</code> · {{ a.size }} bytes</div></td>
+    <td>{{ a.role }}</td>
+    <td>{% if last %}{{ badge(last.ingestion) }} <span class="muted">parser v{{ last.parser_version }}</span>
+      {% if last.error_message %}<div class="muted">{{ last.error_message }}</div>{% endif %}{% else %}<span class="muted">not imported</span>{% endif %}</td>
+    <td>
+      <form class="inline" method="post" action="/connections/{{ c.id }}/artifacts/{{ a.id }}/import"><button>Import</button></form>
+      <form class="inline" method="post" action="/connections/{{ c.id }}/artifacts/{{ a.id }}/import"><input type="hidden" name="replay" value="true"><button title="Load again even if already imported">Replay</button></form>
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="5" class="muted">No files yet.</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+<h2>History</h2>
+<table>
+  <tr><th>Requested</th><th>Operation</th><th>Attempt</th><th>Load</th><th>Models</th><th>Problem</th></tr>
+  {% for o in c.operations %}
+    {% for a in o.attempts or [None] %}
+    <tr>
+      <td>{% if loop.first %}{{ when(o.created_at) }}{% endif %}</td>
+      <td>{% if loop.first %}{{ o.kind }}{% if o.artifact_name %} <span class="muted">{{ o.artifact_name }}</span>{% endif %} <span class="muted">via {{ o.origin }}</span>
+        {% if o.run_url %}<div><a href="{{ o.run_url }}" target="_blank" rel="noopener">Prefect run</a></div>{% endif %}{% endif %}</td>
+      {% if a %}<td>#{{ a.number }}</td>{{ attempt_cells(a) }}{% else %}<td colspan="4">{{ badge("requested") }}</td>{% endif %}
+    </tr>
+    {% endfor %}
+  {% else %}
+  <tr><td colspan="6" class="muted">Nothing has run yet.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

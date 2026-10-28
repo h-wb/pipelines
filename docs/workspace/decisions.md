@@ -187,3 +187,80 @@ bump the version) in one transaction, and refuses versions it does not know.
 Not yet: archive formats and resource limits, retention/deletion operations, a
 Prefect entry point for imports, migrating the n8n drop folder to `submit`,
 transformation-only retries, and native Apple Health XML or other formats.
+
+## 009 — n8n is a temporary receiver for Health Auto Export
+
+Status: accepted, 2026-10-28.
+
+Today n8n has one job. Workflow "Apple Health → Files: Ingest Exports" receives
+Health Auto Export's webhook POSTs, writes each body unchanged to the NAS share
+mounted on the worker, then starts `load_apple_health` through the Prefect API. It
+exists only because nothing else in the stack accepts HTTP uploads.
+
+The workspace HTTP API (milestone 4) replaces it with an upload endpoint for the
+connection's artifacts. That endpoint is the same `submit` (and optional import)
+path as the CLI and web form, so phone pushes become one more acquisition path for
+the artifact inbox. This removes a service from the health data path and the
+shared-folder write access. Every receipt is also recorded, so a silent stop like
+the `N8N_RESTRICT_FILE_ACCESS_TO` separator bug (no writes from 2026-06-07 to
+2026-09-22) shows up as "no export received since …" instead of going unnoticed.
+
+Until the workspace server is deployed, the existing workflow and legacy
+deployment keep running unchanged. Cutover: point Health Auto Export at the
+workspace endpoint, confirm receipts and imports, then disable the n8n workflow
+and the legacy Apple Health deployment. Do not run both against the same
+connection's dataset (decision 006). n8n is not a dependency of the workspace
+design; other automations in n8n are out of scope.
+
+## 010 — Small server-rendered interface over shared services
+
+Status: accepted for milestone 4, 2026-10-28.
+
+**Stack.** FastAPI, Jinja2 templates, plain HTML forms, and a few lines of CSS. No
+JavaScript build and no client framework. Every web dependency was already in the
+lockfile through Prefect; they are now declared explicitly. A richer frontend can
+replace the templates later, because the JSON API exposes the same operations.
+
+**One service layer.** `src/core/service.py:WorkspaceService` is what the HTTP API
+and web pages call: overview, connection detail, request sync, submit file,
+request import, read/save configuration. Execution goes through an `Executor`:
+`SubprocessExecutor` (server: one `pipelines-workspace execute` process per
+operation, so a crash affects one operation) and `InlineExecutor` (tests). A
+Prefect executor that creates flow runs of `sync_connection` replaces the
+subprocess one when the runtime decisions land (decision 007).
+
+**Request, then execute.** The runner now splits `request_sync`/`request_import`
+(record the operation, visible as requested) from `execute_operation` (run one
+attempt). `run_connection` and `import_artifact` remain as request-plus-execute.
+Requested executions wait up to an hour for the connection lock instead of being
+blocked. A demo push of two exports at once showed the second one blocked and
+never retried before this change.
+
+**Configuration identity.**
+- Edit conflicts compare a SHA-256 of the exact file bytes (`file_revision`),
+  under a lock, with atomic replacement. Any change by someone else, including
+  formatting, is a conflict. An invalid file can still be repaired.
+- Each connection has its own revision (its normalized configuration plus the
+  workspace ID). Operations record it. A request runs only if its connection is
+  unchanged; otherwise its attempt is `blocked`. Edits to one connection do not
+  block another's queue.
+- "Saved vs applied" compares the connection's revision with that of its latest
+  executed attempt (`applied`, `saved_not_applied`, `never_run`).
+- `links` (Prefect UI, Metabase) and per-connection `dashboards` are optional,
+  additive schema fields. They do not affect execution revisions.
+
+**Auth.** Single user, one token from `WORKSPACE_API_TOKEN` (16+ characters,
+required to start). API clients send it as a bearer token. Browsers exchange it
+once for an `HttpOnly`, `SameSite=Strict` cookie holding an HMAC derived from the
+token, never the token itself. Cookie-authenticated POSTs with a foreign `Origin`
+are refused. Redirect notices are fixed codes, so nothing from the URL is reflected.
+Jinja autoescaping covers user-supplied names. The server binds to 127.0.0.1 by
+default; put TLS in front of it before exposing it.
+
+**Analysis states.** `not_modelled` is new: the connection's dataset is not one
+the dbt models read. Previously this showed as `stale`, which implied it would
+catch up.
+
+Not yet: Prefect executor and `status --refresh` reconciliation, a structured
+config editor (JSON textarea for now), multi-user accounts, exercising the flow
+against this installation (expired credentials, outages) on the test setup.

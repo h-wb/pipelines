@@ -1,0 +1,11 @@
+{% macro badge(value) -%}
+  {%- if value %}<span class="badge {{ value }}">{{ value | replace("_", " ") }}</span>{% else %}<span class="muted">—</span>{% endif -%}
+{%- endmacro %}
+{% macro when(value) -%}
+  {%- if value %}<time datetime="{{ value }}">{{ value[:16] | replace("T", " ") }} UTC</time>{% else %}<span class="muted">never</span>{% endif -%}
+{%- endmacro %}
+{% macro attempt_cells(a) -%}
+  <td>{{ badge(a.ingestion) }}{% if a.load_ids %} <span class="muted">{{ a.load_ids | length }} load{{ "s" if a.load_ids | length != 1 }}</span>{% endif %}</td>
+  <td>{{ badge(a.transformation) }}{% if a.transformation_detail %}<div class="muted">{{ a.transformation_detail }}</div>{% endif %}</td>
+  <td>{% if a.error_message %}<span class="failed">{{ a.error_type.rsplit(".", 1)[-1] }}</span>: <span class="muted">{{ a.error_message }}</span>{% endif %}</td>
+{%- endmacro %}

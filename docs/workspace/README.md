@@ -79,6 +79,43 @@ same parser version and options prints `already_imported` and loads nothing;
 import never counts as imported. `artifacts` lists each artifact with every import
 attempt, its parser version, and options.
 
+### Web interface and HTTP API
+
+```bash
+export WORKSPACE_API_TOKEN="$(openssl rand -hex 24)"
+uv run --locked pipelines-workspace --config workspace.json serve --duckdb /tmp/mirror.duckdb
+# http://127.0.0.1:8765 — log in with the token
+```
+
+The interface lists connections with their last attempt, when data was last loaded,
+analysis freshness (`current`, `stale`, `not_modelled`, `no_data`), and whether
+the saved configuration has been applied. Each connection page has sync/scan,
+file upload, import/replay, and history. Configuration is edited as JSON with
+validation and conflict detection. Pages refresh while work is in flight.
+Dashboard and Prefect run links appear when `links` and `dashboards` are configured:
+
+```json
+"links": {"prefect_ui": "https://prefect.example", "metabase": "https://metabase.example"},
+"connections": [{"id": "health", "...": "...", "dashboards": {"Health": 24}}]
+```
+
+Requests run as `pipelines-workspace execute <operation>` subprocesses against
+the same local DuckDB file. Requests for one connection queue behind each other.
+
+The JSON API takes `Authorization: Bearer $WORKSPACE_API_TOKEN`:
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /api/overview`, `GET /api/connections/{id}` | Status, history, files |
+| `POST /api/connections/{id}/sync` | Request a sync (202, operation ID) |
+| `POST /api/connections/{id}/artifacts?role=ongoing&import=true&name=…` | Store the raw request body as a file, optionally import it |
+| `POST /api/connections/{id}/artifacts/{artifact}/import?replay=false` | Request an import |
+| `GET /api/config`, `PUT /api/config` with `If-Match: <file_revision>` | Read or replace the configuration |
+
+The artifact endpoint is the replacement for the n8n receiver (decision 009):
+point Health Auto Export's REST automation at it with the bearer header.
+Uploads are capped at 512 MiB.
+
 The Prefect flow `src/pipelines/workspace.py:sync_connection` uses the same runner
 against Postgres and runs dbt. It is not in `prefect.yaml`; see decision 007.
 

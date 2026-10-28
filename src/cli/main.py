@@ -19,6 +19,8 @@ from src.integrations.registry import INTEGRATIONS
 
 DEFAULT_METADATA = "sqlite:///.workspace/metadata.sqlite"
 DEFAULT_ARTIFACTS = ".workspace/artifacts"
+# Requested operations queue behind a running one for the same connection.
+EXECUTE_LOCK_WAIT = 3600.0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -54,7 +56,24 @@ def main(argv: list[str] | None = None) -> int:
     )
     listing = commands.add_parser("artifacts", help="List artifacts and their imports")
     listing.add_argument("connection", nargs="?")
-    for command in (status, run, submit, load, listing):
+    execute = commands.add_parser(
+        "execute", help="Run one requested operation (used by the server's executor)"
+    )
+    execute.add_argument("--duckdb", type=Path, required=True)
+    execute.add_argument("operation")
+    serve = commands.add_parser(
+        "serve", help="Web interface and HTTP API (needs WORKSPACE_API_TOKEN)"
+    )
+    serve.add_argument("--duckdb", type=Path, required=True)
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8765)
+    serve.add_argument(
+        "--artifacts",
+        type=Path,
+        default=Path(os.environ.get("WORKSPACE_ARTIFACT_DIR", DEFAULT_ARTIFACTS)),
+        help="Directory for retained original files",
+    )
+    for command in (status, run, submit, load, listing, execute, serve):
         command.add_argument(
             "--metadata",
             default=os.environ.get("WORKSPACE_METADATA_URL", DEFAULT_METADATA),
@@ -101,13 +120,15 @@ def _operate(args: argparse.Namespace, workspace: Any) -> int:
     from src.core.operations import MetadataStore
 
     ids = [c.config.id for c in workspace.connections]
-    if args.connection is not None and args.connection not in ids:
+    if getattr(args, "connection", None) not in (None, *ids):
         print("Unknown connection", file=sys.stderr)
         return 2
     if args.metadata == DEFAULT_METADATA:
         Path(".workspace").mkdir(exist_ok=True)
     store = MetadataStore(args.metadata)
     try:
+        if args.command == "serve":
+            return _serve(args, store)
         return _with_store(args, workspace, store, ids)
     finally:
         store.engine.dispose()
@@ -117,7 +138,7 @@ def _with_store(args: argparse.Namespace, workspace: Any, store: Any, ids: list)
     from src.core.operations import OperationError
 
     store.migrate()
-    selected = [args.connection] if args.connection else ids
+    selected = [args.connection] if getattr(args, "connection", None) else ids
     if args.command == "status":
         result = [store.connection_status(workspace.id, c) for c in selected]
         return _print(result)
@@ -128,13 +149,13 @@ def _with_store(args: argparse.Namespace, workspace: Any, store: Any, ids: list)
             for artifact in store.list_artifacts(workspace.id, c)
         ]
         return _print(result)
-    connection = next(
-        c for c in workspace.connections if c.config.id == args.connection
-    )
     if args.command == "submit":
         from src.core.artifacts import submit_artifact
         from src.integrations.formats import InvalidArtifact
 
+        connection = next(
+            c for c in workspace.connections if c.config.id == args.connection
+        )
         try:
             artifact, created = submit_artifact(
                 workspace,
@@ -154,6 +175,7 @@ def _with_store(args: argparse.Namespace, workspace: Any, store: Any, ids: list)
     from src.core.runner import (
         AlreadyImported,
         IngestionFailed,
+        execute_operation,
         import_artifact,
         run_connection,
     )
@@ -163,15 +185,25 @@ def _with_store(args: argparse.Namespace, workspace: Any, store: Any, ids: list)
         "store": store,
         "destination": dlt.destinations.duckdb(credentials=str(args.duckdb)),
         "resolve_credentials": resolve_credentials,
-        "origin": "local",
         "pipelines_dir": str(args.duckdb.parent / f"{args.duckdb.stem}.dlt"),
     }
     try:
-        if args.command == "run":
-            outcome = run_connection(workspace, args.connection, **common)
+        if args.command == "execute":
+            outcome = execute_operation(
+                workspace, args.operation, lock_wait=EXECUTE_LOCK_WAIT, **common
+            )
+        elif args.command == "run":
+            outcome = run_connection(
+                workspace, args.connection, origin="local", **common
+            )
         else:
             outcome = import_artifact(
-                workspace, args.connection, args.artifact, replay=args.replay, **common
+                workspace,
+                args.connection,
+                args.artifact,
+                replay=args.replay,
+                origin="local",
+                **common,
             )
     except AlreadyImported as error:
         return _print({"already_imported": True, "operation_id": error.operation_id})
@@ -183,4 +215,33 @@ def _with_store(args: argparse.Namespace, workspace: Any, store: Any, ids: list)
 
 def _print(result: Any) -> int:
     print(json.dumps(result, indent=2))
+    return 0
+
+
+def _serve(args: argparse.Namespace, store: Any) -> int:
+    import uvicorn
+
+    from src.core.service import SubprocessExecutor, WorkspaceService
+    from src.web.app import create_app
+
+    token = os.environ.get("WORKSPACE_API_TOKEN", "")
+    if len(token) < 16:
+        print("Set WORKSPACE_API_TOKEN (16+ characters) to serve", file=sys.stderr)
+        return 2
+    store.migrate()
+    executor = SubprocessExecutor(
+        [
+            "--config",
+            str(args.config.resolve()),
+            "execute",
+            "--duckdb",
+            str(args.duckdb.resolve()),
+            "--metadata",
+            args.metadata,
+        ]
+    )
+    service = WorkspaceService(
+        args.config.resolve(), store, args.artifacts.resolve(), executor
+    )
+    uvicorn.run(create_app(service, token), host=args.host, port=args.port)
     return 0

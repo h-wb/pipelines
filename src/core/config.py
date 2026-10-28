@@ -1,12 +1,15 @@
 """Read and validate desired configuration without fetching secrets or running jobs."""
 
+import fcntl
 import hashlib
 import json
-from dataclasses import dataclass
+import os
+import tempfile
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import Field, ValidationError, field_validator
+from pydantic import Field, StringConstraints, ValidationError, field_validator
 
 from src.core.models import DatabaseIdentifier, Identifier, SecretKey, StrictModel
 from src.integrations.registry import INTEGRATIONS, IntegrationDefinition
@@ -14,6 +17,10 @@ from src.integrations.registry import INTEGRATIONS, IntegrationDefinition
 
 class ConfigurationError(ValueError):
     """A safe diagnostic that must not include configuration input values."""
+
+
+class ConfigurationConflict(ConfigurationError):
+    """The file changed since the editor read it."""
 
 
 class SecretReference(StrictModel):
@@ -26,18 +33,34 @@ class Binding(StrictModel):
     dataset_name: DatabaseIdentifier
 
 
+WebUrl = Annotated[str, StringConstraints(pattern=r"^https?://[^\s]+$", max_length=500)]
+
+
+class Links(StrictModel):
+    """Where to send people for execution logs and analyses. Optional."""
+
+    prefect_ui: WebUrl | None = None
+    metabase: WebUrl | None = None
+
+
 class ConnectionConfig(StrictModel):
     id: Identifier
     integration: Identifier
     settings: dict[str, Any]
     credentials: dict[str, SecretReference] = Field(default_factory=dict)
     binding: Binding | None = None
+    # Metabase dashboard name -> ID, shown as links next to the connection.
+    dashboards: dict[
+        Annotated[str, StringConstraints(min_length=1, max_length=100)],
+        Annotated[int, Field(gt=0)],
+    ] = Field(default_factory=dict)
 
 
 class WorkspaceConfig(StrictModel):
     schema_version: Literal[1]
     id: Identifier
     connections: list[ConnectionConfig] = Field(min_length=1)
+    links: Links = Field(default_factory=Links)
 
     @field_validator("schema_version", mode="before")
     @classmethod
@@ -53,6 +76,9 @@ class ResolvedConnection:
     integration: IntegrationDefinition
     settings: StrictModel
     binding: Binding
+    # Hash of this connection's normalized configuration (with the workspace ID).
+    # Operations record it, so editing one connection does not block another's.
+    revision: str = ""
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -71,6 +97,7 @@ class ResolvedWorkspace:
     id: str
     revision: str
     connections: tuple[ResolvedConnection, ...]
+    links: Links = field(default_factory=Links)
 
 
 def _validation_error(error: ValidationError, prefix: str) -> ConfigurationError:
@@ -145,25 +172,36 @@ def parse_workspace(text: str) -> ResolvedWorkspace:
 
     # Normalize defaults, typed settings, and bindings before computing the revision.
     # It identifies desired configuration only; nothing is persisted or deployed here.
+    entries = {
+        c.config.id: {
+            "id": c.config.id,
+            "integration": c.integration.name,
+            "settings": c.settings.model_dump(),
+            "credentials": {k: v.model_dump() for k, v in c.config.credentials.items()},
+            "binding": c.binding.model_dump(),
+        }
+        for c in connections
+    }
+    connections = [
+        replace(c, revision=_hash({"workspace": config.id, **entries[c.config.id]}))
+        for c in connections
+    ]
     normalized = {
         "schema_version": config.schema_version,
         "id": config.id,
-        "connections": [
-            {
-                "id": c.config.id,
-                "integration": c.integration.name,
-                "settings": c.settings.model_dump(),
-                "credentials": {
-                    k: v.model_dump() for k, v in c.config.credentials.items()
-                },
-                "binding": c.binding.model_dump(),
-            }
-            for c in sorted(connections, key=lambda item: item.config.id)
-        ],
+        "connections": [entries[key] for key in sorted(entries)],
     }
-    canonical = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
-    revision = hashlib.sha256(canonical.encode()).hexdigest()
-    return ResolvedWorkspace(config.id, revision, tuple(connections))
+    return ResolvedWorkspace(
+        config.id,
+        _hash(normalized),
+        tuple(connections),
+        links=config.links,
+    )
+
+
+def _hash(value: Any) -> str:
+    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 def load_workspace(path: Path) -> ResolvedWorkspace:
@@ -172,3 +210,43 @@ def load_workspace(path: Path) -> ResolvedWorkspace:
     except (OSError, UnicodeError) as error:
         raise ConfigurationError("Cannot read UTF-8 configuration file") from error
     return parse_workspace(text)
+
+
+def save_workspace(path: Path, text: str, expected_revision: str) -> ResolvedWorkspace:
+    """Replace the configuration file if it is still at `expected_revision`.
+
+    The revision check and the write happen under one lock, and the new file is
+    validated, flushed, and renamed into place, so a concurrent CLI or UI edit
+    cannot be silently overwritten and readers never see a partial file.
+    """
+    workspace = parse_workspace(text)
+    with open(path.with_name(f".{path.name}.lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if file_revision(path) != expected_revision:
+            raise ConfigurationConflict(
+                "Configuration changed since it was loaded; reload and reapply"
+            )
+        handle, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+        try:
+            with os.fdopen(handle, "w", encoding="utf-8") as target:
+                target.write(text)
+                target.flush()
+                os.fsync(target.fileno())
+            os.replace(temporary, path)
+        except BaseException:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+            raise
+    return workspace
+
+
+def file_revision(path: Path) -> str:
+    """The exact file contents an editor saw; a missing file is "missing".
+
+    Stricter than the configuration revision on purpose: any byte change by
+    someone else, even formatting or link edits, is a conflict.
+    """
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return "missing"

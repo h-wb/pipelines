@@ -121,7 +121,7 @@ class OperationTests(unittest.TestCase):
         )
         self.assertTrue(outcome.load_ids)
         operation = self.store.get_operation(outcome.operation_id)
-        self.assertEqual(operation.config_revision, workspace.revision)
+        self.assertEqual(operation.config_revision, workspace.connections[0].revision)
         self.assertEqual(
             operation.dataset_name, workspace.connections[0].binding.dataset_name
         )
@@ -189,7 +189,7 @@ class OperationTests(unittest.TestCase):
             origin="request",
             pipeline_name="p",
             dataset_name="d",
-            config_revision=workspace.revision,
+            config_revision=workspace.connections[0].revision,
             code_revision="test",
             backend_run_id=None,
         )
@@ -218,6 +218,28 @@ class OperationTests(unittest.TestCase):
             self.run_music(workspace, connection_id="other_music")
         self.assertEqual(self.status(workspace)["last_attempt"]["ingestion"], "blocked")
         self.assertEqual(self.run_music(workspace).ingestion, "succeeded")
+
+    def test_waiting_run_starts_when_the_running_one_finishes(self):
+        import threading
+
+        workspace = self.workspace()
+        pipeline = workspace.connections[0].binding.pipeline_name
+        held, release = threading.Event(), threading.Event()
+
+        def hold():
+            with self.store.connection_lock(pipeline):
+                held.set()
+                release.wait(10)
+
+        holder = threading.Thread(target=hold)
+        holder.start()
+        held.wait(10)
+        threading.Timer(1.5, release.set).start()
+        with patch("src.core.operations.LOCK_POLL_SECONDS", 0.1):
+            outcome = self.run_music(workspace, lock_wait=10)
+        holder.join()
+        self.assertEqual(outcome.ingestion, "succeeded")
+        self.assertEqual(outcome.attempt, 1)  # no blocked attempt first
 
     def test_metadata_outage_after_load_does_not_fail_the_load(self):
         workspace = self.workspace()

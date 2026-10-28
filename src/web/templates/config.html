@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Configuration{% endblock %}
+{% block body %}
+<h1>Configuration</h1>
+{% if error %}<p class="error">{{ error }}</p>{% elif config.error %}<p class="error">The saved file is invalid: {{ config.error }}</p>{% endif %}
+{% if current_text is defined and current_text is not none %}
+<details open><summary>Current file (changed since you loaded it)</summary><pre>{{ current_text }}</pre></details>
+<p class="muted">Saving again replaces that version with yours.</p>
+{% endif %}
+<form method="post" action="/config">
+  <input type="hidden" name="file_revision" value="{{ config.file_revision }}">
+  <textarea name="text" spellcheck="false">{{ config.text }}</textarea>
+  <p><button>Save</button>
+  <span class="muted">Validated before saving. Credentials are references (<code>{"provider": "fnox", "key": "…"}</code>), never values.
+  Operations already requested keep the configuration they were requested with.</span></p>
+</form>
+{% endblock %}

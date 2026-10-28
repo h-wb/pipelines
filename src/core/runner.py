@@ -94,104 +94,61 @@ def model_selector(connection: ResolvedConnection) -> tuple[str | None, str]:
     return f"source:{models.dbt_source}+", f"source:{models.dbt_source}+"
 
 
-def _adopt_operation(
+def _new_operation(
     store: MetadataStore,
     workspace: ResolvedWorkspace,
     connection: ResolvedConnection,
     origin: Origin,
-    operation_id: str | None,
-    backend_run_id: str | None,
+    kind: str = "sync",
+    **values: Any,
 ) -> Operation:
-    if operation_id is not None:
-        operation = store.get_operation(operation_id)
-        if (operation.workspace_id, operation.connection_id) != (
-            workspace.id,
-            connection.config.id,
-        ):
-            raise OperationError("Operation belongs to a different connection")
-        if backend_run_id is not None:
-            store.bind_backend_run(operation.id, backend_run_id)
-        return operation
-    if backend_run_id is not None:
-        existing = store.find_by_backend_run(backend_run_id)
-        if existing is not None:  # a retry of the same backend run
-            if existing.connection_id != connection.config.id:
-                raise OperationError("Backend run belongs to a different connection")
-            return existing
+    values.setdefault("backend_run_id", None)
     return store.create_operation(
         workspace_id=workspace.id,
         connection_id=connection.config.id,
         integration=connection.integration.name,
-        kind="sync",
+        kind=kind,
         origin=origin,
         pipeline_name=connection.binding.pipeline_name,
         dataset_name=connection.binding.dataset_name,
-        config_revision=workspace.revision,
+        config_revision=connection.revision,
         code_revision=code_revision(),
-        backend_run_id=backend_run_id,
+        **values,
     )
 
 
-def run_connection(
+def request_sync(
     workspace: ResolvedWorkspace,
     connection_id: str,
     *,
     store: MetadataStore,
-    destination: Any,
-    resolve_credentials: Callable[[ResolvedConnection], dict[str, str]],
     origin: Origin,
-    operation_id: str | None = None,
-    backend_run_id: str | None = None,
-    transform: Callable[[str], None] | None = None,
-    pipelines_dir: str | None = None,
-) -> RunOutcome:
-    """Execute one sync attempt and record each stage.
-
-    Registration must succeed before anything is loaded. After a load commits, a
-    metadata failure is logged and reported as `recorded=False`, never as a failed
-    load. A dbt failure leaves ingestion succeeded and the analysis stale.
-    """
+) -> Operation:
+    """Record a sync request. It shows as requested until an executor runs it."""
     connection = _connection(workspace, connection_id)
-    operation = _adopt_operation(
-        store, workspace, connection, origin, operation_id, backend_run_id
-    )
-
-    from src.integrations.sources import create_source
-
-    return _run_locked(
-        store,
-        operation.id,
-        connection,
-        lambda credentials: create_source(connection, credentials),
-        destination,
-        resolve_credentials,
-        transform,
-        pipelines_dir,
-    )
+    if not {"incremental_sync", "directory_import"} & set(
+        connection.integration.capabilities
+    ):
+        raise OperationError("Integration has nothing to sync")
+    return _new_operation(store, workspace, connection, origin)
 
 
-def import_artifact(
+def request_import(
     workspace: ResolvedWorkspace,
     connection_id: str,
     artifact_id: str,
     *,
     store: MetadataStore,
-    destination: Any,
-    resolve_credentials: Callable[[ResolvedConnection], dict[str, str]],
     origin: Origin,
     replay: bool = False,
-    transform: Callable[[str], None] | None = None,
-    pipelines_dir: str | None = None,
-) -> RunOutcome:
-    """Parse one registered artifact and load its rows, bypassing file cursors.
+) -> Operation:
+    """Record an import of one artifact, or raise AlreadyImported.
 
     An artifact already imported with the same parser version and options is not
-    loaded again unless `replay` is set; replays are merge-safe because records
+    imported again unless `replay` is set; replays are merge-safe because records
     keep their source keys. A failed attempt never marks the artifact imported.
     """
-    from src.core.artifacts import stored_copy_is_intact
     from src.integrations.formats import PARSER_VERSIONS
-    from src.integrations.sources import create_artifact_source
 
     connection = _connection(workspace, connection_id)
     artifact = store.get_artifact(workspace.id, artifact_id)
@@ -207,37 +164,137 @@ def import_artifact(
                 and previous["options"] == options
             ):
                 raise AlreadyImported(previous["operation_id"])
-    if not stored_copy_is_intact(artifact):
-        raise OperationError(
-            "Stored artifact is missing or does not match its checksum"
-        )
-    operation = store.create_operation(
-        workspace_id=workspace.id,
-        connection_id=connection.config.id,
-        integration=connection.integration.name,
+    return _new_operation(
+        store,
+        workspace,
+        connection,
+        origin,
         kind="replay" if replay else "import",
-        origin=origin,
-        pipeline_name=connection.binding.pipeline_name,
-        dataset_name=connection.binding.dataset_name,
-        config_revision=workspace.revision,
-        code_revision=code_revision(),
-        backend_run_id=None,
         artifact_id=artifact_id,
         parser_version=parser_version,
         options=json.dumps(options, sort_keys=True),
     )
+
+
+def execute_operation(
+    workspace: ResolvedWorkspace,
+    operation_id: str,
+    *,
+    store: MetadataStore,
+    destination: Any,
+    resolve_credentials: Callable[[ResolvedConnection], dict[str, str]],
+    backend_run_id: str | None = None,
+    transform: Callable[[str], None] | None = None,
+    pipelines_dir: str | None = None,
+    lock_wait: float = 0,
+) -> RunOutcome:
+    """Run one recorded operation as a new attempt and record each stage.
+
+    `lock_wait` lets queued requests wait for a running execution of the same
+    connection instead of being blocked (several exports arriving together).
+
+    Registration must already have succeeded. After a load commits, a metadata
+    failure is logged and reported as `recorded=False`, never as a failed load. A
+    dbt failure leaves ingestion succeeded and the analysis stale.
+
+    The operation runs only against the connection configuration it was requested
+    with: an edit saved in between blocks it instead of silently changing it.
+    """
+    from src.core.artifacts import stored_copy_is_intact
+    from src.integrations.formats import PARSER_VERSIONS
+    from src.integrations.sources import create_artifact_source, create_source
+
+    operation = store.get_operation(operation_id)
+    if operation.workspace_id != workspace.id:
+        raise OperationError("Operation belongs to a different workspace")
+    connection = _connection(workspace, operation.connection_id)
+    if backend_run_id is not None:
+        store.bind_backend_run(operation.id, backend_run_id)
+
+    reason = None
+    make_source: Callable[[dict[str, str]], Any]
+    if operation.config_revision != connection.revision:
+        reason = "Connection configuration changed since this operation was requested"
+    elif operation.kind == "sync":
+        make_source = lambda credentials: create_source(connection, credentials)
+    else:
+        artifact = store.get_artifact(workspace.id, str(operation.artifact_id))
+        options = json.loads(operation.options or "{}")
+        if operation.parser_version != PARSER_VERSIONS[artifact["input_format"]]:
+            reason = "Parser version changed since this import was requested"
+        elif not stored_copy_is_intact(artifact):
+            reason = "Stored artifact is missing or does not match its checksum"
+        path = artifact["storage_path"]
+        make_source = lambda credentials: create_artifact_source(
+            connection, path, options
+        )
+    if reason is not None:
+        attempt, _ = store.start_attempt(operation.id, "blocked")
+        store.update_attempt(attempt, error_type="Blocked", error_message=reason)
+        raise OperationError(reason)
     return _run_locked(
         store,
         operation.id,
         connection,
-        lambda credentials: create_artifact_source(
-            connection, artifact["storage_path"], options
-        ),
+        make_source,
         destination,
         resolve_credentials,
         transform,
         pipelines_dir,
+        lock_wait,
     )
+
+
+def run_connection(
+    workspace: ResolvedWorkspace,
+    connection_id: str,
+    *,
+    store: MetadataStore,
+    origin: Origin,
+    operation_id: str | None = None,
+    backend_run_id: str | None = None,
+    **execution: Any,
+) -> RunOutcome:
+    """Sync one connection now, adopting a requested operation or a backend retry.
+
+    Without an operation ID, a backend run that already has an operation (a
+    Prefect retry) adds an attempt to it; anything else registers a new one.
+    """
+    connection = _connection(workspace, connection_id)
+    if operation_id is None and backend_run_id is not None:
+        existing = store.find_by_backend_run(backend_run_id)
+        if existing is not None:
+            operation_id = existing.id
+    if operation_id is None:
+        operation_id = _new_operation(
+            store, workspace, connection, origin, backend_run_id=backend_run_id
+        ).id
+    elif store.get_operation(operation_id).connection_id != connection.config.id:
+        raise OperationError("Operation belongs to a different connection")
+    return execute_operation(
+        workspace,
+        operation_id,
+        store=store,
+        backend_run_id=backend_run_id,
+        **execution,
+    )
+
+
+def import_artifact(
+    workspace: ResolvedWorkspace,
+    connection_id: str,
+    artifact_id: str,
+    *,
+    store: MetadataStore,
+    origin: Origin,
+    replay: bool = False,
+    **execution: Any,
+) -> RunOutcome:
+    """Request and immediately execute an artifact import."""
+    operation = request_import(
+        workspace, connection_id, artifact_id, store=store, origin=origin, replay=replay
+    )
+    return execute_operation(workspace, operation.id, store=store, **execution)
 
 
 def artifact_options(connection: ResolvedConnection) -> dict[str, Any]:
@@ -261,9 +318,10 @@ def _run_locked(
     resolve_credentials: Callable[[ResolvedConnection], dict[str, str]],
     transform: Callable[[str], None] | None,
     pipelines_dir: str | None,
+    lock_wait: float = 0,
 ) -> RunOutcome:
     try:
-        with store.connection_lock(connection.binding.pipeline_name):
+        with store.connection_lock(connection.binding.pipeline_name, lock_wait):
             attempt, number = store.start_attempt(operation_id, "running")
             return _execute(
                 store,

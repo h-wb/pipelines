@@ -44,6 +44,8 @@ def sync_connection(
         operation_id=operation_id,
         backend_run_id=str(flow_run.id),
         transform=build_models,
+        # Overlapping runs of one connection queue instead of failing.
+        lock_wait=3600,
     )
     return {
         "operation_id": outcome.operation_id,

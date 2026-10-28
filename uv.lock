@@ -1070,25 +1070,31 @@ dependencies = [
     { name = "dbt-core" },
     { name = "dbt-postgres" },
     { name = "dlt", extra = ["postgres"] },
+    { name = "fastapi" },
+    { name = "jinja2" },
     { name = "pendulum" },
     { name = "prefect", version = "3.8.8", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "prefect", version = "3.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pydantic" },
+    { name = "python-multipart" },
     { name = "requests" },
     { name = "sqlalchemy", version = "2.0.55", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "sqlalchemy", version = "2.1.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
 dev = [
     { name = "black" },
     { name = "dlt", extra = ["duckdb"] },
+    { name = "httpx" },
     { name = "marimo" },
     { name = "mypy" },
     { name = "ruff" },
 ]
 test = [
     { name = "dlt", extra = ["duckdb"] },
+    { name = "httpx" },
 ]
 
 [package.metadata]
@@ -1096,22 +1102,30 @@ requires-dist = [
     { name = "dbt-core", specifier = ">=1.12.5" },
     { name = "dbt-postgres", specifier = ">=1.11.0" },
     { name = "dlt", extras = ["postgres"], specifier = ">=1.27.2" },
+    { name = "fastapi", specifier = ">=0.110,<1" },
+    { name = "jinja2", specifier = ">=3.1,<4" },
     { name = "pendulum", specifier = ">=3.2.0" },
     { name = "prefect", specifier = ">=3.4,<4" },
     { name = "pydantic", specifier = ">=2.10,<3" },
+    { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "requests", specifier = ">=2.34.2" },
     { name = "sqlalchemy", specifier = ">=2.0,<3" },
+    { name = "uvicorn", specifier = ">=0.30,<1" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "black", specifier = ">=23.0.0" },
     { name = "dlt", extras = ["duckdb"], specifier = ">=1.27.2" },
+    { name = "httpx", specifier = ">=0.27,<1" },
     { name = "marimo", specifier = ">=0.16.5" },
     { name = "mypy", specifier = ">=1.5.0" },
     { name = "ruff", specifier = ">=0.1.0" },
 ]
-test = [{ name = "dlt", extras = ["duckdb"], specifier = ">=1.27.2" }]
+test = [
+    { name = "dlt", extras = ["duckdb"], specifier = ">=1.27.2" },
+    { name = "httpx", specifier = ">=0.27,<1" },
+]
 
 [[package]]
 name = "docker"

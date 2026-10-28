@@ -8,6 +8,7 @@ and records per-stage outcomes, so status can tell ingestion and analysis apart.
 import fcntl
 import hashlib
 import json
+import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -20,6 +21,7 @@ import sqlalchemy as sa
 
 SCHEMA_VERSION = 2
 POSTGRES_SCHEMA = "workspace_meta"
+LOCK_POLL_SECONDS = 1.0
 
 Origin = Literal["local", "request", "prefect"]
 Role = Literal["historical", "ongoing"]
@@ -321,6 +323,46 @@ class MetadataStore:
             "requested_not_started": pending,
         }
 
+    def last_executed_revision(
+        self, workspace_id: str, connection_id: str
+    ) -> str | None:
+        """Connection configuration revision used by the latest attempt that ran."""
+        with self.engine.connect() as db:
+            revision: str | None = db.execute(
+                sa.select(operations.c.config_revision)
+                .select_from(attempts.join(operations))
+                .where(
+                    operations.c.workspace_id == workspace_id,
+                    operations.c.connection_id == connection_id,
+                    attempts.c.ingestion != "blocked",
+                )
+                .order_by(attempts.c.id.desc())
+                .limit(1)
+            ).scalar()
+        return revision
+
+    def recent_operations(
+        self, workspace_id: str, connection_id: str, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        """Newest operations first, each with its attempts (oldest first)."""
+        with self.engine.connect() as db:
+            rows = db.execute(
+                operations.select()
+                .where(
+                    operations.c.workspace_id == workspace_id,
+                    operations.c.connection_id == connection_id,
+                )
+                .order_by(operations.c.created_at.desc())
+                .limit(limit)
+            ).all()
+        result = []
+        for row in rows:
+            data = row._asdict()
+            data["created_at"] = _iso(_aware(data["created_at"]))
+            data["attempts"] = self.attempts(data["id"])
+            result.append(data)
+        return result
+
     def register_artifact(self, **values: Any) -> tuple[dict[str, Any], bool]:
         """Record received bytes; returns (artifact, newly_registered).
 
@@ -395,21 +437,31 @@ class MetadataStore:
         return [_artifact(row) for row in rows]
 
     @contextmanager
-    def connection_lock(self, pipeline_name: str) -> Iterator[None]:
+    def connection_lock(self, pipeline_name: str, wait: float = 0) -> Iterator[None]:
         """Serialize executions sharing one dlt pipeline state, across processes.
 
-        Both mechanisms release automatically when the holding process dies.
-        PostgreSQL advisory locks cover every worker using the same database; the
-        SQLite file lock only covers processes on one host (local development).
+        Waits up to `wait` seconds for a running execution to finish, then raises
+        ConnectionBusy. Both mechanisms release automatically when the holding
+        process dies. PostgreSQL advisory locks cover every worker using the same
+        database; the SQLite file lock only covers processes on one host.
         """
+        deadline = time.monotonic() + wait
+
+        def retry() -> bool:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(LOCK_POLL_SECONDS)
+            return True
+
         if self.engine.dialect.name == "postgresql":
             digest = hashlib.sha256(f"workspace:{pipeline_name}".encode()).digest()
             key = int.from_bytes(digest[:8], "big", signed=True)
             with self.engine.connect() as db:
-                if not db.execute(
+                while not db.execute(
                     sa.text("SELECT pg_try_advisory_lock(:key)"), {"key": key}
                 ).scalar():
-                    raise ConnectionBusy("Connection is already running")
+                    if not retry():
+                        raise ConnectionBusy("Connection is already running")
                 try:
                     yield
                 finally:
@@ -422,10 +474,13 @@ class MetadataStore:
         lock_dir = Path(database).with_suffix(".locks")
         lock_dir.mkdir(exist_ok=True)
         with open(lock_dir / f"{pipeline_name}.lock", "w") as handle:
-            try:
-                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError as error:
-                raise ConnectionBusy("Connection is already running") from error
+            while True:
+                try:
+                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError as error:
+                    if not retry():
+                        raise ConnectionBusy("Connection is already running") from error
             try:
                 yield
             finally:

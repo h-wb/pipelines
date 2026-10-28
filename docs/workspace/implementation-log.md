@@ -161,3 +161,60 @@ Next slice:
    dropping files into the scanned directory.
 3. Milestone 4 can start against the local store: the CLI operations are the
    application services a small interface would call.
+
+## 2026-10-28 — Workspace interface and HTTP API (milestone 4, local)
+
+Implemented (decisions 009, 010):
+
+- Decision 009: n8n stays as the Health Auto Export receiver only until the workspace
+  server is deployed; the artifact upload endpoint replaces it.
+- Runner split into request and execute, a per-connection revision check, and
+  lock waiting for queued requests.
+- Revision-checked, atomic configuration saves. Optional `links` and per-connection
+  `dashboards` in the schema.
+- `WorkspaceService` with subprocess and inline executors.
+- `src/web`: token auth, JSON API, and server-rendered pages for overview,
+  connection detail (sync/scan, upload, import/replay, history), and configuration.
+- CLI: `serve` and `execute`. Explicit `fastapi`, `uvicorn`, `jinja2`, and
+  `python-multipart` dependencies; `httpx` in the test group. No lockfile version
+  changed.
+
+Validation:
+
+- Lint, format, and mypy clean. 46 tests pass on Python 3.14.7 (with
+  `-W error::ResourceWarning`) and in an isolated Python 3.12.15 environment. The
+  wheel includes `src/web` and its templates.
+- New web tests: auth on every route except login/health; the session cookie is not
+  the token; cross-origin cookie posts refused; phone-style raw upload stores and
+  imports once, then reports already imported; invalid, oversized, wrong-role, and
+  wrong-connection uploads rejected with nothing kept; form upload escapes file
+  names; replay; sync then saved/applied states; a queued request blocked after its
+  connection is edited; config conflicts (API and form) and invalid saves leave the
+  file untouched; Prefect run links; the real subprocess executor.
+- Manual demo with `serve` against /tmp files: pushed two Health exports at once
+  through the API. The first run had the second import `blocked`, which led to lock
+  waiting. Rerun: both imports succeeded, with 3 rows as expected. Checked the
+  overview, connection, and configuration pages in a browser. That review added the
+  `not_modelled` state, file names in history, the "Scan folder" label, and no
+  navigation on the login page.
+- Not run: anything against this installation (Postgres, Prefect, real ListenBrainz,
+  Health Auto Export pushing to the endpoint).
+
+Milestone status:
+
+| Milestone | Status |
+| --- | --- |
+| 0: baseline/runtime boundary | Unchanged; runtime decisions pending |
+| 1: contracts/registry | Done for the two reference integrations |
+| 2: execution/status | Local parts done; Prefect executor/reconciliation and worker proof pending |
+| 3: import inbox | Done locally; worker deployment and n8n cutover pending |
+| 4: interface | Connect → sync/import → inspect → open analysis works locally for both reference integrations; test-setup exercise and deployment pending |
+| 5+: migration/analyses | Not started |
+
+Next:
+
+1. The runtime decisions (decision 007) now gate everything: worker isolation,
+   worker credentials, Postgres test schema. Then a Prefect executor and a deployed
+   server, exercised against the test setup.
+2. n8n cutover for Health Auto Export (decision 009).
+3. Reassess scope from actual use, as the plan requires after milestone 4.

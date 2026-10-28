@@ -63,6 +63,7 @@ def submit_artifact(
     *,
     store: MetadataStore,
     root: Path,
+    original_name: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """Validate, store, and register one file. Does not import it.
 
@@ -83,7 +84,7 @@ def submit_artifact(
         size=received.size,
         input_format=input_format,
         role=role,
-        original_name=source.name[:255],
+        original_name=(original_name or source.name)[:255],
         storage_path=str(received.path),
         retention="keep",
     )
