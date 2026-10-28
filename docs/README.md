@@ -66,6 +66,17 @@ rebuilds its own downstream models (`dbt build --select source:<name>+`);
 - Shared non-secret config is in [`mise.toml`](../mise.toml); machine overrides
   go in gitignored `mise.local.toml`. No repo mise environment is selected, so
   the machine keeps its dotfiles layers (including pod/Paseo settings).
+- In-cluster hosts select the tracked [`fnox.cluster.toml`](../fnox.cluster.toml)
+  profile with the following in gitignored `mise.local.toml`. It changes only
+  `PREFECT_API_URL` to the internal Kubernetes service; other secrets still come
+  from Proton Pass. Without this selection, the default profile uses the vault URL.
+  Do not also set `PREFECT_API_URL` under mise `[env]`: it conflicts with the
+  task secret grant.
+
+  ```toml
+  [secrets.fnox]
+  profile = "cluster"
+  ```
 - dlt resolves `<PIPELINE_NAME>__<KEY>` env vars (e.g. `GITHUB__ACCESS_TOKEN`),
   so the env prefix must match the pipeline name.
 - `prefect.yaml` copies the needed env vars into each deployment at deploy time.

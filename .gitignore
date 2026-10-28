@@ -63,3 +63,6 @@ mise.*.local.toml
 
 # prefect
 profiles.toml
+
+# fnox machine-local overrides
+fnox.local.toml

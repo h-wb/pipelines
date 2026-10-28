@@ -1,0 +1,3 @@
+# In-cluster Prefect endpoint. Other secrets inherit from fnox.toml.
+[secrets]
+PREFECT_API_URL = { default = "http://prefect.automation.svc:4200/api" }
