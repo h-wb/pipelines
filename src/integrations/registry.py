@@ -4,18 +4,29 @@ The registry deliberately does not import sources, dlt, or Prefect. Capability
 metadata describes the underlying integration, not implemented CLI commands.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
 from types import MappingProxyType
+from typing import Any
 
 from pydantic import Field, field_validator
 
 from src.core.models import StrictModel
+from src.integrations import checks
 
 
 class ListenBrainzSettings(StrictModel):
-    username: str = Field(min_length=1)
-    start_date: str
+    username: str = Field(
+        min_length=1,
+        title="Username",
+        description="Your ListenBrainz account name",
+    )
+    start_date: str = Field(
+        title="Start from",
+        description="Earliest listen to fetch, with a UTC offset "
+        "(e.g. 2020-01-01T00:00:00Z)",
+    )
 
     @field_validator("username")
     @classmethod
@@ -34,8 +45,16 @@ class ListenBrainzSettings(StrictModel):
 
 
 class AppleHealthSettings(StrictModel):
-    data_dir: str = Field(min_length=1)
-    cutoff: str
+    data_dir: str = Field(
+        min_length=1,
+        title="Export folder",
+        description="Folder the legacy scanner reads Health Auto Export files from",
+    )
+    cutoff: str = Field(
+        title="Cutoff date",
+        description="YYYY-MM-DD. Historical files contribute rows before it, "
+        "ongoing files rows from it on",
+    )
 
     @field_validator("cutoff")
     @classmethod
@@ -66,23 +85,48 @@ class ModelBinding:
 
 
 @dataclass(frozen=True)
+class CredentialField:
+    """A secret the integration needs. Stored and shown write-only."""
+
+    name: str
+    label: str
+    help: str
+
+
+@dataclass(frozen=True)
 class IntegrationDefinition:
     name: str
+    title: str
     settings_model: type[StrictModel]
-    credential_names: tuple[str, ...]
+    credentials: tuple[CredentialField, ...]
     input_modes: tuple[str, ...]
     capabilities: tuple[str, ...]
     resources: tuple[ResourceDefinition, ...]
     input_format: str | None = None
     models: ModelBinding | None = None
+    # Confirms settings and credentials without loading data; see checks.py.
+    check: Callable[[Any, dict[str, str]], str] | None = None
+
+    @property
+    def credential_names(self) -> tuple[str, ...]:
+        return tuple(field.name for field in self.credentials)
 
 
 INTEGRATIONS = MappingProxyType(
     {
         "listenbrainz": IntegrationDefinition(
             name="listenbrainz",
+            title="ListenBrainz",
             settings_model=ListenBrainzSettings,
-            credential_names=("access_token",),
+            credentials=(
+                CredentialField(
+                    "access_token",
+                    "User token",
+                    "ListenBrainz → Settings → User token "
+                    "(https://listenbrainz.org/settings/)",
+                ),
+            ),
+            check=checks.listenbrainz,
             input_modes=("api",),
             capabilities=("incremental_sync",),
             resources=(
@@ -94,8 +138,10 @@ INTEGRATIONS = MappingProxyType(
         ),
         "apple_health": IntegrationDefinition(
             name="apple_health",
+            title="Apple Health (Health Auto Export)",
             settings_model=AppleHealthSettings,
-            credential_names=(),
+            credentials=(),
+            check=checks.apple_health,
             input_modes=("file",),
             capabilities=("directory_import", "artifact_import"),
             input_format="health_auto_export_json",

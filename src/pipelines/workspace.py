@@ -14,7 +14,7 @@ from prefect.runtime import flow_run
 from src.core.config import load_workspace
 from src.core.operations import MetadataStore
 from src.core.runner import run_connection
-from src.core.secrets import resolve_credentials
+from src.core.secrets import SecretBox, SecretStore, make_resolver
 from src.pipelines.transform import build_models
 
 
@@ -39,7 +39,12 @@ def sync_connection(
         connection_id,
         store=store,
         destination="postgres",
-        resolve_credentials=resolve_credentials,
+        # Built-in secrets need WORKSPACE_SECRET_KEY on the worker (decision 011).
+        resolve_credentials=make_resolver(
+            SecretStore(store, SecretBox.from_environment())
+            if os.environ.get("WORKSPACE_SECRET_KEY")
+            else None
+        ),
         origin="request" if operation_id else "prefect",
         operation_id=operation_id,
         backend_run_id=str(flow_run.id),

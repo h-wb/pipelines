@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Add a connection{% endblock %}
+{% block body %}
+<h1>Add a connection</h1>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if not selected %}
+<table>
+  <tr><th>Integration</th><th>Needs</th><th></th></tr>
+  {% for i in integrations %}
+  <tr>
+    <td><strong>{{ i.title }}</strong><div class="muted">{{ i.name }}</div></td>
+    <td>{% for c in i.credentials %}{{ c.label }}{% if not loop.last %}, {% endif %}{% else %}<span class="muted">no credentials</span>{% endfor %}</td>
+    <td><a href="/connections/new?integration={{ i.name }}">Set up</a></td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+{% set i = integrations | selectattr("name", "equalto", selected) | first %}
+{% if not i %}<p class="error">Unknown integration.</p>{% else %}
+<h2>{{ i.title }}</h2>
+<form method="post" action="/connections/new" autocomplete="off" class="stack">
+  <input type="hidden" name="integration" value="{{ i.name }}">
+  <label>Connection ID
+    <input name="id" required pattern="[a-z][a-z0-9_]{0,23}" value="{{ values.get('id', '') }}">
+    <span class="muted">Lowercase letters, digits, underscores. Names this account’s data; it cannot change later.</span>
+  </label>
+  {% for name, prop in i.settings_schema.properties.items() %}
+  <label>{{ prop.title or name }}
+    <input name="setting.{{ name }}" {% if name in i.settings_schema.get("required", []) %}required{% endif %} value="{{ values.get(name, '') }}">
+    {% if prop.description %}<span class="muted">{{ prop.description }}</span>{% endif %}
+  </label>
+  {% endfor %}
+  {% for c in i.credentials %}
+  <label>{{ c.label }}
+    <input type="password" name="credential.{{ c.name }}" required autocomplete="new-password">
+    <span class="muted">{{ c.help }}. Stored encrypted; it will not be shown again.</span>
+  </label>
+  {% endfor %}
+  <p><button>Add and test</button> <a href="/connections/new">Back</a></p>
+</form>
+{% endif %}
+{% endif %}
+{% endblock %}

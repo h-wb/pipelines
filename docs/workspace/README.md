@@ -79,12 +79,46 @@ same parser version and options prints `already_imported` and loads nothing;
 import never counts as imported. `artifacts` lists each artifact with every import
 attempt, its parser version, and options.
 
+### Credentials
+
+Connection secrets (decision 011) are stored encrypted by the workspace under a
+master key that you provide:
+
+```bash
+export WORKSPACE_SECRET_KEY="$(uv run --locked pipelines-workspace generate-key)"
+# Back this key up separately from the database: stored secrets need it.
+```
+
+Add a connection in the web interface (**Add a connection**: settings plus
+credentials, then an automatic test), or from the CLI by editing the configuration
+with `{"provider": "workspace"}` and storing the value:
+
+```bash
+uv run --locked pipelines-workspace set-credential music access_token   # prompts, or reads stdin
+uv run --locked pipelines-workspace check music
+```
+
+Credentials are write-only: no page, API response, log, or file shows them again.
+Connection pages show "set · updated …", Replace, and Test. The status turns
+`rejected` when a check or a run is refused (HTTP 401/403) and recovers after a
+passing check or a successful load. External references still work, for values
+managed elsewhere: `{"provider": "fnox", "key": "LISTENBRAINZ__ACCESS_TOKEN"}` or
+`{"provider": "env", "key": "..."}`.
+
+Key rotation: set `WORKSPACE_SECRET_KEY="<new>,<old>"`, run
+`pipelines-workspace rotate-secrets`, then drop the old key.
+
+Installation secrets (the master key, Postgres roles, Prefect and Metabase
+credentials) are environment variables provided by whoever deploys. They are not
+stored by the workspace.
+
 ### Web interface and HTTP API
 
 ```bash
 export WORKSPACE_API_TOKEN="$(openssl rand -hex 24)"
+export WORKSPACE_SECRET_KEY="$(uv run --locked pipelines-workspace generate-key)"
 uv run --locked pipelines-workspace --config workspace.json serve --duckdb /tmp/mirror.duckdb
-# http://127.0.0.1:8765 — log in with the token
+# http://127.0.0.1:8765 — log in with the token. A missing workspace.json is created empty.
 ```
 
 The interface lists connections with their last attempt, when data was last loaded,
@@ -111,6 +145,10 @@ The JSON API takes `Authorization: Bearer $WORKSPACE_API_TOKEN`:
 | `POST /api/connections/{id}/artifacts?role=ongoing&import=true&name=…` | Store the raw request body as a file, optionally import it |
 | `POST /api/connections/{id}/artifacts/{artifact}/import?replay=false` | Request an import |
 | `GET /api/config`, `PUT /api/config` with `If-Match: <file_revision>` | Read or replace the configuration |
+| `GET /api/integrations` | Integrations with settings schemas and credential fields |
+| `POST /api/connections` | Add a connection: `{"integration", "id", "settings", "credentials"}`; returns the check result |
+| `PUT /api/connections/{id}/credentials/{name}` | Replace a credential: `{"value": "..."}` (204) |
+| `POST /api/connections/{id}/check`, `DELETE /api/connections/{id}` | Test or remove a connection |
 
 The artifact endpoint is the replacement for the n8n receiver (decision 009):
 point Health Auto Export's REST automation at it with the bearer header.

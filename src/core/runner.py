@@ -78,10 +78,32 @@ def code_revision() -> str:
 
 def redact(error: BaseException, secrets: list[str]) -> tuple[str, str]:
     message = str(error)
-    for secret in secrets:
+    # Longest first, so a secret containing another is fully masked.
+    for secret in sorted(secrets, key=len, reverse=True):
         message = message.replace(secret, "***")
     kind = type(error)
     return f"{kind.__module__}.{kind.__qualname__}"[:200], message[:MAX_ERROR_LENGTH]
+
+
+def failure_kind(error: BaseException) -> str | None:
+    """Classify a failure from its exception chain (dlt wraps source errors)."""
+    from src.core.secrets import SecretKeyError, SecretResolutionError
+
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, (SecretResolutionError, SecretKeyError)):
+            return "credentials_missing"
+        response = getattr(current, "response", None)
+        if getattr(response, "status_code", None) in (401, 403):
+            return "credentials_rejected"
+        current = (
+            current.__cause__
+            or current.__context__
+            or getattr(current, "exception", None)
+        )
+    return None
 
 
 def model_selector(connection: ResolvedConnection) -> tuple[str | None, str]:
@@ -380,6 +402,7 @@ def _execute(
             transformation="not_run",
             error_type=error_type,
             error_message=message,
+            failure_kind=failure_kind(error),
         )
         raise IngestionFailed(f"{error_type}: {message}") from None
 

@@ -218,3 +218,58 @@ Next:
    server, exercised against the test setup.
 2. n8n cutover for Health Auto Export (decision 009).
 3. Reassess scope from actual use, as the plan requires after milestone 4.
+
+## 2026-10-28 — Connection secrets and connection setup (decision 011)
+
+Design discussion: credentials have to work for someone without a secret
+manager, as in n8n or Airflow. Using fnox as the product's store was considered
+and rejected (CLI dependency, file-based ciphertext; it remains an external
+backend). The decision follows the n8n, Airflow, and Airbyte pattern.
+
+Implemented:
+
+- Metadata schema version 3: `secrets` (Fernet ciphertext per workspace,
+  connection, and name), `connection_checks`, and `attempts.failure_kind`. In-place
+  upgrade from versions 1 and 2.
+- `src/core/secrets.py`: `SecretBox` (MultiFernet; key rotation), the built-in
+  `SecretStore`, and `make_resolver` over workspace, env, and fnox backends.
+  `{"provider": "workspace"}` references, scoped by connection.
+- Integrations declare `CredentialField`s, titled settings, and a check: ListenBrainz
+  `validate-token` plus account match; Apple Health folder readable.
+- Run-time failure classification (`credentials_rejected` on 401/403,
+  `credentials_missing`) and a credential status built from the latest check or run.
+- Service: integrations catalog, create connection (validate, store secrets, save
+  config, roll back secrets on failure), set credential, check, remove connection.
+- Web: Add connection (forms generated from the registry), write-only credential
+  rows with Replace/Test, removal with typed confirmation, credential status on
+  the overview, and an empty-workspace state. `serve` creates an empty
+  `workspace.json`. JSON API for the same operations.
+- CLI: `generate-key`, `set-credential` (stdin or hidden prompt, never argv),
+  `check`, `rotate-secrets`. The Prefect flow resolves built-in secrets when
+  `WORKSPACE_SECRET_KEY` is set on the worker.
+- Fixed in the existing ListenBrainz source: the paginator parsed error bodies
+  before checking the HTTP status, so an expired token surfaced as
+  `KeyError: 'payload'`. It now raises the HTTP error, which affects the legacy
+  production flow too (successful responses unchanged).
+- Redaction masks longer secrets first. `cryptography` declared explicitly (already locked through Prefect).
+
+Validation:
+
+- Lint, format, and mypy clean. 65 tests pass on Python 3.14.7 (with
+  `-W error::ResourceWarning`) and in an isolated Python 3.12.15 environment.
+- New tests: encryption round trip, wrong key, malformed key, and rotation; reference
+  validation; config and every file on disk contain no secret value; scoping and
+  deletion per connection; failed save rolls back secrets; a duplicate ID keeps the
+  existing secrets; invalid settings store nothing; check ok, wrong account, and 401;
+  a run refused with 401 sets status `rejected` from the run, then a replaced token
+  and successful load restore `ok`; behaviour without a key; env references;
+  external references cannot be replaced from the UI; web form never echoes secrets
+  on error; API create/replace/check/remove never returns values; CLI
+  `set-credential` reads stdin; `generate-key` produces a valid key.
+- Manual: fresh server with no configuration (created empty), logged in, viewed
+  the generated ListenBrainz form, added an Apple Health connection through the
+  form (automatic check: folder readable). No real ListenBrainz token was used.
+
+Next: unchanged, still gated by the runtime decisions (decision 007). Decision 011
+narrows the worker's secret needs to `WORKSPACE_SECRET_KEY`, the metadata
+database, and a Postgres writer role.

@@ -1067,6 +1067,7 @@ name = "dlt-pipelines"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "cryptography" },
     { name = "dbt-core" },
     { name = "dbt-postgres" },
     { name = "dlt", extra = ["postgres"] },
@@ -1099,6 +1100,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=42" },
     { name = "dbt-core", specifier = ">=1.12.5" },
     { name = "dbt-postgres", specifier = ">=1.11.0" },
     { name = "dlt", extras = ["postgres"], specifier = ">=1.27.2" },

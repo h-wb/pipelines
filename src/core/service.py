@@ -22,6 +22,7 @@ from src.core.config import (
     save_workspace,
 )
 from src.core.operations import MetadataStore, OperationError, Role
+from src.core.secrets import SecretResolutionError, SecretStore, make_resolver
 
 REPO = Path(__file__).resolve().parents[2]
 log = logging.getLogger(__name__)
@@ -73,6 +74,12 @@ class WorkspaceService:
     store: MetadataStore
     artifact_root: Path
     executor: Executor
+    # None when WORKSPACE_SECRET_KEY is not set: built-in secrets are unavailable,
+    # external (env/fnox) references still work.
+    secrets: SecretStore | None = None
+
+    def resolver(self) -> Callable[[ResolvedConnection], dict[str, str]]:
+        return make_resolver(self.secrets)
 
     def workspace(self) -> ResolvedWorkspace:
         return load_workspace(self.config_path)
@@ -146,8 +153,34 @@ class WorkspaceService:
             if "incremental_sync" in connection.integration.capabilities
             else "Scan folder",
             "accepts_files": "artifact_import" in connection.integration.capabilities,
+            "credentials": self._credentials(workspace, connection),
+            "credential_status": self.store.credential_status(
+                workspace.id, connection.config.id
+            ),
             **self._links(workspace, connection),
         }
+
+    def _credentials(
+        self, workspace: ResolvedWorkspace, connection: ResolvedConnection
+    ) -> list[dict[str, Any]]:
+        """Write-only view: where each credential lives and whether it is set."""
+        stored = self.store.secret_metadata(workspace.id, connection.config.id)
+        result = []
+        for credential in connection.integration.credentials:
+            reference = connection.config.credentials[credential.name]
+            item: dict[str, Any] = {
+                "name": credential.name,
+                "label": credential.label,
+                "help": credential.help,
+                "provider": reference.provider,
+            }
+            if reference.provider == "workspace":
+                item["set"] = credential.name in stored
+                item["updated_at"] = stored.get(credential.name, {}).get("updated_at")
+            else:
+                item["external_key"] = reference.key
+            result.append(item)
+        return result
 
     def connection(self, connection_id: str) -> dict[str, Any]:
         workspace = self.workspace()
@@ -257,3 +290,145 @@ class WorkspaceService:
 
     def save_configuration(self, text: str, file_revision: str) -> ResolvedWorkspace:
         return save_workspace(self.config_path, text, file_revision)
+
+    # ---- Connections and credentials ------------------------------------------
+
+    def integrations(self) -> list[dict[str, Any]]:
+        from src.integrations.registry import INTEGRATIONS
+
+        return [
+            {
+                "name": definition.name,
+                "title": definition.title,
+                "settings_schema": definition.settings_model.model_json_schema(),
+                "credentials": [
+                    {"name": f.name, "label": f.label, "help": f.help}
+                    for f in definition.credentials
+                ],
+                "capabilities": list(definition.capabilities),
+            }
+            for definition in INTEGRATIONS.values()
+        ]
+
+    def _raw_config(self) -> tuple[dict[str, Any], str]:
+        import json
+
+        revision = file_revision(self.config_path)
+        return json.loads(self.config_path.read_text(encoding="utf-8")), revision
+
+    def _write_config(self, raw: dict[str, Any], revision: str) -> ResolvedWorkspace:
+        import json
+
+        return save_workspace(
+            self.config_path, json.dumps(raw, indent=2) + "\n", revision
+        )
+
+    def create_connection(
+        self,
+        integration: str,
+        connection_id: str,
+        settings: dict[str, Any],
+        credentials: dict[str, str],
+    ) -> str:
+        """Add a connection whose credentials are stored by the workspace.
+
+        Validates the new configuration first, stores secrets, then saves the
+        configuration; if saving fails, the just-stored secrets are removed.
+        """
+        import json
+
+        from src.core.config import ConfigurationError, parse_workspace
+        from src.integrations.registry import INTEGRATIONS
+
+        definition = INTEGRATIONS.get(integration)
+        if definition is None:
+            raise OperationError("Unknown integration")
+        if set(credentials) != set(definition.credential_names):
+            raise OperationError("Provide every credential the integration needs")
+        secrets = self.secrets
+        if credentials and secrets is None:
+            raise SecretResolutionError(
+                "Set WORKSPACE_SECRET_KEY to store credentials in the workspace"
+            )
+        raw, revision = self._raw_config()
+        raw.setdefault("connections", []).append(
+            {
+                "id": connection_id,
+                "integration": integration,
+                "settings": settings,
+                "credentials": {
+                    name: {"provider": "workspace"} for name in credentials
+                },
+            }
+        )
+        workspace = parse_workspace(json.dumps(raw))  # validate before storing anything
+        connection = self._connection(workspace, connection_id)
+        if self.store.secret_metadata(workspace.id, connection_id):
+            raise ConfigurationError("Secrets already exist for this connection ID")
+        try:
+            for name, value in credentials.items():
+                assert secrets is not None  # checked above
+                secrets.put(connection, name, value)
+            self._write_config(raw, revision)
+        except BaseException:
+            self.store.delete_secrets(workspace.id, connection_id)
+            raise
+        return connection_id
+
+    def set_credential(self, connection_id: str, name: str, value: str) -> None:
+        workspace = self.workspace()
+        connection = self._connection(workspace, connection_id)
+        reference = connection.config.credentials.get(name)
+        if reference is None:
+            raise OperationError("Unknown credential for this connection")
+        if reference.provider != "workspace":
+            raise OperationError(
+                f"This credential comes from {reference.provider} ({reference.key}); "
+                "change it there, or switch it to the workspace in the configuration"
+            )
+        if self.secrets is None:
+            raise SecretResolutionError(
+                "Set WORKSPACE_SECRET_KEY to store credentials in the workspace"
+            )
+        self.secrets.put(connection, name, value)
+
+    def check_connection(self, connection_id: str) -> dict[str, Any]:
+        """Run the integration's check and record the outcome."""
+        from src.core.secrets import SecretKeyError
+        from src.integrations.checks import CheckFailed
+
+        workspace = self.workspace()
+        connection = self._connection(workspace, connection_id)
+        check = connection.integration.check
+        ok, rejected = False, False
+        credentials: dict[str, str] = {}
+        try:
+            credentials = self.resolver()(connection)
+            message = (
+                check(connection.settings, credentials)
+                if check
+                else "No check available"
+            )
+            ok = True
+        except (SecretResolutionError, SecretKeyError) as error:
+            message = str(error)
+        except CheckFailed as error:
+            message, rejected = str(error), error.rejected
+        for value in credentials.values():
+            message = message.replace(value, "***")
+        self.store.record_check(workspace.id, connection_id, ok, rejected, message)
+        return {"ok": ok, "rejected": rejected, "message": message}
+
+    def remove_connection(self, connection_id: str) -> None:
+        """Remove the configuration entry and its stored secrets.
+
+        Loaded data, artifacts, and history are kept: purging them is separate.
+        """
+        workspace = self.workspace()
+        self._connection(workspace, connection_id)
+        raw, revision = self._raw_config()
+        raw["connections"] = [
+            c for c in raw["connections"] if c.get("id") != connection_id
+        ]
+        self._write_config(raw, revision)
+        self.store.delete_secrets(workspace.id, connection_id)

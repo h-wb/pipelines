@@ -11,6 +11,31 @@
 </p>
 <p class="muted">Dataset <code>{{ c.binding.dataset_name }}</code> · resources {{ c.resources | join(", ") }}</p>
 
+<h2>{{ "Credentials" if c.credentials else "Connection check" }} {{ badge(c.credential_status.state) }}</h2>
+{% if c.credential_status.message %}<p class="muted">{{ c.credential_status.message }} · {{ when(c.credential_status.at) }}</p>{% endif %}
+{% if c.credentials %}
+<table>
+  <tr><th>Credential</th><th>Stored</th><th>Replace</th></tr>
+  {% for cred in c.credentials %}
+  <tr>
+    <td>{{ cred.label }}<div class="muted">{{ cred.help }}</div></td>
+    {% if cred.provider == "workspace" %}
+    <td>{% if cred.set %}set · updated {{ when(cred.updated_at) }}{% else %}<span class="failed">not set</span>{% endif %}</td>
+    <td>
+      <form method="post" action="/connections/{{ c.id }}/credentials/{{ cred.name }}" autocomplete="off">
+        <input type="password" name="value" required autocomplete="new-password" aria-label="New {{ cred.label }}">
+        <button>Save</button>
+      </form>
+    </td>
+    {% else %}
+    <td colspan="2">from {{ cred.provider }} <code>{{ cred.external_key }}</code> <span class="muted">(managed outside the workspace)</span></td>
+    {% endif %}
+  </tr>
+  {% endfor %}
+</table>
+{% else %}<p class="muted">This integration needs no credentials.</p>{% endif %}
+<form class="inline" method="post" action="/connections/{{ c.id }}/check"><button>Test connection</button></form>
+
 {% if c.can_sync %}
 <form class="inline" method="post" action="/connections/{{ c.id }}/sync"><button>{{ c.sync_label }}</button></form>
 {% endif %}
@@ -65,4 +90,10 @@
   <tr><td colspan="6" class="muted">Nothing has run yet.</td></tr>
   {% endfor %}
 </table>
+<h2>Remove</h2>
+<form method="post" action="/connections/{{ c.id }}/remove">
+  <p class="muted">Deletes this connection’s configuration and stored credentials. Loaded data, files, and history are kept.</p>
+  <input name="confirm" placeholder="type {{ c.id }} to confirm" aria-label="Confirm connection ID">
+  <button>Remove connection</button>
+</form>
 {% endblock %}

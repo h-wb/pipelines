@@ -264,3 +264,67 @@ catch up.
 Not yet: Prefect executor and `status --refresh` reconciliation, a structured
 config editor (JSON textarea for now), multi-user accounts, exercising the flow
 against this installation (expired credentials, outages) on the test setup.
+
+## 011 — Connection secrets: encrypted in the workspace, pluggable backends
+
+Status: accepted, 2026-10-28. Replaces the idea, discussed but never built, of
+using fnox as the product's secret store.
+
+This follows the established pattern of comparable tools. n8n
+(`N8N_ENCRYPTION_KEY`) and Airflow (`fernet_key`, plus pluggable secrets backends)
+store connection secrets encrypted in their own database under one master key and
+offer external managers as alternatives. Airbyte stores only references in
+connector configuration. The goal is that another person can add a connection by
+pasting a token, as in those tools, without running a secret manager.
+
+**Two kinds of secret.**
+- *Connection secrets* (a person's ListenBrainz or GitHub token) are entered in
+  the UI or CLI and stored by the workspace. Only the job that runs the
+  connection decrypts them, just before creating the source.
+- *Installation secrets* (the master key, Postgres roles, Prefect and Metabase
+  API credentials) are provided by whoever deploys, as environment variables from
+  a Kubernetes Secret, a `.env` file, or fnox/mise locally (twelve-factor). The
+  workspace never stores these.
+
+**Built-in store.** A `secrets` table in the metadata database holds one ciphertext
+per (workspace, connection, credential name), encrypted with `cryptography`'s
+Fernet (AES-128-CBC with HMAC-SHA256, the scheme Airflow uses). No custom
+cryptography. The key comes from `WORKSPACE_SECRET_KEY`; a comma-separated list
+enables rotation (first key encrypts, all decrypt; `rotate-secrets` re-encrypts).
+The key never goes in the database or the configuration file. Back it up
+separately: without it, stored secrets are unrecoverable.
+
+**References, not values.** Configuration holds `{"provider": "workspace"}` for a
+built-in secret, whose identity is implied by connection and credential name.
+Secrets therefore cannot be shared across connections by mistake. `env` and
+`fnox` references with explicit keys remain supported as external backends.
+Vault/OpenBao, Kubernetes, or cloud secret managers can be added behind the same
+interface (the Airflow secrets-backend model). Nothing returns a stored value:
+UI and API show only "set / updated at".
+
+**Integrations declare credentials** as named fields with a label and help text.
+They are not `SecretStr` fields in the settings model, as first sketched. Settings
+are persisted to the configuration file; keeping credentials in a separate
+structure makes "never persisted there" structural rather than a filtering rule.
+Resolved values are passed in memory only.
+
+**Check and health.** An integration may declare a check: ListenBrainz calls
+`/1/validate-token` and confirms the account name, and Apple Health confirms its
+folder is readable. A failed check, or an HTTP 401/403 during a run, makes the
+connection's credential status `rejected` until a later check or run succeeds.
+This is a status of its own, with a "Replace" action, instead of a generic
+failed run.
+
+**Lifecycle.** Adding a connection validates the configuration, stores its
+secrets, then saves the configuration (revision-checked). If the save fails, the
+just-stored secrets are removed. Removing a connection deletes its configuration
+entry and its secrets. Loaded data, artifacts, and history are kept; purging them
+is a separate operation, per the plan.
+
+**Each component gets only what it needs.** The server and worker get the master
+key and metadata database. dlt gets a Postgres writer role, dbt a transformer
+role, and Metabase a read-only role. Only the worker running a connection
+decrypts that connection's secrets.
+
+Not yet: OAuth flows (consent, refresh-token rotation), external backends beyond
+env/fnox, and per-user key separation for a hosted multi-user version.

@@ -23,7 +23,12 @@ from sqlalchemy.exc import OperationalError
 from src.cli.main import main
 from src.core.artifacts import receive_file, submit_artifact
 from src.core.config import parse_workspace
-from src.core.operations import MetadataStore, OperationError, schema_info
+from src.core.operations import (
+    SCHEMA_VERSION,
+    MetadataStore,
+    OperationError,
+    schema_info,
+)
 from src.core.runner import AlreadyImported, IngestionFailed, import_artifact
 from src.integrations.formats import InvalidArtifact
 from src.integrations.sources import create_source
@@ -241,15 +246,17 @@ class ArtifactTests(unittest.TestCase):
             [p for p in (self.root / "artifacts").rglob("*") if p.is_file()], []
         )
 
-    def test_version_1_store_upgrades_in_place(self):
+    def test_version_1_store_upgrades_to_current(self):
         path = self.root / "v1.sqlite"
         legacy = MetadataStore(f"sqlite:///{path}")
         self.addCleanup(legacy.engine.dispose)
         legacy.migrate()
         with legacy.engine.begin() as db:
-            db.execute(sa.text("DROP TABLE artifacts"))
+            for table in ("artifacts", "secrets", "connection_checks"):
+                db.execute(sa.text(f"DROP TABLE {table}"))
             for column in ("artifact_id", "parser_version", "options"):
                 db.execute(sa.text(f"ALTER TABLE operations DROP COLUMN {column}"))
+            db.execute(sa.text("ALTER TABLE attempts DROP COLUMN failure_kind"))
             db.execute(schema_info.update().values(version=1))
             db.execute(
                 sa.text(
@@ -261,9 +268,16 @@ class ArtifactTests(unittest.TestCase):
         legacy.migrate()
         self.assertEqual(legacy.get_operation("op").kind, "sync")
         with legacy.engine.connect() as db:
-            self.assertEqual(db.execute(sa.select(schema_info.c.version)).scalar(), 2)
-            columns = {c["name"] for c in sa.inspect(db).get_columns("operations")}
+            self.assertEqual(
+                db.execute(sa.select(schema_info.c.version)).scalar(), SCHEMA_VERSION
+            )
+            inspector = sa.inspect(db)
+            columns = {c["name"] for c in inspector.get_columns("operations")}
+            attempt_columns = {c["name"] for c in inspector.get_columns("attempts")}
+            tables = set(inspector.get_table_names())
         self.assertTrue({"artifact_id", "parser_version", "options"} <= columns)
+        self.assertIn("failure_kind", attempt_columns)
+        self.assertTrue({"artifacts", "secrets", "connection_checks"} <= tables)
 
 
 class ArtifactCliTests(unittest.TestCase):

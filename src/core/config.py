@@ -9,7 +9,13 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import Field, StringConstraints, ValidationError, field_validator
+from pydantic import (
+    Field,
+    StringConstraints,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from src.core.models import DatabaseIdentifier, Identifier, SecretKey, StrictModel
 from src.integrations.registry import INTEGRATIONS, IntegrationDefinition
@@ -24,8 +30,21 @@ class ConfigurationConflict(ConfigurationError):
 
 
 class SecretReference(StrictModel):
-    provider: Literal["env", "fnox"]
-    key: SecretKey
+    """Where a credential's value lives. Never the value itself.
+
+    `workspace` secrets are stored encrypted by the workspace and identified by
+    their connection and credential name, so they take no key. External
+    providers (`env`, `fnox`) name the key they resolve.
+    """
+
+    provider: Literal["workspace", "env", "fnox"]
+    key: SecretKey | None = None
+
+    @model_validator(mode="after")
+    def key_matches_provider(self) -> "SecretReference":
+        if (self.provider == "workspace") != (self.key is None):
+            raise ValueError("workspace secrets take no key; env and fnox need one")
+        return self
 
 
 class Binding(StrictModel):
@@ -59,7 +78,8 @@ class ConnectionConfig(StrictModel):
 class WorkspaceConfig(StrictModel):
     schema_version: Literal[1]
     id: Identifier
-    connections: list[ConnectionConfig] = Field(min_length=1)
+    # Empty is valid: a new installation starts with no connections.
+    connections: list[ConnectionConfig] = Field(default_factory=list)
     links: Links = Field(default_factory=Links)
 
     @field_validator("schema_version", mode="before")
@@ -79,6 +99,7 @@ class ResolvedConnection:
     # Hash of this connection's normalized configuration (with the workspace ID).
     # Operations record it, so editing one connection does not block another's.
     revision: str = ""
+    workspace_id: str = ""
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -183,7 +204,11 @@ def parse_workspace(text: str) -> ResolvedWorkspace:
         for c in connections
     }
     connections = [
-        replace(c, revision=_hash({"workspace": config.id, **entries[c.config.id]}))
+        replace(
+            c,
+            revision=_hash({"workspace": config.id, **entries[c.config.id]}),
+            workspace_id=config.id,
+        )
         for c in connections
     ]
     normalized = {

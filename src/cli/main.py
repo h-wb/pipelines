@@ -73,7 +73,25 @@ def main(argv: list[str] | None = None) -> int:
         default=Path(os.environ.get("WORKSPACE_ARTIFACT_DIR", DEFAULT_ARTIFACTS)),
         help="Directory for retained original files",
     )
-    for command in (status, run, submit, load, listing, execute, serve):
+    commands.add_parser(
+        "generate-key", help="Print a new WORKSPACE_SECRET_KEY (Fernet key)"
+    )
+    credential = commands.add_parser(
+        "set-credential",
+        help="Store a connection credential in the workspace (reads stdin or prompts)",
+    )
+    credential.add_argument("connection")
+    credential.add_argument("name")
+    check = commands.add_parser(
+        "check", help="Test a connection's settings and credentials"
+    )
+    check.add_argument("connection")
+    rotate = commands.add_parser(
+        "rotate-secrets",
+        help="Re-encrypt stored secrets with the first key of WORKSPACE_SECRET_KEY",
+    )
+    commands_with_store = (status, run, submit, load, listing, execute, serve)
+    for command in (*commands_with_store, credential, check, rotate):
         command.add_argument(
             "--metadata",
             default=os.environ.get("WORKSPACE_METADATA_URL", DEFAULT_METADATA),
@@ -82,6 +100,24 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     result: Any
+    if args.command == "generate-key":
+        from src.core.secrets import generate_key
+
+        print(generate_key())
+        return 0
+    if args.command == "serve" and not args.config.exists():
+        # A new installation starts with an empty workspace; connections are added
+        # through the interface.
+        args.config.write_text(
+            json.dumps(
+                {"schema_version": 1, "id": "personal", "connections": []}, indent=2
+            )
+            + "\n"
+        )
+        print(
+            f"Created an empty workspace configuration at {args.config}",
+            file=sys.stderr,
+        )
     if args.command == "integrations":
         result = [
             {
@@ -118,6 +154,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _operate(args: argparse.Namespace, workspace: Any) -> int:
     from src.core.operations import MetadataStore
+    from src.core.secrets import SecretKeyError
 
     ids = [c.config.id for c in workspace.connections]
     if getattr(args, "connection", None) not in (None, *ids):
@@ -127,14 +164,65 @@ def _operate(args: argparse.Namespace, workspace: Any) -> int:
         Path(".workspace").mkdir(exist_ok=True)
     store = MetadataStore(args.metadata)
     try:
+        secrets = _secret_store(store)
         if args.command == "serve":
-            return _serve(args, store)
-        return _with_store(args, workspace, store, ids)
+            return _serve(args, store, secrets)
+        if args.command in ("set-credential", "check", "rotate-secrets"):
+            return _credentials(args, store, secrets)
+        return _with_store(args, workspace, store, ids, secrets)
+    except SecretKeyError as error:
+        print(str(error), file=sys.stderr)
+        return 2
     finally:
         store.engine.dispose()
 
 
-def _with_store(args: argparse.Namespace, workspace: Any, store: Any, ids: list) -> int:
+def _secret_store(store: Any) -> Any:
+    """The built-in secret backend, or None when no master key is configured."""
+    from src.core.secrets import KEY_VARIABLE, SecretBox, SecretStore
+
+    if not os.environ.get(KEY_VARIABLE):
+        return None
+    return SecretStore(store, SecretBox.from_environment())
+
+
+def _credentials(args: argparse.Namespace, store: Any, secrets: Any) -> int:
+    import getpass
+
+    from src.core.operations import OperationError
+    from src.core.secrets import SecretResolutionError
+    from src.core.service import InlineExecutor, WorkspaceService
+
+    store.migrate()
+    if args.command == "rotate-secrets":
+        if secrets is None:
+            print("Set WORKSPACE_SECRET_KEY first", file=sys.stderr)
+            return 2
+        return _print({"rotated": secrets.rotate_all()})
+    service = WorkspaceService(
+        args.config, store, Path(DEFAULT_ARTIFACTS), InlineExecutor(print), secrets
+    )
+    if args.command == "check":
+        result = service.check_connection(args.connection)
+        _print(result)
+        return 0 if result["ok"] else 1
+    # Never take the value as an argument: it would land in shell history.
+    value = (
+        sys.stdin.read().strip()
+        if not sys.stdin.isatty()
+        else getpass.getpass(f"{args.name}: ")
+    )
+    try:
+        service.set_credential(args.connection, args.name, value)
+    except (OperationError, SecretResolutionError) as error:
+        print(str(error), file=sys.stderr)
+        return 1
+    return _print({"stored": args.name, "connection": args.connection})
+
+
+def _with_store(
+    args: argparse.Namespace, workspace: Any, store: Any, ids: list, secrets: Any
+) -> int:
     from src.core.operations import OperationError
 
     store.migrate()
@@ -179,12 +267,12 @@ def _with_store(args: argparse.Namespace, workspace: Any, store: Any, ids: list)
         import_artifact,
         run_connection,
     )
-    from src.core.secrets import SecretResolutionError, resolve_credentials
+    from src.core.secrets import SecretKeyError, SecretResolutionError, make_resolver
 
     common: dict[str, Any] = {
         "store": store,
         "destination": dlt.destinations.duckdb(credentials=str(args.duckdb)),
-        "resolve_credentials": resolve_credentials,
+        "resolve_credentials": make_resolver(secrets),
         "pipelines_dir": str(args.duckdb.parent / f"{args.duckdb.stem}.dlt"),
     }
     try:
@@ -207,7 +295,12 @@ def _with_store(args: argparse.Namespace, workspace: Any, store: Any, ids: list)
             )
     except AlreadyImported as error:
         return _print({"already_imported": True, "operation_id": error.operation_id})
-    except (IngestionFailed, SecretResolutionError, OperationError) as error:
+    except (
+        IngestionFailed,
+        SecretResolutionError,
+        SecretKeyError,
+        OperationError,
+    ) as error:
         print(f"Run failed: {error}", file=sys.stderr)
         return 1
     return _print(asdict(outcome))
@@ -218,7 +311,7 @@ def _print(result: Any) -> int:
     return 0
 
 
-def _serve(args: argparse.Namespace, store: Any) -> int:
+def _serve(args: argparse.Namespace, store: Any, secrets: Any) -> int:
     import uvicorn
 
     from src.core.service import SubprocessExecutor, WorkspaceService
@@ -240,8 +333,14 @@ def _serve(args: argparse.Namespace, store: Any) -> int:
             args.metadata,
         ]
     )
+    if secrets is None:
+        print(
+            "WORKSPACE_SECRET_KEY is not set: credentials cannot be stored in the "
+            "workspace (generate one with `pipelines-workspace generate-key`)",
+            file=sys.stderr,
+        )
     service = WorkspaceService(
-        args.config.resolve(), store, args.artifacts.resolve(), executor
+        args.config.resolve(), store, args.artifacts.resolve(), executor, secrets
     )
     uvicorn.run(create_app(service, token), host=args.host, port=args.port)
     return 0

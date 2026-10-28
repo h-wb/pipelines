@@ -21,6 +21,7 @@ from fastapi.templating import Jinja2Templates
 
 from src.core.config import ConfigurationConflict, ConfigurationError
 from src.core.operations import OperationError
+from src.core.secrets import SecretKeyError, SecretResolutionError
 from src.core.service import WorkspaceService
 from src.integrations.formats import InvalidArtifact
 
@@ -37,6 +38,10 @@ NOTICES = {
     "duplicate": "This exact file was already stored; nothing new was saved.",
     "already_imported": "Already imported with the current parser; use replay to load it again.",
     "saved": "Configuration saved. It applies to operations requested from now on.",
+    "created": "Connection added.",
+    "credential_saved": "Credential saved.",
+    "checked": "Connection checked; see the credentials status below.",
+    "removed": "Connection removed. Its secrets were deleted; loaded data and files were kept.",
 }
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -105,7 +110,14 @@ def create_app(
         )
 
     # AlreadyImported and ConfigurationConflict are subclasses of these.
-    for kind in (ConfigurationError, OperationError, InvalidArtifact, UploadTooLarge):
+    for kind in (
+        ConfigurationError,
+        OperationError,
+        InvalidArtifact,
+        UploadTooLarge,
+        SecretResolutionError,
+        SecretKeyError,
+    ):
         app.add_exception_handler(kind, known_error)
 
     async def save_stream(chunks: AsyncIterator[bytes], directory: Path) -> Path:
@@ -193,6 +205,45 @@ def create_app(
             "operation_id": service.request_import(connection_id, artifact_id, replay)
         }
 
+    @app.get("/api/integrations")
+    def api_integrations() -> list:
+        return service.integrations()
+
+    @app.post("/api/connections", status_code=201)
+    async def api_create_connection(request: Request) -> dict:
+        """Body: {"integration", "id", "settings": {...}, "credentials": {name: value}}."""
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise OperationError("Expected a JSON object")
+        connection_id = service.create_connection(
+            str(body.get("integration", "")),
+            str(body.get("id", "")),
+            body.get("settings") or {},
+            body.get("credentials") or {},
+        )
+        return {"id": connection_id, "check": service.check_connection(connection_id)}
+
+    @app.put("/api/connections/{connection_id}/credentials/{name}", status_code=204)
+    async def api_set_credential(
+        request: Request, connection_id: str, name: str
+    ) -> Response:
+        """Body: {"value": "..."}. The value is never returned by any endpoint."""
+        body = await request.json()
+        value = body.get("value") if isinstance(body, dict) else None
+        if not isinstance(value, str):
+            raise OperationError('Expected {"value": "..."}')
+        service.set_credential(connection_id, name, value)
+        return Response(status_code=204)
+
+    @app.post("/api/connections/{connection_id}/check")
+    def api_check(connection_id: str) -> dict:
+        return service.check_connection(connection_id)
+
+    @app.delete("/api/connections/{connection_id}", status_code=204)
+    def api_remove(connection_id: str) -> Response:
+        service.remove_connection(connection_id)
+        return Response(status_code=204)
+
     @app.get("/api/config")
     def api_config() -> dict:
         return service.configuration()
@@ -239,6 +290,69 @@ def create_app(
         response = RedirectResponse("/login", status_code=303)
         response.delete_cookie(SESSION_COOKIE)
         return response
+
+    @app.get("/connections/new", response_class=HTMLResponse)
+    def new_connection(request: Request, integration: str = "") -> HTMLResponse:
+        return page(
+            request,
+            "new_connection.html",
+            integrations=service.integrations(),
+            selected=integration,
+            values={},
+            error=None,
+        )
+
+    @app.post("/connections/new", response_model=None)
+    async def create_connection(request: Request) -> Response:
+        form = await request.form()
+        integration = str(form.get("integration", ""))
+        connection_id = str(form.get("id", ""))
+        settings = {
+            key.removeprefix("setting."): str(value)
+            for key, value in form.items()
+            if key.startswith("setting.") and str(value) != ""
+        }
+        credentials = {
+            key.removeprefix("credential."): str(value)
+            for key, value in form.items()
+            if key.startswith("credential.")
+        }
+        try:
+            service.create_connection(integration, connection_id, settings, credentials)
+        except (ConfigurationError, OperationError, SecretResolutionError) as error:
+            # Re-render with the non-secret values; secrets are never echoed back.
+            return templates.TemplateResponse(
+                request,
+                "new_connection.html",
+                {
+                    "integrations": service.integrations(),
+                    "selected": integration,
+                    "values": {"id": connection_id, **settings},
+                    "error": str(error),
+                    "notice": None,
+                },
+                status_code=400,
+            )
+        service.check_connection(connection_id)
+        return back(connection_id, "created")
+
+    @app.post("/connections/{connection_id}/credentials/{name}")
+    def set_credential(connection_id: str, name: str, value: str = Form()) -> Response:
+        service.set_credential(connection_id, name, value)
+        service.check_connection(connection_id)
+        return back(connection_id, "credential_saved")
+
+    @app.post("/connections/{connection_id}/check")
+    def check(connection_id: str) -> Response:
+        service.check_connection(connection_id)
+        return back(connection_id, "checked")
+
+    @app.post("/connections/{connection_id}/remove")
+    def remove(connection_id: str, confirm: str = Form("")) -> Response:
+        if confirm != connection_id:
+            raise OperationError("Type the connection ID to confirm removal")
+        service.remove_connection(connection_id)
+        return RedirectResponse("/?notice=removed", status_code=303)
 
     @app.get("/", response_class=HTMLResponse)
     def overview(request: Request) -> HTMLResponse:

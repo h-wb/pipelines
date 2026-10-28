@@ -19,7 +19,7 @@ from typing import Any, Literal
 
 import sqlalchemy as sa
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 POSTGRES_SCHEMA = "workspace_meta"
 LOCK_POLL_SECONDS = 1.0
 
@@ -98,7 +98,33 @@ attempts = sa.Table(
     sa.Column("transformed_at", sa.DateTime(timezone=True)),
     sa.Column("error_type", sa.String(200)),
     sa.Column("error_message", sa.Text),
+    # Version 3: why it failed, when known (e.g. "credentials_rejected").
+    sa.Column("failure_kind", sa.String(32)),
     sa.UniqueConstraint("operation_id", "number"),
+)
+
+secrets = sa.Table(
+    "secrets",
+    metadata,
+    sa.Column("workspace_id", sa.String(24), primary_key=True),
+    sa.Column("connection_id", sa.String(24), primary_key=True),
+    sa.Column("name", sa.String(64), primary_key=True),
+    # Fernet token; the key is never stored here.
+    sa.Column("ciphertext", sa.LargeBinary, nullable=False),
+    sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+    sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+)
+
+connection_checks = sa.Table(
+    "connection_checks",
+    metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("workspace_id", sa.String(24), nullable=False),
+    sa.Column("connection_id", sa.String(24), nullable=False),
+    sa.Column("checked_at", sa.DateTime(timezone=True), nullable=False),
+    sa.Column("ok", sa.Boolean, nullable=False),
+    sa.Column("rejected", sa.Boolean, nullable=False),
+    sa.Column("message", sa.String(500), nullable=False),
 )
 
 
@@ -175,10 +201,18 @@ class MetadataStore:
             if version is None:
                 db.execute(schema_info.insert().values(version=SCHEMA_VERSION))
                 return
+            prefix = f"{POSTGRES_SCHEMA}." if postgres else ""
             if version < 2:
-                table = f"{POSTGRES_SCHEMA}.operations" if postgres else "operations"
                 for column in OPERATION_COLUMNS_V2:
-                    db.execute(sa.text(f"ALTER TABLE {table} ADD COLUMN {column}"))
+                    db.execute(
+                        sa.text(f"ALTER TABLE {prefix}operations ADD COLUMN {column}")
+                    )
+            if version < 3:
+                db.execute(
+                    sa.text(
+                        f"ALTER TABLE {prefix}attempts ADD COLUMN failure_kind VARCHAR(32)"
+                    )
+                )
             db.execute(schema_info.update().values(version=SCHEMA_VERSION))
 
     def create_operation(self, **values: Any) -> Operation:
@@ -363,6 +397,159 @@ class MetadataStore:
             result.append(data)
         return result
 
+    def put_secret(
+        self, workspace_id: str, connection_id: str, name: str, ciphertext: bytes
+    ) -> None:
+        key = {
+            "workspace_id": workspace_id,
+            "connection_id": connection_id,
+            "name": name,
+        }
+        now = _now()
+        with self.engine.begin() as db:
+            updated = db.execute(
+                secrets.update()
+                .where(*(secrets.c[k] == v for k, v in key.items()))
+                .values(ciphertext=ciphertext, updated_at=now)
+            ).rowcount
+            if not updated:
+                db.execute(
+                    secrets.insert().values(
+                        **key, ciphertext=ciphertext, created_at=now, updated_at=now
+                    )
+                )
+
+    def get_secret(
+        self, workspace_id: str, connection_id: str, name: str
+    ) -> bytes | None:
+        with self.engine.connect() as db:
+            value: bytes | None = db.execute(
+                sa.select(secrets.c.ciphertext).where(
+                    secrets.c.workspace_id == workspace_id,
+                    secrets.c.connection_id == connection_id,
+                    secrets.c.name == name,
+                )
+            ).scalar()
+        return value
+
+    def secret_metadata(self, workspace_id: str, connection_id: str) -> dict[str, dict]:
+        """Name -> timestamps for stored secrets. Never returns ciphertext."""
+        with self.engine.connect() as db:
+            rows = db.execute(
+                sa.select(
+                    secrets.c.name, secrets.c.created_at, secrets.c.updated_at
+                ).where(
+                    secrets.c.workspace_id == workspace_id,
+                    secrets.c.connection_id == connection_id,
+                )
+            ).all()
+        return {
+            row.name: {
+                "created_at": _iso(_aware(row.created_at)),
+                "updated_at": _iso(_aware(row.updated_at)),
+            }
+            for row in rows
+        }
+
+    def delete_secrets(
+        self, workspace_id: str, connection_id: str, names: list[str] | None = None
+    ) -> int:
+        query = secrets.delete().where(
+            secrets.c.workspace_id == workspace_id,
+            secrets.c.connection_id == connection_id,
+        )
+        if names is not None:
+            query = query.where(secrets.c.name.in_(names))
+        with self.engine.begin() as db:
+            return int(db.execute(query).rowcount)
+
+    def all_secrets(self) -> list[tuple[dict[str, str], bytes]]:
+        """Every stored secret's identity and ciphertext, for key rotation."""
+        with self.engine.connect() as db:
+            rows = db.execute(secrets.select()).all()
+        return [
+            (
+                {
+                    "workspace_id": row.workspace_id,
+                    "connection_id": row.connection_id,
+                    "name": row.name,
+                },
+                row.ciphertext,
+            )
+            for row in rows
+        ]
+
+    def record_check(
+        self,
+        workspace_id: str,
+        connection_id: str,
+        ok: bool,
+        rejected: bool,
+        message: str,
+    ) -> None:
+        with self.engine.begin() as db:
+            db.execute(
+                connection_checks.insert().values(
+                    workspace_id=workspace_id,
+                    connection_id=connection_id,
+                    checked_at=_now(),
+                    ok=ok,
+                    rejected=rejected,
+                    message=message[:500],
+                )
+            )
+
+    def credential_status(
+        self, workspace_id: str, connection_id: str
+    ) -> dict[str, Any]:
+        """Latest evidence about the credentials: a check or a run.
+
+        `rejected` if the latest evidence is a refused check or a run that failed
+        with credentials rejected; `ok` if it is a passing check or a successful
+        load; `unknown` before any evidence.
+        """
+        scope_checks = sa.and_(
+            connection_checks.c.workspace_id == workspace_id,
+            connection_checks.c.connection_id == connection_id,
+        )
+        with self.engine.connect() as db:
+            check = db.execute(
+                connection_checks.select()
+                .where(scope_checks)
+                .order_by(connection_checks.c.id.desc())
+                .limit(1)
+            ).first()
+            run = db.execute(
+                sa.select(
+                    attempts.c.started_at, attempts.c.ingestion, attempts.c.failure_kind
+                )
+                .select_from(attempts.join(operations))
+                .where(
+                    operations.c.workspace_id == workspace_id,
+                    operations.c.connection_id == connection_id,
+                    sa.or_(
+                        attempts.c.ingestion == "succeeded",
+                        attempts.c.failure_kind == "credentials_rejected",
+                    ),
+                )
+                .order_by(attempts.c.id.desc())
+                .limit(1)
+            ).first()
+        evidence: list[tuple[datetime, str, str, str]] = []
+        if check is not None:
+            state = (
+                "ok" if check.ok else "rejected" if check.rejected else "check_failed"
+            )
+            evidence.append((_utc(check.checked_at), state, check.message, "check"))
+        if run is not None:
+            state = "ok" if run.ingestion == "succeeded" else "rejected"
+            message = "Last load succeeded" if state == "ok" else "A run was refused"
+            evidence.append((_utc(run.started_at), state, message, "run"))
+        if not evidence:
+            return {"state": "unknown", "message": None, "at": None, "source": None}
+        at, state, message, source = max(evidence, key=lambda item: item[0])
+        return {"state": state, "message": message, "at": _iso(at), "source": source}
+
     def register_artifact(self, **values: Any) -> tuple[dict[str, Any], bool]:
         """Record received bytes; returns (artifact, newly_registered).
 
@@ -487,6 +674,10 @@ class MetadataStore:
                 fcntl.flock(handle, fcntl.LOCK_UN)
 
 
+def _utc(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
 def _iso(value: datetime | None) -> str | None:
     return None if value is None else value.isoformat()
 
@@ -503,6 +694,7 @@ def _attempt(row: Any) -> dict[str, Any]:
         "transformation_detail": data["transformation_detail"],
         "error_type": data["error_type"],
         "error_message": data["error_message"],
+        "failure_kind": data.get("failure_kind"),
     }
 
 

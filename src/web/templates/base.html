@@ -26,6 +26,11 @@
   textarea { width: 100%; min-height: 28rem; font: 13px/1.4 ui-monospace, monospace; }
   pre { white-space: pre-wrap; font-size: 12px; }
   code { font-size: .9em; }
+  form.stack label { display: block; margin: .8rem 0; }
+  form.stack input:not([type=hidden]) { display: block; width: min(32rem, 100%); padding: .3rem; font: inherit; }
+  .ok { color: var(--ok); }
+  .rejected, .check_failed { color: var(--bad); }
+  .unknown { color: var(--muted); }
 </style>
 </head>
 <body>
