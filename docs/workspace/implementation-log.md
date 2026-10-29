@@ -345,9 +345,14 @@ Implemented:
 - The pool's base job template (`workspace-job-template.yaml`): the default
   prefect-kubernetes template extended with the NFS export mounted at
   `/workspace/data` (fixed path so artifact storage paths resolve everywhere)
-  and the flow-run environment — warehouse coordinates in the clear, the four
-  installation secrets via `secretKeyRef` (the Kubernetes worker preserves
-  `valueFrom` entries and merges them with per-deployment env).
+  and the flow-run environment. The warehouse credentials are injected straight
+  from the CNPG-generated `postgres-metabase-app` secret (as for the other apps
+  on postgres-metabase, nothing duplicated in Bitwarden); the workspace
+  installation secrets (metadata URL, master key) come from `pipelines-secret`,
+  placed by hand until the Bitwarden `pipelines` ExternalSecret owns it; the
+  GitHub author-emails list is a placeholder for now. All via `secretKeyRef`
+  (the Kubernetes worker preserves `valueFrom` entries and merges them with
+  per-deployment env), so deployments never carry secret values.
 - mise tasks `workspace:deploy` (deployments apply) and `workspace:refresh`,
   with the reconciliation environment (pool, cluster config path, image, job
   variables) and fnox grants for `WORKSPACE_METADATA_URL`.
@@ -363,7 +368,9 @@ Validation:
   clean, repo lint clean on the touched files (a pre-existing `hk.pkl` failure
   is unchanged).
 
-Not yet verified end to end: the image build runs in CI on push to main
-(merge home-ops only after that image exists), the Bitwarden `pipelines` item
-and the ProtonPass `env-dlt/workspace/*` secrets must be created, and the first
-`workspace:deploy` against the real server is the remaining cutover step.
+Not yet verified end to end: `pipelines-secret` (metadata URL + workspace key)
+is placed by hand in the cluster, the ProtonPass `env-dlt/workspace/*` secrets
+must be created for the repo tasks, and the first `workspace:deploy` against
+the real server is the remaining cutover step. (The image built in CI on the
+first merge — a missing README in the build context briefly broke it — and the
+worker plus pool are live on the cluster.)

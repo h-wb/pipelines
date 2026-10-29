@@ -146,12 +146,14 @@ On the cluster this is deployed (decision 012): the image
 matching the server; `PIPELINES_CODE_REVISION` baked in), a Kubernetes work pool
 `workspace-k8s` gives each flow run its own Job with the NFS data export mounted
 at `/workspace/data` (configuration and artifacts live under
-`/workspace/data/workspace/`), and a dedicated worker runs it. The installation
-secrets (metadata URL, workspace master key, warehouse credentials) come from
-the cluster's Bitwarden `pipelines` item and are injected into Jobs via
-`secretKeyRef` — the workspace-k8s base job template in home-ops hardcodes them,
-so deployments never carry secret values. Reconcile from a checkout of the repo
-(its gitignored `workspace.json` must match the NFS copy):
+`/workspace/data/workspace/`), and a dedicated worker runs it. Nothing secret
+lives in Prefect: the workspace-k8s base job template in home-ops injects the
+warehouse credentials straight from the CNPG-generated `postgres-metabase-app`
+secret (like the other apps on postgres-metabase) and the workspace
+installation secrets (metadata URL, master key) from the `pipelines-secret`
+Secret — currently placed by hand, later owned by the Bitwarden `pipelines`
+ExternalSecret. Reconcile from a checkout of the repo (its gitignored
+`workspace.json` must match the NFS copy):
 
 ```bash
 mise run workspace:deploy     # deployments apply (plan first to review drift)
@@ -160,7 +162,7 @@ mise run workspace:refresh    # close unverified runs
 
 `WORKSPACE_METADATA_URL` is granted to those tasks via fnox/ProtonPass
 (`env-dlt/workspace/metadata-url`); the same value must exist in the cluster's
-Bitwarden item.
+`pipelines-secret`.
 
 Installation secrets (the master key, Postgres roles, Prefect and Metabase
 credentials) are environment variables provided by whoever deploys. They are not
