@@ -1,11 +1,12 @@
-# The build only COPYies pyproject.toml, uv.lock, src/, and dbt/; this keeps the
-# context small and states intent in one place.
+# The build only COPYies pyproject.toml, uv.lock, README.md, src/, and dbt/;
+# this keeps the context small and states intent in one place.
+# README.md must ship: pyproject.toml declares it and hatchling reads it while
+# `uv sync` installs the project.
 .git
 .github
 .venv
 .workspace
 **/__pycache__
-*.md
 docs
 examples
 tests

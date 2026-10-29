@@ -12,7 +12,7 @@ FROM --platform=$BUILDPLATFORM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS 
 WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1
 # Dependencies first: the lockfile layer only rebuilds when it changes.
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --no-install-project
 # The project itself (src/ is the package, dbt/ is the transform project).
