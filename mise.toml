@@ -85,7 +85,7 @@ secrets = [
   "PREFECT_API_AUTH_STRING",
   "MIROIR_METADATA__PASSWORD",
 ]
-env = { MIROIR_PREFECT_POOL = "miroir-k8s", MIROIR_PREFECT_CONFIG_PATH = "/miroir/data/miroir/miroir.json", MIROIR_IMAGE = "ghcr.io/h-wb/pipelines:sha-90fefd6deca6cd1f4245c11440b0ea0cae778ac2", MIROIR_PREFECT_JOB_VARIABLES = '{"namespace":"automation"}' }
+env = { MIROIR_PREFECT_POOL = "miroir-k8s", MIROIR_PREFECT_CONFIG_PATH = "/miroir/data/miroir/miroir.json", MIROIR_IMAGE = "ghcr.io/h-wb/pipelines:sha-e9a908c488719dd101596e853982aea2bcabc393", MIROIR_PREFECT_JOB_VARIABLES = '{"namespace":"automation"}' }
 run = "pipelines-miroir --config miroir.json deployments apply"
 
 [tasks."miroir:refresh"]
