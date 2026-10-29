@@ -459,3 +459,15 @@ interface gained Apply deployments (the plan exposed drift but only the CLI
 could apply), and the Prefect adapter raises OperationError with instructions
 instead of raw HTTP exceptions — a missing deployment or a refused request is a
 readable error page, not a 500.
+
+## 2026-10-29 — Deployment settings moved into the configuration (decision 016)
+
+The `deployment` section (work_pool, image, job_variables) is authoritative per
+field; `MIROIR_PREFECT_POOL`/`MIROIR_IMAGE`/`MIROIR_PREFECT_JOB_VARIABLES` are
+fallback defaults, and either source enables the Prefect adapter — so the
+interface and the CLI can no longer disagree about desired execution state.
+The section is revision-neutral, like schedules. The mise task dropped its
+image/job-variable pins (the configuration carries them); the deployed server
+keeps its environment values as fallbacks until the miroir.json on the NFS
+gains the section. Four new tests cover precedence, fallback, the missing-pool
+error, and revision neutrality; 77 tests pass, lint and mypy clean.

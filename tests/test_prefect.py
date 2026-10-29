@@ -15,15 +15,17 @@ from pathlib import Path
 from src.adapters.prefect import PrefectOrchestrator
 from src.cli.main import main
 from src.core.config import ConfigurationError, parse_miroir
-from src.core.operations import MetadataStore
+from src.core.operations import MetadataStore, OperationError
 from src.core.runner import request_sync
 from tests.test_miroir import example
 
 POOL = "test-pool"
 
 
-def miroir(schedule=None, drop_health=False):
+def miroir(schedule=None, drop_health=False, deployment=None):
     config = example()
+    if deployment:
+        config["deployment"] = deployment
     if schedule:
         config["connections"][0]["schedule"] = schedule
     if drop_health:
@@ -171,6 +173,66 @@ class PrefectAdapterTests(unittest.TestCase):
                 miroir(schedule=bad)
 
 
+class DeploymentSettingsTests(unittest.TestCase):
+    """The configuration is the single source of execution settings (016)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.store = MetadataStore(f"sqlite:///{Path(self.tmp.name) / 'meta.sqlite'}")
+        self.addCleanup(self.store.engine.dispose)
+        self.store.migrate()
+
+    def test_config_declared_settings_win_over_environment_fallbacks(self):
+        declared = miroir(
+            deployment={
+                "work_pool": "config-pool",
+                "image": "ghcr.io/h-wb/pipelines:sha-config",
+                "job_variables": {"namespace": "from-config"},
+            }
+        )
+        adapter = PrefectOrchestrator(
+            self.store,
+            "env-pool",
+            "/config.json",
+            image="ghcr.io/h-wb/pipelines:sha-env",
+            job_variables={"namespace": "env"},
+        )
+        spec = next(iter(adapter.desired(declared).values()))
+        self.assertEqual(spec.work_pool, "config-pool")
+        self.assertEqual(spec.image, "ghcr.io/h-wb/pipelines:sha-config")
+        self.assertEqual(spec.job_variables, {"namespace": "from-config"})
+
+    def test_omitted_fields_fall_back_to_the_environment(self):
+        declared = miroir(deployment={"work_pool": "config-pool"})
+        adapter = PrefectOrchestrator(
+            self.store,
+            None,
+            "/config.json",
+            image="ghcr.io/h-wb/pipelines:sha-env",
+            job_variables={"namespace": "env"},
+        )
+        spec = next(iter(adapter.desired(declared).values()))
+        self.assertEqual(spec.work_pool, "config-pool")
+        self.assertEqual(spec.image, "ghcr.io/h-wb/pipelines:sha-env")
+        self.assertEqual(spec.job_variables, {"namespace": "env"})
+
+    def test_no_pool_anywhere_is_a_clear_error(self):
+        adapter = PrefectOrchestrator(self.store, None, "/config.json")
+        with self.assertRaisesRegex(OperationError, "deployment.work_pool"):
+            adapter.desired(miroir())
+
+    def test_deployment_settings_do_not_change_connection_revisions(self):
+        before = miroir()
+        after = miroir(
+            deployment={"work_pool": "other-pool", "image": "ghcr.io/x:other"}
+        )
+        self.assertEqual(
+            [c.revision for c in before.connections],
+            [c.revision for c in after.connections],
+        )
+
+
 class OrchestrationCliTests(unittest.TestCase):
     """The orchestrator commands as a person runs them: plain environment."""
 
@@ -196,7 +258,7 @@ class OrchestrationCliTests(unittest.TestCase):
             with self.subTest(command=command):
                 with redirect_stderr(io.StringIO()) as err:
                     self.assertEqual(main([*self.base, *command, *self.metadata]), 2)
-                self.assertIn("MIROIR_PREFECT_POOL", err.getvalue())
+                self.assertIn("deployment.work_pool", err.getvalue())
 
     def test_credential_commands_work_without_the_orchestrator(self):
         # Regression: the orchestrator wiring once moved `check`'s import away.

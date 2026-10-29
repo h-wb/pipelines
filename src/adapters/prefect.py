@@ -51,7 +51,9 @@ class DeploymentSpec:
 @dataclass
 class PrefectOrchestrator:
     store: MetadataStore
-    work_pool: str
+    # Fallback execution settings (decision 016): used only where the
+    # configuration's `deployment` section does not carry the field.
+    work_pool: str | None
     # Path of the miroir configuration where flow runs execute (worker or Job).
     config_path: str
     image: str | None = None
@@ -60,12 +62,36 @@ class PrefectOrchestrator:
 
     # ---- Deployments ------------------------------------------------------------
 
+    def _deployment(
+        self, miroir: ResolvedMiroir
+    ) -> tuple[str, str | None, dict[str, Any]]:
+        """Effective (work pool, image, job variables) for this miroir.
+
+        The configuration's deployment section is authoritative per field;
+        the constructor's environment-derived values fill what it omits.
+        """
+        declared = miroir.deployment
+        pool = (declared.work_pool if declared else None) or self.work_pool
+        if not pool:
+            raise OperationError(
+                "No work pool configured: set deployment.work_pool in the"
+                " configuration (or MIROIR_PREFECT_POOL as a default)"
+            )
+        image = declared.image if declared and declared.image else self.image
+        variables = (
+            declared.job_variables
+            if declared and declared.job_variables is not None
+            else self.job_variables
+        )
+        return pool, image, dict(variables)
+
     def deployment_name(
         self, miroir: ResolvedMiroir, connection: ResolvedConnection
     ) -> str:
         return f"{miroir.id}-{connection.config.id}"
 
     def desired(self, miroir: ResolvedMiroir) -> dict[str, DeploymentSpec]:
+        pool, image, job_variables = self._deployment(miroir)
         specs = {}
         for connection in miroir.connections:
             schedule = connection.config.schedule
@@ -79,9 +105,9 @@ class PrefectOrchestrator:
                 },
                 cron=schedule.cron if schedule else None,
                 timezone=schedule.timezone if schedule else None,
-                work_pool=self.work_pool,
-                image=self.image,
-                job_variables=dict(self.job_variables),
+                work_pool=pool,
+                image=image,
+                job_variables=dict(job_variables),
             )
         return specs
 

@@ -432,7 +432,10 @@ class MiroirService:
 
     def _orchestrator(self) -> Any:
         if self.orchestrator is None:
-            raise OperationError("No orchestrator configured (set MIROIR_PREFECT_POOL)")
+            raise OperationError(
+                "No orchestrator configured: set deployment.work_pool in the"
+                " configuration, or MIROIR_PREFECT_POOL as a default"
+            )
         return self.orchestrator
 
     def deployments_plan(self) -> list[dict[str, Any]]:

@@ -131,12 +131,31 @@ class ConnectionConfig(StrictModel):
     ] = Field(default_factory=dict)
 
 
+class Deployment(StrictModel):
+    """Where and how Prefect executes this miroir's connections (decision 016).
+
+    The configuration is the single source of desired execution state, so any
+    writer — the interface or the CLI — plans and applies the same deployments.
+    Like schedules, it is not part of a connection's execution revision.
+    """
+
+    work_pool: str = Field(min_length=1, max_length=100)
+    # The image flow runs execute; a digest-pinned tag (ghcr.io/h-wb/pipelines:sha-…).
+    image: str | None = None
+    # Job variables for the work pool (e.g. the namespace); None falls back to
+    # the environment default, an empty object replaces it with nothing.
+    job_variables: dict[str, Any] | None = None
+
+
 class MiroirConfig(StrictModel):
     schema_version: Literal[1]
     id: Identifier
     # Empty is valid: a new installation starts with no connections.
     connections: list[ConnectionConfig] = Field(default_factory=list)
     links: Links = Field(default_factory=Links)
+    # Absent: execution settings come from the writer's environment (the
+    # MIROIR_* defaults); present: they are authoritative here instead.
+    deployment: Deployment | None = None
 
     @field_validator("schema_version", mode="before")
     @classmethod
@@ -175,6 +194,9 @@ class ResolvedMiroir:
     revision: str
     connections: tuple[ResolvedConnection, ...]
     links: Links = field(default_factory=Links)
+    # Declared execution settings (decision 016); None when the writer's
+    # environment supplies them instead.
+    deployment: Deployment | None = None
 
 
 def _validation_error(error: ValidationError, prefix: str) -> ConfigurationError:
@@ -277,6 +299,7 @@ def parse_miroir(text: str) -> ResolvedMiroir:
         _hash(normalized),
         tuple(connections),
         links=config.links,
+        deployment=config.deployment,
     )
 
 

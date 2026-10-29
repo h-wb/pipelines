@@ -118,20 +118,34 @@ and `zoneinfo`:
 ```
 
 Prefect is the single orchestrator, on a cluster or on one machine (`prefect
-server` plus a process worker). The miroir only reconciles with it; set
-`MIROIR_PREFECT_POOL` to enable the integration:
+server` plus a process worker). The miroir only reconciles with it. Execution
+settings live in the configuration (decision 016) — a `deployment` section —
+so every writer (the interface, the CLI) plans the same deployments:
+
+```json
+"deployment": {
+  "work_pool": "miroir-k8s",
+  "image": "ghcr.io/h-wb/pipelines:sha-<full-commit>",
+  "job_variables": {"namespace": "automation"}
+}
+```
+
+`image` and `job_variables` are optional; omitted fields fall back to the
+`MIROIR_PREFECT_POOL`, `MIROIR_IMAGE`, and `MIROIR_PREFECT_JOB_VARIABLES`
+environment variables (bootstrap defaults for a first setup). Either source
+enables the Prefect integration. On the cluster, the deployment section should
+carry a digest-pinned image — the cluster's registry mirror serves stale
+mutable tags.
 
 ```bash
-export MIROIR_PREFECT_POOL=miroir-k8s
-# Where flow runs find the configuration (worker or Job mount):
-export MIROIR_PREFECT_CONFIG_PATH=/srv/pipelines/miroir.json
-# Optional, for image-based work pools:
-export MIROIR_IMAGE=ghcr.io/h-wb/pipelines:abc
-
 uv run --locked pipelines-miroir deployments plan
-uv run --locked pipelines-miroir deployments apply
+uv run --locked pipelines-miroir deployments apply   # or: the Apply deployments button
 uv run --locked pipelines-miroir refresh
 ```
+
+Where flow runs find the configuration is an environment concern
+(`MIROIR_PREFECT_CONFIG_PATH`, default the local file path) because it differs
+between the operator's machine and the Job's mount.
 
 Each connection gets one deployment of `sync_connection`
 (`sync-connection/<miroir>-<connection>`) with a concurrency limit of 1.
@@ -154,8 +168,8 @@ the `postgres-miroir-app` secret of Miroir's own CNPG cluster — the miroir
 composes its metadata URL from the
 `MIROIR_METADATA__{HOST,PORT,DATABASE,USERNAME,PASSWORD}` parts
 (`MIROIR_METADATA_URL` still wins when set). The only other value a flow run
-needs is the miroir master key, in the `miroir-secret` Secret — placed by hand
-for now, later owned by the Bitwarden `miroir` ExternalSecret. Reconcile from
+needs is the miroir master key, in the `miroir-secret` Secret, owned by the
+Bitwarden `miroir` item through the ExternalSecret. Reconcile from
 a checkout of the repo (its gitignored `miroir.json` must match the NFS copy):
 
 ```bash

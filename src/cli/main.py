@@ -187,11 +187,11 @@ def _operate(args: argparse.Namespace, miroir: Any) -> int:
     try:
         secrets = _secret_store(store)
         if args.command == "serve":
-            return _serve(args, store, secrets)
+            return _serve(args, miroir, store, secrets)
         if args.command in ("set-credential", "check", "rotate-secrets"):
             return _credentials(args, store, secrets)
         if args.command in ("deployments", "refresh"):
-            return _orchestrate(args, store, secrets)
+            return _orchestrate(args, miroir, store, secrets)
         return _with_store(args, miroir, store, ids, secrets)
     except SecretKeyError as error:
         print(str(error), file=sys.stderr)
@@ -209,10 +209,16 @@ def _secret_store(store: Any) -> Any:
     return SecretStore(store, SecretBox.from_environment())
 
 
-def _orchestrator(args: argparse.Namespace, store: Any) -> Any:
-    """The Prefect adapter, configured from the installation's environment."""
+def _orchestrator(args: argparse.Namespace, store: Any, miroir: Any) -> Any:
+    """The Prefect adapter when this installation executes through Prefect.
+
+    The configuration's deployment section is authoritative for execution
+    settings (decision 016); the MIROIR_* environment variables are fallback
+    defaults, so the interface and the CLI plan the same deployments. Either
+    source enables the adapter.
+    """
     pool = os.environ.get("MIROIR_PREFECT_POOL")
-    if not pool:
+    if not pool and not getattr(miroir, "deployment", None):
         return None
     from src.adapters.prefect import PrefectOrchestrator
 
@@ -226,13 +232,19 @@ def _orchestrator(args: argparse.Namespace, store: Any) -> Any:
     )
 
 
-def _orchestrate(args: argparse.Namespace, store: Any, secrets: Any) -> int:
+def _orchestrate(
+    args: argparse.Namespace, miroir: Any, store: Any, secrets: Any
+) -> int:
     from src.core.service import MiroirService
 
     store.migrate()
-    orchestrator = _orchestrator(args, store)
+    orchestrator = _orchestrator(args, store, miroir)
     if orchestrator is None:
-        print("Set MIROIR_PREFECT_POOL to use Prefect", file=sys.stderr)
+        print(
+            "No Prefect deployment configured: set deployment.work_pool in the"
+            " configuration, or MIROIR_PREFECT_POOL as a default",
+            file=sys.stderr,
+        )
         return 2
     service = MiroirService(
         args.config, store, Path(DEFAULT_ARTIFACTS), orchestrator, secrets, orchestrator
@@ -367,7 +379,7 @@ def _print(result: Any) -> int:
     return 0
 
 
-def _serve(args: argparse.Namespace, store: Any, secrets: Any) -> int:
+def _serve(args: argparse.Namespace, miroir: Any, store: Any, secrets: Any) -> int:
     import uvicorn
 
     from src.core.service import MiroirService, SubprocessExecutor
@@ -378,7 +390,7 @@ def _serve(args: argparse.Namespace, store: Any, secrets: Any) -> int:
         print("Set MIROIR_API_TOKEN (16+ characters) to serve", file=sys.stderr)
         return 2
     store.migrate()
-    orchestrator = _orchestrator(args, store)
+    orchestrator = _orchestrator(args, store, miroir)
     if orchestrator is None and args.duckdb is None:
         print("Set MIROIR_PREFECT_POOL or pass --duckdb", file=sys.stderr)
         return 2

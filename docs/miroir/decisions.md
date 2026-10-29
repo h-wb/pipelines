@@ -446,3 +446,25 @@ re-pointing and buys nothing. The destination credentials keep coming from
 
 `MIROIR_METADATA__*` (host, port, database, username, password) compose the
 metadata URL, so the database password still exists nowhere outside CNPG.
+
+## 016 — Execution settings live in the configuration, not the writer's environment
+
+Status: accepted, 2026-10-29.
+
+Until now the deployment job's work pool, image, and job variables came from
+each writer's environment (`MIROIR_PREFECT_POOL`, `MIROIR_IMAGE`,
+`MIROIR_PREFECT_JOB_VARIABLES`). With two writers — the interface and the CLI —
+that made desired state writer-dependent: disagreeing environments would apply
+different deployments and fight over drift forever.
+
+The configuration now carries a `deployment` section (`work_pool` required;
+`image` and `job_variables` optional), authoritative per field. The
+environment variables remain as fallback defaults for fields the section omits
+and for a first setup, and either source enables the Prefect integration. Like
+schedules, the section is not part of a connection's execution revision.
+Consequences: any writer produces the same plan; apply is writer-independent;
+and on the cluster the image pin (a digest, never a mutable tag — the
+registry mirror serves those stale) is one config edit instead of three
+environment pins. `MIROIR_PREFECT_CONFIG_PATH` stays an environment concern:
+where flow runs find the configuration genuinely differs between the operator's
+machine and the Job's mount.
