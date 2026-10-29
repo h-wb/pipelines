@@ -625,6 +625,25 @@ Validation:
   confirmed token responses have no-store headers and no automatic refresh. The
   activity page keeps uploads available alongside automatic delivery.
 
-Release follows these checks. Real phone delivery and the n8n/legacy cutover remain
-separate; no live connection credentials, schedules, or dataset bindings were edited
-while building the setup flow.
+Deployed as pipelines `b1f8e8cd49203d9f058ea8c63efae5d1b0183428`, home-ops
+`24fde9524934a04a5493e7da305b9f68f1563abd`. The image workflow, both Kustomize
+builds, Helm renders, and home-ops pre-commit checks passed. Config-owned execution
+settings and both existing deployments point to the release SHA; server/worker
+HelmReleases are ready (miroir v10, prefect v52).
+
+Live validation created a temporary file-only connection through the onboarding
+form, enabled automatic delivery, and verified that only its own deployment was
+prepared without a global Apply step. Retrying setup preserved the token; invalid
+JSON was rejected and no synthetic files/data were imported. Removed the temporary
+connection and explicitly deleted only its test deployment; final drift is empty.
+A repeat ListenBrainz sync completed on the new Job image with its successful
+attempt recorded. Existing Health settings and its delivery token were preserved.
+
+The HTTPS gateway check found that Uvicorn's localhost-only proxy trust generated
+HTTP receiving URLs. home-ops now sets `FORWARDED_ALLOW_IPS` to the ingress pod
+network. Verified through the actual TLS gateway that the settings page advertises
+an HTTPS receiving URL and browser login sets a Secure cookie. No public-origin
+guessing or source-specific URL logic was added to the application.
+
+Real phone delivery and the n8n/legacy cutover remain separate; no live connection
+credentials, schedules, or dataset bindings were edited during this release.

@@ -202,6 +202,11 @@ Without a configured work pool, requests run as local subprocesses and need
 `--duckdb` (a local DuckDB file). With `deployment.work_pool` in the configuration
 or `MIROIR_PREFECT_POOL` set, they are submitted as Prefect flow runs instead.
 
+Behind a TLS-terminating proxy, set Uvicorn's `FORWARDED_ALLOW_IPS` to the trusted
+proxy addresses/networks. The cluster trusts its ingress pod network; this makes
+generated receiving URLs use HTTPS and login cookies carry Secure. Do not rely on
+the localhost-only default when the proxy runs in another pod.
+
 On the cluster the server is deployed (home-ops `automation/miroir`): the
 `miroir` service at `https://miroir.<domain>` behind envoy-internal, on the
 same image as the flow runs, with the metadata store in postgres-miroir and
