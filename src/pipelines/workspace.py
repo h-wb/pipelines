@@ -1,8 +1,9 @@
 """Prefect entry point for workspace connections.
 
-Not deployed yet: `prefect.yaml` still runs the legacy per-source flows. Deploying
-this needs `WORKSPACE_METADATA_URL`, a workspace configuration on the worker, and
-worker-side credential resolution (see docs/workspace/decisions.md).
+Deployed per connection (decision 013). A flow run needs the workspace
+configuration at `config_path`, the metadata database (WORKSPACE_METADATA_URL or
+WORKSPACE_METADATA__* — see `metadata_url`), and, for built-in secrets,
+WORKSPACE_SECRET_KEY (decision 011).
 """
 
 import os
@@ -11,7 +12,7 @@ from pathlib import Path
 from prefect import flow
 from prefect.runtime import flow_run
 
-from src.core.config import load_workspace
+from src.core.config import load_workspace, metadata_url
 from src.core.operations import MetadataStore
 from src.core.runner import run_connection
 from src.core.secrets import SecretBox, SecretStore, make_resolver
@@ -32,7 +33,12 @@ def sync_connection(
             Runs without one (schedules, n8n) register their own operation.
         config_path: Workspace configuration file on the worker.
     """
-    store = MetadataStore(os.environ["WORKSPACE_METADATA_URL"])
+    url = metadata_url()
+    if url is None:
+        raise RuntimeError(
+            "Set WORKSPACE_METADATA_URL or WORKSPACE_METADATA__HOST/USERNAME/PASSWORD"
+        )
+    store = MetadataStore(url)
     store.migrate()
     outcome = run_connection(
         load_workspace(Path(config_path)),

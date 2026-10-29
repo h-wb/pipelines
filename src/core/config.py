@@ -8,6 +8,7 @@ import tempfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Annotated, Any, Literal
+from urllib.parse import quote_plus
 
 from pydantic import (
     Field,
@@ -19,6 +20,31 @@ from pydantic import (
 
 from src.core.models import DatabaseIdentifier, Identifier, SecretKey, StrictModel
 from src.integrations.registry import INTEGRATIONS, IntegrationDefinition
+
+
+def metadata_url() -> str | None:
+    """The metadata store's URL from the environment, or None if unset.
+
+    `WORKSPACE_METADATA_URL` wins when set. Otherwise the URL is composed from
+    `WORKSPACE_METADATA__{HOST,USERNAME,PASSWORD}` (required) and
+    `WORKSPACE_METADATA__{PORT,DATABASE}` (default 5432 and the username), so a
+    cluster can mount credentials it already manages — e.g. the CNPG
+    application secret — as environment variables without copying the password
+    into a secret store.
+    """
+    if url := os.environ.get("WORKSPACE_METADATA_URL"):
+        return url
+    host = os.environ.get("WORKSPACE_METADATA__HOST")
+    username = os.environ.get("WORKSPACE_METADATA__USERNAME")
+    password = os.environ.get("WORKSPACE_METADATA__PASSWORD")
+    if not (host and username and password):
+        return None
+    port = os.environ.get("WORKSPACE_METADATA__PORT") or "5432"
+    database = os.environ.get("WORKSPACE_METADATA__DATABASE") or username
+    return (
+        f"postgresql://{quote_plus(username)}:{quote_plus(password)}"
+        f"@{host}:{port}/{database}"
+    )
 
 
 class ConfigurationError(ValueError):

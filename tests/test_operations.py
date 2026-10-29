@@ -21,7 +21,7 @@ import sqlalchemy as sa
 from sqlalchemy.exc import OperationalError
 
 from src.cli.main import main
-from src.core.config import parse_workspace
+from src.core.config import metadata_url, parse_workspace
 from src.core.operations import (
     ConnectionBusy,
     MetadataStore,
@@ -295,6 +295,55 @@ class SecretTests(unittest.TestCase):
         with self.assertRaises(SecretResolutionError) as raised:
             resolve_credentials(connection, {"fnox": lambda key: None})
         self.assertNotIn("LISTENBRAINZ__ACCESS_TOKEN", str(raised.exception))
+
+
+class MetadataUrlTests(unittest.TestCase):
+    def setUp(self):
+        self.env = {
+            name: value
+            for name, value in os.environ.items()
+            if name == "WORKSPACE_METADATA_URL"
+            or name.startswith("WORKSPACE_METADATA__")
+        }
+        for name in self.env:
+            os.environ.pop(name)
+        self.addCleanup(
+            lambda: [
+                os.environ.__setitem__(name, value) for name, value in self.env.items()
+            ]
+        )
+
+    def test_a_direct_url_wins(self):
+        os.environ["WORKSPACE_METADATA_URL"] = "sqlite:///direct.sqlite"
+        os.environ["WORKSPACE_METADATA__HOST"] = "h"
+        self.assertEqual(metadata_url(), "sqlite:///direct.sqlite")
+
+    def test_composes_from_individual_parts(self):
+        parts = {
+            "WORKSPACE_METADATA__HOST": "postgres-rw.automation.svc",
+            "WORKSPACE_METADATA__USERNAME": "metabase",
+            "WORKSPACE_METADATA__PASSWORD": "p@ss word/2",
+        }
+        os.environ.update(parts)
+        # Port and database default to the CNPG convention: 5432, db = username.
+        self.assertEqual(
+            metadata_url(),
+            "postgresql://metabase:p%40ss+word%2F2@postgres-rw.automation.svc:5432/metabase",
+        )
+        os.environ.update(
+            {
+                "WORKSPACE_METADATA__PORT": "5433",
+                "WORKSPACE_METADATA__DATABASE": "other",
+            }
+        )
+        self.assertEqual(
+            metadata_url(),
+            "postgresql://metabase:p%40ss+word%2F2@postgres-rw.automation.svc:5433/other",
+        )
+
+    def test_unconfigured_is_none(self):
+        os.environ["WORKSPACE_METADATA__HOST"] = "h"
+        self.assertIsNone(metadata_url())  # username and password missing
 
 
 class CliOperationTests(unittest.TestCase):

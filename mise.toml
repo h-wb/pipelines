@@ -27,6 +27,12 @@ DESTINATION__POSTGRES__CREDENTIALS__HOST = "postgres-metabase-rw.automation.svc"
 DESTINATION__POSTGRES__CREDENTIALS__PORT = "5432"
 DESTINATION__POSTGRES__CREDENTIALS__DATABASE = "metabase"
 DESTINATION__POSTGRES__CREDENTIALS__USERNAME = "metabase"
+# The workspace's own metadata store: schema workspace_meta in the same instance.
+# The password is a fnox secret; the composed URL is built from these parts.
+WORKSPACE_METADATA__HOST = "postgres-metabase-rw.automation.svc"
+WORKSPACE_METADATA__PORT = "5432"
+WORKSPACE_METADATA__DATABASE = "metabase"
+WORKSPACE_METADATA__USERNAME = "metabase"
 # Data mounts on the Prefect worker; override for local imports.
 BROWSER_HISTORY__DATA_DIR = "/root/.prefect/data/browser"
 APPLE_HEALTH__DATA_DIR = "/root/.prefect/data/health"
@@ -75,7 +81,7 @@ description = "Reconcile Prefect deployments with workspace.json (see plan first
 secrets = [
   "PREFECT_API_URL",
   "PREFECT_API_AUTH_STRING",
-  "WORKSPACE_METADATA_URL",
+  "WORKSPACE_METADATA__PASSWORD",
 ]
 env = { WORKSPACE_PREFECT_POOL = "workspace-k8s", WORKSPACE_PREFECT_CONFIG_PATH = "/workspace/data/workspace/workspace.json", WORKSPACE_IMAGE = "ghcr.io/h-wb/pipelines:latest", WORKSPACE_PREFECT_JOB_VARIABLES = '{"namespace":"automation"}' }
 run = "pipelines-workspace --config workspace.json deployments apply"
@@ -85,7 +91,7 @@ description = "Close unverified runs from Prefect's state (crash -> lost, cancel
 secrets = [
   "PREFECT_API_URL",
   "PREFECT_API_AUTH_STRING",
-  "WORKSPACE_METADATA_URL",
+  "WORKSPACE_METADATA__PASSWORD",
 ]
 env = { WORKSPACE_PREFECT_POOL = "workspace-k8s" }
 run = "pipelines-workspace --config workspace.json refresh"

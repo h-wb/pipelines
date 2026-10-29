@@ -24,6 +24,8 @@ EXECUTE_LOCK_WAIT = 3600.0
 
 
 def main(argv: list[str] | None = None) -> int:
+    from src.core.config import metadata_url
+
     parser = argparse.ArgumentParser(prog="pipelines-workspace")
     parser.add_argument("--config", type=Path, default=Path("workspace.json"))
     commands = parser.add_subparsers(dest="command", required=True)
@@ -109,7 +111,7 @@ def main(argv: list[str] | None = None) -> int:
     ):
         command.add_argument(
             "--metadata",
-            default=os.environ.get("WORKSPACE_METADATA_URL", DEFAULT_METADATA),
+            default=metadata_url() or DEFAULT_METADATA,
             help="SQLAlchemy URL of the metadata store",
         )
     args = parser.parse_args(argv)

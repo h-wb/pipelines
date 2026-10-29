@@ -374,3 +374,29 @@ must be created for the repo tasks, and the first `workspace:deploy` against
 the real server is the remaining cutover step. (The image built in CI on the
 first merge — a missing README in the build context briefly broke it — and the
 worker plus pool are live on the cluster.)
+
+## 2026-10-29 — The metadata URL composes from CNPG-managed parts
+
+The metadata database is the same Postgres instance as the warehouse, so its
+password was being copied a second time into whatever held
+`WORKSPACE_METADATA_URL`. Instead, `metadata_url()` (in `src/core/config.py`,
+imported by both the CLI and the flow — deliberately not `operations`, which
+would drag SQLAlchemy into the read-only CLI) composes the URL from
+`WORKSPACE_METADATA__{HOST,PORT,DATABASE,USERNAME,PASSWORD}` when
+`WORKSPACE_METADATA_URL` is unset; a direct URL still wins.
+
+Consequences:
+
+- The workspace-k8s job template injects the metadata credentials from the
+  CNPG-generated `postgres-metabase-app` secret, exactly like the warehouse
+  credentials — no database password in Bitwarden, in the manual secret, or in
+  Prefect. `pipelines-secret` (and the Bitwarden `pipelines` item, later) now
+  holds one value: the workspace master key.
+- The repo's mise tasks take `WORKSPACE_METADATA__PASSWORD` from the same
+  ProtonPass item as the warehouse destination; the other parts are non-secret
+  defaults in `mise.toml`. No new ProtonPass item for the metadata URL.
+
+Validation: three new tests (direct URL wins, composition with quoting and the
+CNPG-convention defaults, unconfigured is None); lint, format, and mypy clean on
+the workspace slice; 73 tests pass on Python 3.14.7. The job template renders
+Jobs with all fifteen environment entries resolved from the two Secrets.

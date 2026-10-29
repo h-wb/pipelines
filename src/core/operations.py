@@ -23,6 +23,7 @@ SCHEMA_VERSION = 3
 POSTGRES_SCHEMA = "workspace_meta"
 LOCK_POLL_SECONDS = 1.0
 
+
 Origin = Literal["local", "request", "prefect"]
 Role = Literal["historical", "ongoing"]
 # `lost` (the run crashed) and `cancelled` come from reconciling with the
