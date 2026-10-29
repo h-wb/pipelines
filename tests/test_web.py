@@ -5,6 +5,7 @@ files, except one test that drives the real subprocess executor. HTTP calls to
 ListenBrainz are intercepted.
 """
 
+import hashlib
 import json
 import os
 import tempfile
@@ -130,6 +131,230 @@ class WebTests(unittest.TestCase):
         self.assertEqual(detail["status"]["analysis"], "not_modelled")
         self.assertEqual(detail["operations"][0]["artifact_name"], "auto.json")
         self.assertEqual(len(self.executed), 1)
+
+    def delivery_headers(self, connection="health"):
+        response = self.client.post(
+            f"/api/connections/{connection}/delivery-token", headers=BEARER
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        return {"Authorization": "Bearer " + response.json()["token"]}
+
+    def test_file_connection_needs_no_folder_and_imports_browser_upload(self):
+        created = self.client.post(
+            "/api/connections",
+            headers=BEARER,
+            json={
+                "integration": "apple_health",
+                "id": "new_health",
+                "settings": {"cutoff": "2026-06-04"},
+            },
+        )
+        self.assertEqual(created.status_code, 201)
+        self.assertTrue(created.json()["check"]["ok"])
+        self.assertIn("Ready to receive", created.json()["check"]["message"])
+        self.login()
+        page = self.client.get("/connections/new?integration=apple_health")
+        self.assertIn("<details>", page.text)
+        self.assertNotIn('name="setting.data_dir" required', page.text)
+        page = self.client.get("/connections/new?integration=listenbrainz")
+        self.assertIn('name="setting.username" required', page.text)
+        page = self.client.get("/connections/new_health")
+        self.assertNotIn("Scan folder", page.text)
+        self.assertIn("Waiting for the first export", page.text)
+        self.assertIn("http://testserver/api/connections/new_health/receive", page.text)
+        response = self.client.post(
+            "/connections/new_health/upload",
+            files={"file": ("export.json", json.dumps(export(("2026-06-05", 1))))},
+            data={"role": "ongoing", "import_now": "true"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Last export received", response.text)
+        detail = self.service.connection("new_health")
+        self.assertEqual(detail["status"]["last_attempt"]["ingestion"], "succeeded")
+        self.assertFalse(detail["can_sync"])
+        response = self.client.post("/api/connections/new_health/sync", headers=BEARER)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Upload an export", response.json()["error"])
+
+    def test_receive_token_is_scoped_and_imports_duplicate_once(self):
+        headers = self.delivery_headers()
+        url = "/api/connections/health/receive"
+        body = json.dumps(export(("2026-06-05", 1)))
+        first = self.client.post(url, content=body, headers=headers)
+        self.assertEqual(first.status_code, 201)
+        initial_receipt = self.service.artifacts("health")[0]
+        # Receive-only tokens cannot request historical/replay behavior.
+        again = self.client.post(
+            url + "?role=historical&replay=true&import=false",
+            content=body,
+            headers=headers,
+        )
+        self.assertEqual(again.status_code, 200)
+        self.assertEqual(again.json()["already_imported"], first.json()["operation_id"])
+        self.assertEqual(self.service.artifacts("health")[0]["role"], "ongoing")
+        latest_receipt = self.service.artifacts("health")[0]
+        self.assertEqual(initial_receipt["received_at"], latest_receipt["received_at"])
+        self.assertLess(
+            initial_receipt["last_received_at"], latest_receipt["last_received_at"]
+        )
+        self.assertEqual(
+            self.service.connection("health")["delivery"]["last_received_at"],
+            latest_receipt["last_received_at"],
+        )
+        self.assertEqual(set(first.json()), {"artifact_id", "new", "operation_id"})
+        self.assertEqual(len(self.executed), 1)
+        detail = self.service.connection("health")
+        self.assertEqual(detail["operations"][0]["origin"], "webhook")
+        self.assertEqual(detail["status"]["last_attempt"]["ingestion"], "succeeded")
+        self.service.create_connection(
+            "apple_health", "other", {"cutoff": "2026-06-04"}, {}
+        )
+        for other_url in (
+            "/api/connections/other/receive",
+            "/api/connections/music/receive",
+            "/api/connections/missing/receive",
+        ):
+            self.assertEqual(
+                self.client.post(other_url, content=body, headers=headers).status_code,
+                401,
+            )
+        for method, path in (
+            ("get", "/api/overview"),
+            ("get", "/api/config"),
+            ("get", "/api/connections/health"),
+            ("post", "/api/connections/health/sync"),
+            ("post", "/api/connections/health/delivery-token"),
+            ("delete", "/api/connections/health/delivery-token"),
+            ("post", "/api/connections/health/artifacts?role=historical"),
+            ("get", url),
+        ):
+            with self.subTest(method=method, path=path):
+                self.assertEqual(
+                    getattr(self.client, method)(path, headers=headers).status_code, 401
+                )
+
+    def test_delivery_token_rotation_revocation_removal_and_restart(self):
+        old = self.delivery_headers()
+        new = self.delivery_headers()
+        token = new["Authorization"][7:]
+        self.assertFalse(
+            self.service.verify_delivery_token("health", old["Authorization"][7:])
+        )
+        self.assertTrue(self.service.verify_delivery_token("health", token))
+        self.assertNotIn(token, json.dumps(self.service.connection("health")))
+        self.assertNotIn(token, self.config_path.read_text())
+        self.assertNotIn(token.encode(), (self.root / "meta.sqlite").read_bytes())
+        self.assertEqual(
+            self.store.delivery_token("personal", "health")["token_hash"],
+            hashlib.sha256(token.encode()).hexdigest(),
+        )
+        restarted = MetadataStore(f"sqlite:///{self.root / 'meta.sqlite'}")
+        self.addCleanup(restarted.engine.dispose)
+        restarted.migrate()
+        service = MiroirService(
+            self.config_path,
+            restarted,
+            self.root / "artifacts",
+            InlineExecutor(self.execute),
+        )
+        self.assertTrue(service.verify_delivery_token("health", token))
+        self.assertFalse(service.verify_delivery_token("music", token))
+        self.assertEqual(
+            self.client.delete(
+                "/api/connections/health/delivery-token", headers=BEARER
+            ).status_code,
+            204,
+        )
+        self.assertFalse(service.verify_delivery_token("health", token))
+        headers = self.delivery_headers()
+        self.service.remove_connection("health")
+        self.service.create_connection(
+            "apple_health", "health", {"cutoff": "2026-06-04"}, {}
+        )
+        self.assertFalse(
+            service.verify_delivery_token("health", headers["Authorization"][7:])
+        )
+
+    def test_receive_acknowledges_queued_import_and_scanner_stays_optional(self):
+        headers = self.delivery_headers()
+        self.service.executor = type("Hold", (), {"submit": lambda self, op: None})()
+        response = self.client.post(
+            "/api/connections/health/receive",
+            headers=headers,
+            content=json.dumps(export(("2026-06-05", 1))),
+        )
+        self.assertEqual(response.status_code, 201)
+        operation = self.store.get_operation(response.json()["operation_id"])
+        self.assertEqual(operation.kind, "import")
+        self.assertEqual(operation.origin, "webhook")
+        self.assertEqual(self.store.attempts(operation.id), [])
+        self.assertIsNotNone(
+            self.service.connection("health")["delivery"]["last_received_at"]
+        )
+        # Existing folder connections retain their check and Scan folder action.
+        self.service.create_connection(
+            "apple_health",
+            "folder_health",
+            {"data_dir": str(self.root), "cutoff": "2026-06-04"},
+            {},
+        )
+        self.assertTrue(self.service.connection("folder_health")["can_sync"])
+        self.assertEqual(
+            self.service.check_connection("folder_health")["message"],
+            "Export folder is readable",
+        )
+        response = self.client.post(
+            "/api/connections/folder_health/sync", headers=BEARER
+        )
+        self.assertEqual(response.status_code, 202)
+
+    def test_receive_rejects_bad_auth_invalid_json_and_oversized_files(self):
+        url = "/api/connections/health/receive"
+        for headers in ({}, BEARER, {"Authorization": "Bearer wrong"}):
+            self.assertEqual(
+                self.client.post(url, content=b"x" * 5000, headers=headers).status_code,
+                401,
+            )
+        self.assertFalse((self.root / "artifacts").exists())
+        headers = self.delivery_headers()
+        self.assertEqual(
+            self.client.post(url, content=b"{}", headers=headers).status_code, 400
+        )
+        self.assertEqual(
+            self.client.post(url, content=b"x" * 5000, headers=headers).status_code, 413
+        )
+        self.assertEqual(self.service.artifacts("health"), [])
+        self.assertEqual(list((self.root / "artifacts").rglob(".upload-*")), [])
+        self.assertEqual(
+            self.client.post(
+                "/api/connections/music/delivery-token", headers=BEARER
+            ).status_code,
+            400,
+        )
+
+    def test_delivery_token_form_shows_token_only_once_and_checks_origin(self):
+        import re
+        from html import unescape
+
+        self.login()
+        url = "/connections/health/delivery-token"
+        refused = self.client.post(
+            url, headers={"Origin": "https://evil.example"}, follow_redirects=False
+        )
+        self.assertEqual(refused.headers["location"], "/login")
+        response = self.client.post(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        token = unescape(re.search(r'value="Bearer ([^"]+)"', response.text)[1])
+        self.assertTrue(self.service.verify_delivery_token("health", token))
+        page = self.client.get("/connections/health")
+        self.assertNotIn(token, page.text)
+        self.assertIn("Delivery token active", page.text)
+        response = self.client.post(url + "/revoke")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("token revoked", response.text)
+        self.assertFalse(self.service.verify_delivery_token("health", token))
 
     def test_bad_uploads_are_rejected_and_not_kept(self):
         url = "/api/connections/health/artifacts?role=ongoing"

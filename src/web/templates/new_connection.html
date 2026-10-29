@@ -25,10 +25,12 @@
     <span class="muted">Lowercase letters, digits, underscores. Names this account’s data; it cannot change later.</span>
   </label>
   {% for name, prop in i.settings_schema.properties.items() %}
+  {% if prop.get("advanced") %}<details><summary>Advanced: server folder scanning</summary>{% endif %}
   <label>{{ prop.title or name }}
     <input name="setting.{{ name }}" {% if name in i.settings_schema.get("required", []) %}required{% endif %} value="{{ values.get(name, '') }}">
     {% if prop.description %}<span class="muted">{{ prop.description }}</span>{% endif %}
   </label>
+  {% if prop.get("advanced") %}</details>{% endif %}
   {% endfor %}
   {% for c in i.credentials %}
   <label>{{ c.label }}

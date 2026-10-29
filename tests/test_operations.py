@@ -23,9 +23,11 @@ from sqlalchemy.exc import OperationalError
 from src.cli.main import main
 from src.core.config import metadata_url, parse_miroir
 from src.core.operations import (
+    SCHEMA_VERSION,
     ConnectionBusy,
     MetadataStore,
     OperationError,
+    delivery_tokens,
     schema_info,
 )
 from src.core.runner import IngestionFailed, run_connection
@@ -276,6 +278,45 @@ class OperationTests(unittest.TestCase):
             db.execute(schema_info.update().values(version=99))
         with self.assertRaises(OperationError):
             reopened.migrate()
+
+    def test_version_3_upgrade_adds_delivery_tokens_and_preserves_history(self):
+        from src.core.runner import request_sync
+
+        operation = request_sync(
+            self.miroir(), "music", store=self.store, origin="request"
+        )
+        artifact, _ = self.store.register_artifact(
+            miroir_id="personal",
+            connection_id="health",
+            sha256="a" * 64,
+            size=1,
+            input_format="health_auto_export_json",
+            role="ongoing",
+            original_name="export.json",
+            storage_path="/unused/export.json",
+            retention="keep",
+        )
+        with self.store.engine.begin() as db:
+            delivery_tokens.drop(db)
+            db.execute(sa.text("ALTER TABLE artifacts DROP COLUMN last_received_at"))
+            db.execute(schema_info.update().values(version=3))
+        self.store.migrate()
+        self.store.migrate()
+        self.assertEqual(self.store.get_operation(operation.id).connection_id, "music")
+        self.assertEqual(
+            self.store.get_artifact("personal", artifact["id"])["last_received_at"],
+            artifact["received_at"],
+        )
+        self.store.set_delivery_token("personal", "health", "a" * 64)
+        self.store.set_delivery_token("personal", "health", "b" * 64)
+        self.assertEqual(
+            self.store.delivery_token("personal", "health")["token_hash"], "b" * 64
+        )
+        self.assertIsNone(self.store.delivery_token("other", "health"))
+        with self.store.engine.connect() as db:
+            self.assertEqual(
+                db.execute(sa.select(schema_info.c.version)).scalar(), SCHEMA_VERSION
+            )
 
 
 class SecretTests(unittest.TestCase):

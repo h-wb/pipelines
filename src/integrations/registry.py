@@ -45,10 +45,13 @@ class ListenBrainzSettings(StrictModel):
 
 
 class AppleHealthSettings(StrictModel):
-    data_dir: str = Field(
+    data_dir: str | None = Field(
+        default=None,
         min_length=1,
-        title="Export folder",
-        description="Folder the legacy scanner reads Health Auto Export files from",
+        title="Watch a server folder (optional)",
+        description="Advanced: folder the scanner reads on the server. "
+        "Leave empty to upload files or receive automatic exports.",
+        json_schema_extra={"advanced": True},
     )
     cutoff: str = Field(
         title="Cutoff date",

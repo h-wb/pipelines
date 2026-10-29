@@ -6,7 +6,10 @@ requests and responses. Execution is handed to an executor, so the same request
 can run in-process, in a subprocess, or (later) as a Prefect flow run.
 """
 
+import hashlib
+import hmac
 import logging
+import secrets as random_secrets
 import subprocess
 import sys
 from collections.abc import Callable
@@ -145,13 +148,17 @@ class MiroirService:
             if applied == connection.revision
             else "saved_not_applied",
             "can_sync": bool(
-                {"incremental_sync", "directory_import"}
-                & set(connection.integration.capabilities)
+                "incremental_sync" in connection.integration.capabilities
+                or (
+                    "directory_import" in connection.integration.capabilities
+                    and getattr(connection.settings, "data_dir", None)
+                )
             ),
             "sync_label": "Sync now"
             if "incremental_sync" in connection.integration.capabilities
             else "Scan folder",
             "accepts_files": "artifact_import" in connection.integration.capabilities,
+            "delivery": self.delivery_status(connection.config.id, miroir),
             "credentials": self._credentials(miroir, connection),
             "credential_status": self.store.credential_status(
                 miroir.id, connection.config.id
@@ -225,6 +232,7 @@ class MiroirService:
         *,
         import_now: bool = False,
         original_name: str | None = None,
+        origin: Any = "request",
     ) -> dict[str, Any]:
         from src.core.artifacts import submit_artifact
         from src.core.runner import AlreadyImported
@@ -243,11 +251,61 @@ class MiroirService:
         if import_now:
             try:
                 result["operation_id"] = self.request_import(
-                    connection_id, artifact["id"]
+                    connection_id, artifact["id"], origin=origin
                 )
             except AlreadyImported as error:
                 result["already_imported"] = error.operation_id
         return result
+
+    def delivery_status(
+        self, connection_id: str, miroir: ResolvedMiroir | None = None
+    ) -> dict[str, Any]:
+        miroir = miroir or self.miroir()
+        connection = self._connection(miroir, connection_id)
+        enabled = "artifact_import" in connection.integration.capabilities
+        stored = (
+            self.store.delivery_token(miroir.id, connection_id) if enabled else None
+        )
+        return {
+            "enabled": stored is not None,
+            "updated_at": stored["updated_at"].isoformat() if stored else None,
+            "last_received_at": self.store.last_artifact_received(
+                miroir.id, connection_id
+            )
+            if enabled
+            else None,
+        }
+
+    def create_delivery_token(self, connection_id: str) -> str:
+        miroir = self.miroir()
+        connection = self._connection(miroir, connection_id)
+        if "artifact_import" not in connection.integration.capabilities:
+            raise OperationError("Integration does not accept files")
+        token = random_secrets.token_urlsafe(32)
+        self.store.set_delivery_token(
+            miroir.id, connection_id, hashlib.sha256(token.encode()).hexdigest()
+        )
+        return token
+
+    def revoke_delivery_token(self, connection_id: str) -> None:
+        miroir = self.miroir()
+        self._connection(miroir, connection_id)
+        self.store.revoke_delivery_token(miroir.id, connection_id)
+
+    def verify_delivery_token(self, connection_id: str, token: str) -> bool:
+        if not token:
+            return False
+        miroir = self.miroir()
+        try:
+            connection = self._connection(miroir, connection_id)
+        except OperationError:
+            return False
+        if "artifact_import" not in connection.integration.capabilities:
+            return False
+        stored = self.store.delivery_token(miroir.id, connection_id)
+        return stored is not None and hmac.compare_digest(
+            stored["token_hash"], hashlib.sha256(token.encode()).hexdigest()
+        )
 
     def request_import(
         self,
@@ -427,6 +485,7 @@ class MiroirService:
         ]
         self._write_config(raw, revision)
         self.store.delete_secrets(miroir.id, connection_id)
+        self.store.revoke_delivery_token(miroir.id, connection_id)
 
     # ---- Orchestrator -------------------------------------------------------------
 

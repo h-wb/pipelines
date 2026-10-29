@@ -471,3 +471,59 @@ image/job-variable pins (the configuration carries them); the deployed server
 keeps its environment values as fallbacks until the miroir.json on the NFS
 gains the section. Four new tests cover precedence, fallback, the missing-pool
 error, and revision neutrality; 77 tests pass, lint and mypy clean.
+
+## 2026-10-29 — File-first connections and automatic delivery (decision 017)
+
+Apple Health setup required a worker-visible folder even when the user only
+wanted to upload a file or receive phone exports. The parser/import path already
+accepted retained artifacts; the connection schema, check, and UI still exposed
+the old scanner as mandatory.
+
+Implemented:
+
+- `data_dir` is optional and shown under an advanced folder-scanning disclosure.
+  New connections and the example config need only the cutoff. A receiving-only
+  check describes readiness, and Scan folder is shown/enabled only with a folder.
+  Existing folder configurations still scan and check normally. Direct scan
+  requests without a folder return a readable error before registering an operation.
+- The connection page offers upload and automatic delivery together, with a
+  copyable URL, Health Auto Export JSON/header instructions, first-export/last-receipt
+  status, and token creation/replacement/revocation. Tokens are shown once on a
+  non-cacheable page; subsequent pages/API summaries never reveal their values.
+- `POST /api/connections/{id}/receive` authenticates a connection-scoped token
+  before reading the body, retains raw JSON as ongoing data, and requests an
+  import through the shared service/executor. The response exposes receipt and
+  operation IDs, not internal paths. Receive-only tokens cannot read/administer
+  Miroir, target other connections, choose historical imports, or request replay.
+  Administrator-only API routes also create/revoke delivery tokens. Removing a
+  connection revokes its token. No master key is required for file reception.
+- Metadata schema 4 adds a delivery-token table (random tokens stored only as
+  SHA-256 hashes) and `artifacts.last_received_at`, initialized from the original
+  receipt on upgrade. Duplicate exports advance the latest receipt without
+  changing first receipt, artifact identity, or successful-import deduplication.
+  Webhook imports record their origin as `webhook` in history.
+
+Validation:
+
+- Ruff check/format and mypy clean on the Miroir slice. All 84 unittest tests pass
+  (72 seconds), including the real ephemeral Prefect API tests. Seven added tests
+  cover folder-free creation/browser import, scoped delivery/import/deduplication,
+  rotation/revocation/removal/restart, invalid/oversized/unauthenticated bodies,
+  one-time token rendering and cross-origin refusal, queued imports/legacy scanning,
+  and upgrading an existing v3 database while preserving history and receipts.
+- A disposable local PostgreSQL 17.11 instance verifies the actual schema-qualified
+  v3 upgrade, repeat migration, native token upsert/revocation, and duplicate receipt
+  timestamps. No cluster database was used.
+- Browser check against a temporary server: viewed folder-free connection setup,
+  generated a token, sent a synthetic Health Auto Export JSON payload through the
+  receive endpoint into DuckDB, repeated it (already imported), and confirmed the
+  same token receives 401 from the admin API. The page shows the receipt, successful
+  import, and webhook history. Synthetic preview uses temporary state only.
+
+Not deployed in this session. Release the server, worker, and flow-run image
+together because older runtimes refuse metadata schema 4. Real phone reachability
+and representative exports remain unverified; the cluster route is internal, so
+the phone needs the home network or VPN. Apply the connection's deployment before
+its first production import, verify receipts/imports, then perform decision 009's
+explicit n8n/legacy cutover. No live schedules, credentials, bindings, or n8n
+workflows were changed.

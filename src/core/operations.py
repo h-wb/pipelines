@@ -19,12 +19,12 @@ from typing import Any, Literal
 
 import sqlalchemy as sa
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 POSTGRES_SCHEMA = "miroir_meta"
 LOCK_POLL_SECONDS = 1.0
 
 
-Origin = Literal["local", "request", "prefect"]
+Origin = Literal["local", "request", "prefect", "webhook"]
 Role = Literal["historical", "ongoing"]
 # `lost` (the run crashed) and `cancelled` come from reconciling with the
 # orchestrator; they are kept apart from `failed`, which the runner recorded itself.
@@ -82,6 +82,8 @@ artifacts = sa.Table(
     sa.Column("storage_path", sa.Text, nullable=False),
     sa.Column("retention", sa.String(16), nullable=False),
     sa.Column("received_at", sa.DateTime(timezone=True), nullable=False),
+    # Keep first receipt for provenance, and latest receipt for delivery health.
+    sa.Column("last_received_at", sa.DateTime(timezone=True), nullable=False),
     # Identical bytes from two accounts are two artifacts.
     sa.UniqueConstraint("miroir_id", "connection_id", "sha256"),
 )
@@ -115,6 +117,15 @@ secrets = sa.Table(
     # Fernet token; the key is never stored here.
     sa.Column("ciphertext", sa.LargeBinary, nullable=False),
     sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+    sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+)
+
+delivery_tokens = sa.Table(
+    "delivery_tokens",
+    metadata,
+    sa.Column("miroir_id", sa.String(24), primary_key=True),
+    sa.Column("connection_id", sa.String(24), primary_key=True),
+    sa.Column("token_hash", sa.String(64), nullable=False),
     sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
 )
 
@@ -216,6 +227,26 @@ class MetadataStore:
                         f"ALTER TABLE {prefix}attempts ADD COLUMN failure_kind VARCHAR(32)"
                     )
                 )
+            if version < 4:
+                columns = {
+                    column["name"]
+                    for column in sa.inspect(db).get_columns(
+                        "artifacts", schema=POSTGRES_SCHEMA if postgres else None
+                    )
+                }
+                # A v1 upgrade creates the artifacts table at its current shape.
+                if "last_received_at" not in columns:
+                    timestamp = "TIMESTAMP WITH TIME ZONE" if postgres else "TIMESTAMP"
+                    db.execute(
+                        sa.text(
+                            f"ALTER TABLE {prefix}artifacts ADD COLUMN last_received_at {timestamp}"
+                        )
+                    )
+                    db.execute(
+                        artifacts.update().values(
+                            last_received_at=artifacts.c.received_at
+                        )
+                    )
             db.execute(schema_info.update().values(version=SCHEMA_VERSION))
 
     def create_operation(self, **values: Any) -> Operation:
@@ -397,6 +428,66 @@ class MetadataStore:
             data["attempts"] = self.attempts(data["id"])
             result.append(data)
         return result
+
+    def set_delivery_token(
+        self, miroir_id: str, connection_id: str, token_hash: str
+    ) -> None:
+        # Native upsert keeps concurrent replacements to one active token.
+        from sqlalchemy.dialects import postgresql, sqlite
+
+        insert = (
+            postgresql.insert
+            if self.engine.dialect.name == "postgresql"
+            else sqlite.insert
+        )
+        statement = insert(delivery_tokens).values(
+            miroir_id=miroir_id,
+            connection_id=connection_id,
+            token_hash=token_hash,
+            updated_at=_now(),
+        )
+        statement = statement.on_conflict_do_update(
+            index_elements=["miroir_id", "connection_id"],
+            set_={
+                "token_hash": token_hash,
+                "updated_at": statement.excluded.updated_at,
+            },
+        )
+        with self.engine.begin() as db:
+            db.execute(statement)
+
+    def delivery_token(self, miroir_id: str, connection_id: str) -> dict | None:
+        with self.engine.connect() as db:
+            row = (
+                db.execute(
+                    delivery_tokens.select().where(
+                        delivery_tokens.c.miroir_id == miroir_id,
+                        delivery_tokens.c.connection_id == connection_id,
+                    )
+                )
+                .mappings()
+                .first()
+            )
+        return dict(row) if row else None
+
+    def revoke_delivery_token(self, miroir_id: str, connection_id: str) -> None:
+        with self.engine.begin() as db:
+            db.execute(
+                delivery_tokens.delete().where(
+                    delivery_tokens.c.miroir_id == miroir_id,
+                    delivery_tokens.c.connection_id == connection_id,
+                )
+            )
+
+    def last_artifact_received(self, miroir_id: str, connection_id: str) -> str | None:
+        with self.engine.connect() as db:
+            received = db.execute(
+                sa.select(sa.func.max(artifacts.c.last_received_at)).where(
+                    artifacts.c.miroir_id == miroir_id,
+                    artifacts.c.connection_id == connection_id,
+                )
+            ).scalar()
+        return _iso(_aware(received))
 
     def put_secret(
         self, miroir_id: str, connection_id: str, name: str, ciphertext: bytes
@@ -625,19 +716,27 @@ class MetadataStore:
             artifacts.c.sha256 == values["sha256"],
         )
         with self.engine.begin() as db:
+            now = _now()
             row = db.execute(artifacts.select().where(scope)).first()
             if row is None:
-                values = {"id": str(uuid.uuid4()), "received_at": _now(), **values}
+                values = {
+                    "id": str(uuid.uuid4()),
+                    "received_at": now,
+                    "last_received_at": now,
+                    **values,
+                }
                 db.execute(artifacts.insert().values(**values))
                 row = db.execute(artifacts.select().where(scope)).one()
                 created = True
             else:
+                if row.role != values["role"]:
+                    raise OperationError(
+                        f"Identical file was already submitted as {row.role}"
+                    )
+                db.execute(artifacts.update().where(scope).values(last_received_at=now))
+                row = db.execute(artifacts.select().where(scope)).one()
                 created = False
         artifact = _artifact(row)
-        if artifact["role"] != values["role"]:
-            raise OperationError(
-                f"Identical file was already submitted as {artifact['role']}"
-            )
         return artifact, created
 
     def get_artifact(self, miroir_id: str, artifact_id: str) -> dict[str, Any]:
@@ -763,4 +862,5 @@ def _attempt(row: Any) -> dict[str, Any]:
 def _artifact(row: Any) -> dict[str, Any]:
     data: dict[str, Any] = row._asdict()
     data["received_at"] = _iso(_aware(data["received_at"]))
+    data["last_received_at"] = _iso(_aware(data["last_received_at"]))
     return data

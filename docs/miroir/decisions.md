@@ -468,3 +468,32 @@ registry mirror serves those stale) is one config edit instead of three
 environment pins. `MIROIR_PREFECT_CONFIG_PATH` stays an environment concern:
 where flow runs find the configuration genuinely differs between the operator's
 machine and the Job's mount.
+
+## 017 — File delivery is independent of parsing; connection-scoped receive tokens
+
+Status: accepted, 2026-10-29.
+
+An Apple Health connection accepts Health Auto Export JSON without a server folder.
+Browser uploads and automatic HTTP delivery enter the same retained-artifact and
+import pipeline. `data_dir` becomes optional; when present it enables the existing
+directory scanner as an advanced compatibility mode. Checks for a receiving-only
+connection describe readiness to accept exports, not successful access to a phone.
+Existing folder configurations and their execution revisions remain valid.
+
+The connection page offers file upload and automatic-delivery setup together.
+`POST /api/connections/{id}/receive` accepts raw JSON, retains it as an ongoing
+artifact, and requests an import. Receipt acknowledges storage/submission, not
+completed ingestion. Identical exports retain the existing duplicate/import rules.
+The existing administrator artifact API remains available for historical imports.
+
+Each connection can have one receive-only bearer token: generated randomly, shown
+once on creation/replacement, stored only as a SHA-256 digest in metadata schema
+version 4. It authorizes only that connection's receive endpoint, never configuration,
+history, credentials, replay, or another connection. Replacing/revoking it invalidates
+the previous token; removing the connection revokes it. No installation master key
+is needed to receive files. Setup instructions show the endpoint and headers and
+explain that the phone must be able to reach Miroir. Native Apple XML, arbitrary
+JSON webhooks, and automatic discovery of input formats remain separate work.
+Version 4 also preserves first and latest receipt times separately, so repeated
+identical exports update delivery health without changing artifact identity or
+re-importing successful data.

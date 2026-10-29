@@ -35,7 +35,7 @@ Miroir (decision 014); history keeps its own words.
   sources. Integrations declare settings schemas and credential fields.
 - `dbt/` — models (staging + reporting), profiles read
   `DESTINATION__POSTGRES__CREDENTIALS__*` env.
-- `tests/` — unittest; no pytest. 77 tests, ~70s, include three against a real
+- `tests/` — unittest; no pytest. 84 tests, ~70s, include three against a real
   temporary Prefect API (`prefect_test_harness`) and CLI subprocess tests.
 
 ## Commands
@@ -113,7 +113,10 @@ findings. Secrets for mise tasks come from ProtonPass via fnox
 - Add a schedule to the ListenBrainz connection (cron in config → Apply
   deployments). First sync already succeeded end to end.
 - Apple Health n8n cutover (decision 009): point Health Auto Export at
-  `POST /api/connections/health/artifacts` with the bearer token.
+  `POST /api/connections/health/receive` with a connection-specific delivery token
+  after deploying decision 017. Folder-free setup and token management are built;
+  real phone delivery remains to verify. Metadata schema 4 requires updating the
+  server, worker, and flow-run image together.
 - Legacy cutover: map the connection binding to `listenbrainz_data`
   explicitly when ready, disable the legacy schedule; delete the stale
   `workspace-k8s` Prefect pool; eventually retire `local-pool`.

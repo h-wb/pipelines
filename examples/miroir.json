@@ -16,7 +16,7 @@
     {
       "id": "health",
       "integration": "apple_health",
-      "settings": {"data_dir": "/data/health", "cutoff": "2026-06-04"}
+      "settings": {"cutoff": "2026-06-04"}
     }
   ]
 }

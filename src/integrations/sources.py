@@ -7,6 +7,7 @@ set environment variables, choose a destination, or start a pipeline.
 from typing import TYPE_CHECKING, Any
 
 from src.core.config import ResolvedConnection
+from src.core.operations import OperationError
 from src.integrations.registry import AppleHealthSettings, ListenBrainzSettings
 
 if TYPE_CHECKING:
@@ -30,6 +31,10 @@ def create_source(
             start_date=settings.start_date,
         )
     if isinstance(settings, AppleHealthSettings):
+        if settings.data_dir is None:
+            raise OperationError(
+                "Upload an export or configure a server folder to scan"
+            )
         from src.sources.apple_health import apple_health
 
         return apple_health(data_dir=settings.data_dir, cutoff=settings.cutoff)

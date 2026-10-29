@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Set up automatic delivery{% endblock %}
+{% block body %}
+<h1>Set up automatic delivery</h1>
+<p>Copy this token now. It is shown only on this page. Any previous delivery token for this connection has stopped working.</p>
+<p>This token can only send ongoing exports to <strong>{{ connection_id }}</strong>.</p>
+<p>In Health Auto Export, configure a REST API automation with JSON format and this URL:</p>
+<input class="copy-value" aria-label="Automatic delivery URL" readonly value="{{ request.base_url | string | trim('/') }}{{ receive_path }}">
+<button type="button" onclick="navigator.clipboard.writeText(this.previousElementSibling.value).then(() => this.textContent = 'Copied')">Copy URL</button>
+<p>Add these request headers:</p>
+<p><code>Content-Type: application/json</code></p>
+<label>Authorization
+<input class="copy-value" aria-label="Authorization header" readonly value="Bearer {{ delivery_token }}">
+<button type="button" onclick="navigator.clipboard.writeText(this.previousElementSibling.value).then(() => this.textContent = 'Copied')">Copy header</button>
+</label>
+<p>Your phone must be able to reach the URL. Run a manual export from the automation, then check Files and History on the connection page.</p>
+<p><a href="/connections/{{ connection_id }}">Back to connection</a></p>
+{% endblock %}

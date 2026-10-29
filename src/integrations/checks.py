@@ -45,6 +45,8 @@ def listenbrainz(settings: Any, credentials: dict[str, str]) -> str:
 
 
 def apple_health(settings: Any, credentials: dict[str, str]) -> str:
+    if settings.data_dir is None:
+        return "Ready to receive Health Auto Export JSON; upload an export to verify it"
     if not os.path.isdir(settings.data_dir):
         raise CheckFailed("Export folder does not exist on this machine")
     if not os.access(settings.data_dir, os.R_OK | os.X_OK):

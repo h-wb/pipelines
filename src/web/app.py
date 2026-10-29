@@ -1,14 +1,15 @@
 """HTTP API and web interface over the shared miroir services.
 
-Single-user and self-hosted: one bearer token (`MIROIR_API_TOKEN`). Browsers
+Single-user and self-hosted: one admin bearer token (`MIROIR_API_TOKEN`). Browsers
 log in with it once and get a session cookie derived from it; the token itself
-is never stored in the cookie. API clients, such as a phone pushing exports,
-send `Authorization: Bearer <token>`.
+is never stored in the cookie. Automatic exports use connection-scoped,
+receive-only bearer tokens rather than the administrator token.
 """
 
 import hashlib
 import hmac
 import os
+import re
 import tempfile
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
@@ -43,6 +44,7 @@ NOTICES = {
     "checked": "Connection checked; see the credentials status below.",
     "removed": "Connection removed. Its secrets were deleted; loaded data and files were kept.",
     "applied": "Deployments applied: the configuration and Prefect now agree.",
+    "delivery_revoked": "Automatic delivery token revoked. File uploads remain available.",
 }
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -87,6 +89,11 @@ def create_app(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         if request.url.path in ("/login", "/healthz"):
+            return await call_next(request)
+        # This route authenticates its connection-scoped bearer before reading bytes.
+        if request.method == "POST" and re.fullmatch(
+            r"/api/connections/[a-z][a-z0-9_]{0,23}/receive", request.url.path
+        ):
             return await call_next(request)
         try:
             authorize(request)
@@ -196,6 +203,44 @@ def create_app(
         path = await save_stream(request.stream(), staging)
         result = submit(connection_id, path, role, import_now, name)
         return JSONResponse(result, status_code=201 if result["new"] else 200)
+
+    @app.post("/api/connections/{connection_id}/receive")
+    async def receive(request: Request, connection_id: str) -> JSONResponse:
+        header = request.headers.get("authorization", "")
+        bearer = header[7:].strip() if header.lower().startswith("bearer ") else ""
+        if not service.verify_delivery_token(connection_id, bearer):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        path = await save_stream(request.stream(), staging)
+        try:
+            result = service.submit_file(
+                connection_id,
+                path,
+                "ongoing",
+                import_now=True,
+                original_name="automatic-export.json",
+                origin="webhook",
+            )
+        finally:
+            path.unlink(missing_ok=True)
+        # Receive-only clients get a receipt, never internal storage paths/history.
+        receipt = {"artifact_id": result["artifact"]["id"], "new": result["new"]}
+        for field in ("operation_id", "already_imported"):
+            if field in result:
+                receipt[field] = result[field]
+        return JSONResponse(receipt, status_code=201 if result["new"] else 200)
+
+    @app.post("/api/connections/{connection_id}/delivery-token", status_code=201)
+    def create_delivery_token(connection_id: str) -> JSONResponse:
+        return JSONResponse(
+            {"token": service.create_delivery_token(connection_id)},
+            status_code=201,
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.delete("/api/connections/{connection_id}/delivery-token", status_code=204)
+    def revoke_delivery_token(connection_id: str) -> Response:
+        service.revoke_delivery_token(connection_id)
+        return Response(status_code=204)
 
     @app.post(
         "/api/connections/{connection_id}/artifacts/{artifact_id}/import",
@@ -386,8 +431,28 @@ def create_app(
             "connection.html",
             c=data,
             roles=ROLES,
+            receive_path=f"/api/connections/{connection_id}/receive",
             refresh=_in_flight(data["status"]),
         )
+
+    @app.post("/connections/{connection_id}/delivery-token")
+    def delivery_token_page(request: Request, connection_id: str) -> HTMLResponse:
+        new_token = service.create_delivery_token(connection_id)
+        response = page(
+            request,
+            "delivery_token.html",
+            connection_id=connection_id,
+            delivery_token=new_token,
+            receive_path=f"/api/connections/{connection_id}/receive",
+        )
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        return response
+
+    @app.post("/connections/{connection_id}/delivery-token/revoke")
+    def revoke_delivery_token_form(connection_id: str) -> Response:
+        service.revoke_delivery_token(connection_id)
+        return back(connection_id, "delivery_revoked")
 
     def back(connection_id: str, notice: str) -> RedirectResponse:
         return RedirectResponse(

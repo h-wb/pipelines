@@ -1,8 +1,9 @@
 # Miroir development
 
-This is the implementation record for Miroir. The current
-slice is a read-only CLI and validated reference integrations. Production flows
-continue to use their existing entry points and deployment configuration.
+Miroir provides a web interface, HTTP API, and CLI over shared connection,
+artifact, and execution services. The server and isolated Prefect Kubernetes
+runtime are deployed; ListenBrainz has completed an end-to-end sync. Legacy
+flows continue alongside Miroir until each source is explicitly cut over.
 
 - [Roadmap](../product-plan.md)
 - [Baseline and migration constraints](baseline.md)
@@ -27,9 +28,10 @@ that root-level local file is gitignored. Pass `--config` before the subcommand.
 services, start a pipeline, or write configuration. The Python module entry point
 is `python -m src.cli`.
 
-`integrations` lists connector metadata and settings schemas. Apple Health currently
-advertises the existing `directory_import`, not explicit artifact replay or native
-Apple Health XML support.
+`integrations` lists connector metadata and settings schemas. Apple Health accepts
+Health Auto Export JSON through file uploads and automatic delivery. An optional
+server folder enables the compatibility scanner. Native Apple Health XML is not
+supported.
 
 ### Running a connection and reading its status
 
@@ -38,7 +40,7 @@ uv run --locked pipelines-miroir --config miroir.json run music --duckdb /tmp/mi
 uv run --locked pipelines-miroir --config miroir.json status
 ```
 
-`run` resolves the connection's credentials (`env` or `fnox`), loads into the given
+`run` resolves the connection's credentials (`miroir`, `env`, or `fnox`), loads into the given
 **local DuckDB file only**, and records an operation/attempt. It never writes to the
 production warehouse, and it skips dbt (models target Postgres). dlt working state
 goes next to the DuckDB file (`<name>.dlt/`). Exit status 1 means the run failed;
@@ -192,13 +194,13 @@ stored by the miroir.
 ```bash
 export MIROIR_API_TOKEN="$(openssl rand -hex 24)"
 export MIROIR_SECRET_KEY="$(uv run --locked pipelines-miroir generate-key)"
-uv run --locked pipelines-miroir --config miroir.json serve
+uv run --locked pipelines-miroir --config miroir.json serve --duckdb /tmp/miroir.duckdb
 # http://127.0.0.1:8765 — log in with the token. A missing miroir.json is created empty.
 ```
 
-Without `MIROIR_PREFECT_POOL`, requests run as local subprocesses and need
-`--duckdb` (a local DuckDB file); with the pool set, they are submitted as
-Prefect flow runs instead.
+Without a configured work pool, requests run as local subprocesses and need
+`--duckdb` (a local DuckDB file). With `deployment.work_pool` in the configuration
+or `MIROIR_PREFECT_POOL` set, they are submitted as Prefect flow runs instead.
 
 On the cluster the server is deployed (home-ops `automation/miroir`): the
 `miroir` service at `https://miroir.<domain>` behind envoy-internal, on the
@@ -236,6 +238,8 @@ The JSON API takes `Authorization: Bearer $MIROIR_API_TOKEN`:
 | `POST /api/connections/{id}/sync` | Request a sync (202, operation ID) |
 | `POST /api/connections/{id}/artifacts?role=ongoing&import=true&name=…` | Store the raw request body as a file, optionally import it |
 | `POST /api/connections/{id}/artifacts/{artifact}/import?replay=false` | Request an import |
+| `POST /api/connections/{id}/delivery-token`, `DELETE /api/connections/{id}/delivery-token` | Create/replace (value shown once) or revoke a receive-only token; requires administrator auth |
+| `POST /api/connections/{id}/receive` | Receive an ongoing export and request an import; requires that connection's delivery bearer token |
 | `GET /api/config`, `PUT /api/config` with `If-Match: <file_revision>` | Read or replace the configuration |
 | `GET /api/integrations` | Integrations with settings schemas and credential fields |
 | `POST /api/connections` | Add a connection: `{"integration", "id", "settings", "credentials"}`; returns the check result |
@@ -243,17 +247,71 @@ The JSON API takes `Authorization: Bearer $MIROIR_API_TOKEN`:
 | `POST /api/connections/{id}/check`, `DELETE /api/connections/{id}` | Test or remove a connection |
 | `POST /api/refresh`, `GET /api/deployments/plan` | Reconcile with Prefect (needs `MIROIR_PREFECT_POOL`) |
 
-The artifact endpoint is the replacement for the n8n receiver (decision 009):
-point Health Auto Export's REST automation at it with the bearer header.
-Uploads are capped at 512 MiB.
+### Uploading and automatically receiving Apple Health exports
+
+Add an **Apple Health (Health Auto Export)** connection with a connection ID and
+cutoff date. No server folder or source credentials are required. The optional
+folder field is under **Advanced: server folder scanning**; configuring it retains
+the existing Scan folder action. Without a folder, the connection check reports
+readiness to receive files; it does not claim a phone has connected.
+
+On the connection page, **Upload an export** accepts a Health Auto Export JSON
+file and defaults to importing it immediately. Historical files contribute dates
+before the cutoff; ongoing files contribute dates from the cutoff onwards.
+
+For automatic delivery, choose **Create delivery token** and copy the URL and
+Authorization header shown on the setup page. In Health Auto Export, create a
+REST API automation with JSON format and these settings:
+
+```http
+POST https://miroir.example/api/connections/health/receive
+Content-Type: application/json
+Authorization: Bearer <connection-delivery-token>
+```
+
+The body is the raw JSON export. No query parameters or multipart wrapping are
+needed. This endpoint always receives ongoing data and requests an import. Its
+response contains `artifact_id`, `new`, and `operation_id` (or `already_imported`
+for an export already loaded with the current parser and options). A 201/200
+acknowledges receipt and submission, not completion of ingestion. Files and
+History show the import outcome; the page also shows when the last export was
+received, through either upload or automatic delivery. Uploads are capped at
+512 MiB. Identical exports reuse the retained artifact; an already successful
+import is not repeated.
+
+Delivery tokens only authorize their own connection's receive endpoint. They
+cannot read history, edit configuration, import historical files, or replay data.
+Tokens are shown once, stored only as hashes, and can be replaced or revoked on
+the connection page. Replacing a token immediately invalidates the previous one;
+removing a connection revokes its token. The installation-wide API token remains
+for administration and the older artifact API. Receiving files does not require
+`MIROIR_SECRET_KEY` when no source credentials need decrypting.
+
+The phone must be able to reach the URL. This installation uses an internal
+gateway, so use the home network or VPN. n8n can use the same HTTP endpoint as an
+interim sender without installing the CLI or sharing the artifact directory.
+Confirm a real receipt and successful import before disabling the old n8n workflow
+or changing legacy dataset bindings (decision 009). The CLI's `submit` only
+registers a file; its `import` command targets local DuckDB.
+
+This change upgrades metadata to version 4 to add hashed delivery tokens and
+separate first/latest receipt times. Identical repeated exports advance the latest
+receipt time without changing the artifact's first receipt or re-importing it. Release
+the server, worker, and flow-run image together: older runtimes refuse the new
+schema version. Phone delivery and production cutover still need a real-device
+check; synthetic tests alone do not establish those.
 
 The Prefect flow `src/pipelines/miroir.py:sync_connection` uses the same runner
-against Postgres and runs dbt. It is not in `prefect.yaml`; see decision 007.
+against Postgres and runs dbt for connections whose dataset matches its source
+binding. Miroir manages its deployments through plan/apply; `prefect.yaml` holds
+the legacy deployments only.
 
-Configuration version 1 currently contains a miroir ID and connections. Each
+Configuration version 1 contains a miroir ID, connections, and optional deployment
+settings and service links. Each
 connection has an integration, validated settings, credential references, and an
-optional explicit pipeline/dataset binding. Credentials are objects with `provider`
-(`env` or `fnox`) and a `key`; the corresponding resolver is future work. Inline
+optional explicit pipeline/dataset binding, schedule, and dashboard links.
+Credentials use `provider: "miroir"` for the built-in encrypted store without a
+key, or `provider: "env"` / `"fnox"` with a `key` naming the external value. Inline
 credential fields and unknown settings are rejected. The configuration's content
 revision is a hash of normalized settings/references/bindings, not a deployed revision.
 
@@ -271,8 +329,8 @@ This only describes a binding. It does not adopt, reset, or modify any live stat
 The validator rejects duplicate connection IDs, pipeline names, and dataset names
 within a miroir. The first design assumes one warehouse per miroir.
 
-Schedules, source selection, destinations, machine-local overlays, and stored
-immutable revisions are deliberately absent from this initial schema. Unsupported fields fail validation rather than being ignored.
+Resource selection, configurable destinations, machine-local overlays, and stored
+immutable revision snapshots remain outside this schema. Unsupported fields fail validation rather than being ignored.
 Add each through a documented schema change when its operation is implemented.
 
 ## Validate in an isolated environment

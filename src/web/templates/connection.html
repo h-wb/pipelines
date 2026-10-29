@@ -41,9 +41,10 @@
 {% endif %}
 
 {% if c.accepts_files %}
-<h2>Add an export</h2>
+<h2>Upload an export</h2>
+<p>Choose a Health Auto Export JSON file from your device. Miroir keeps the original and records each import.</p>
 <form method="post" action="/connections/{{ c.id }}/upload" enctype="multipart/form-data">
-  <input type="file" name="file" required>
+  <input type="file" name="file" accept=".json,application/json" required>
   <select name="role" required>
     {% for r in roles %}<option value="{{ r }}"{% if r == "ongoing" %} selected{% endif %}>{{ r }}</option>{% endfor %}
   </select>
@@ -51,6 +52,24 @@
   <button>Upload</button>
 </form>
 <p class="muted">Historical files contribute rows before the connection’s cutoff; ongoing files contribute rows from it on.</p>
+
+<h2>Automatic delivery</h2>
+{% if c.delivery.last_received_at %}
+<p>Last export received {{ when(c.delivery.last_received_at) }} (uploads and automatic delivery).</p>
+{% else %}<p>Waiting for the first export.</p>{% endif %}
+<p>In Health Auto Export, add a REST API automation, select JSON, and use this URL:</p>
+<input class="copy-value" aria-label="Automatic delivery URL" readonly value="{{ request.base_url | string | trim('/') }}{{ receive_path }}">
+<button type="button" onclick="navigator.clipboard.writeText(this.previousElementSibling.value).then(() => this.textContent = 'Copied')">Copy URL</button>
+<p>Add <code>Content-Type: application/json</code> and an <code>Authorization</code> header using a delivery token below. Automatic exports are imported as ongoing data, from this connection’s cutoff onwards.</p>
+<p class="muted">Your phone must be able to reach this address, through your home network or VPN for an internal installation. A successful delivery means the file was received and its import requested; check History for the import result.</p>
+{% if c.delivery.enabled %}
+<p>Delivery token active · updated {{ when(c.delivery.updated_at) }}. Its value is shown only when created.</p>
+<form class="inline" method="post" action="/connections/{{ c.id }}/delivery-token"><button>Replace delivery token</button></form>
+<form class="inline" method="post" action="/connections/{{ c.id }}/delivery-token/revoke"><button>Revoke delivery token</button></form>
+<p class="muted">Replacing or revoking the token stops clients using the previous token.</p>
+{% else %}
+<form method="post" action="/connections/{{ c.id }}/delivery-token"><button>Create delivery token</button></form>
+{% endif %}
 
 <h2>Files</h2>
 <table>
