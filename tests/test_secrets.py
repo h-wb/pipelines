@@ -20,7 +20,7 @@ from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
 from src.cli.main import main
-from src.core.config import ConfigurationConflict, ConfigurationError, parse_mirroir
+from src.core.config import ConfigurationConflict, ConfigurationError, parse_miroir
 from src.core.operations import MetadataStore, OperationError
 from src.core.runner import IngestionFailed, run_connection
 from src.core.secrets import (
@@ -30,7 +30,7 @@ from src.core.secrets import (
     SecretStore,
     make_resolver,
 )
-from src.core.service import InlineExecutor, MirroirService
+from src.core.service import InlineExecutor, MiroirService
 from src.web.app import create_app
 from tests.test_operations import listens_response
 
@@ -74,12 +74,12 @@ class SecretBoxTests(unittest.TestCase):
                 SecretBox.from_keys(bad)
 
     def test_references_must_match_their_provider(self):
-        base = json.loads((ROOT / "examples/mirroir.json").read_text())
-        for reference in ({"provider": "mirroir", "key": "X"}, {"provider": "env"}):
+        base = json.loads((ROOT / "examples/miroir.json").read_text())
+        for reference in ({"provider": "miroir", "key": "X"}, {"provider": "env"}):
             config = json.loads(json.dumps(base))
             config["connections"][0]["credentials"]["access_token"] = reference
             with self.assertRaises(ConfigurationError):
-                parse_mirroir(json.dumps(config))
+                parse_miroir(json.dumps(config))
 
 
 class ConnectionSecretTests(unittest.TestCase):
@@ -87,7 +87,7 @@ class ConnectionSecretTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        self.config = self.root / "mirroir.json"
+        self.config = self.root / "miroir.json"
         self.config.write_text(
             json.dumps({"schema_version": 1, "id": "home", "connections": []})
         )
@@ -96,7 +96,7 @@ class ConnectionSecretTests(unittest.TestCase):
         self.store.migrate()
         self.key = Fernet.generate_key().decode()
         self.secrets = SecretStore(self.store, SecretBox.from_keys(self.key))
-        self.service = MirroirService(
+        self.service = MiroirService(
             self.config,
             self.store,
             self.root / "artifacts",
@@ -122,13 +122,11 @@ class ConnectionSecretTests(unittest.TestCase):
     def test_created_connection_stores_only_a_reference_and_ciphertext(self):
         self.add()
         saved = json.loads(self.config.read_text())["connections"][0]
-        self.assertEqual(
-            saved["credentials"], {"access_token": {"provider": "mirroir"}}
-        )
+        self.assertEqual(saved["credentials"], {"access_token": {"provider": "miroir"}})
         self.assertNotIn(TOKEN.encode(), self.everything_on_disk())
-        mirroir = self.service.mirroir()
+        miroir = self.service.miroir()
         self.assertEqual(
-            make_resolver(self.secrets)(mirroir.connections[0]),
+            make_resolver(self.secrets)(miroir.connections[0]),
             {"access_token": TOKEN},
         )
         view = json.dumps(self.service.connection("music"))
@@ -138,7 +136,7 @@ class ConnectionSecretTests(unittest.TestCase):
     def test_secrets_are_scoped_to_their_connection(self):
         self.add("music")
         self.add("other", token="other-token-0002")
-        connections = {c.config.id: c for c in self.service.mirroir().connections}
+        connections = {c.config.id: c for c in self.service.miroir().connections}
         resolve = make_resolver(self.secrets)
         self.assertEqual(
             resolve(connections["other"])["access_token"], "other-token-0002"
@@ -152,7 +150,7 @@ class ConnectionSecretTests(unittest.TestCase):
     def test_failed_save_removes_stored_secrets_and_duplicates_keep_theirs(self):
         with (
             patch(
-                "src.core.service.save_mirroir",
+                "src.core.service.save_miroir",
                 side_effect=ConfigurationConflict("x"),
             ),
             self.assertRaises(ConfigurationConflict),
@@ -191,13 +189,13 @@ class ConnectionSecretTests(unittest.TestCase):
         with validate_token(user="me"):
             self.service.check_connection("music")
         # A run refused with 401 is newer evidence than the passing check.
-        mirroir = self.service.mirroir()
+        miroir = self.service.miroir()
         with (
             patch.object(requests.Session, "send", unauthorized),
             self.assertRaises(IngestionFailed),
         ):
             run_connection(
-                mirroir,
+                miroir,
                 "music",
                 store=self.store,
                 origin="local",
@@ -212,7 +210,7 @@ class ConnectionSecretTests(unittest.TestCase):
         self.service.set_credential("music", "access_token", "fresh-token-0003")
         with patch.object(requests.Session, "send", listens_response):
             run_connection(
-                self.service.mirroir(),
+                self.service.miroir(),
                 "music",
                 store=self.store,
                 origin="local",
@@ -226,11 +224,11 @@ class ConnectionSecretTests(unittest.TestCase):
 
     def test_missing_key_and_external_references(self):
         self.add()
-        keyless = MirroirService(
+        keyless = MiroirService(
             self.config, self.store, self.root, InlineExecutor(print)
         )
         with self.assertRaises(SecretResolutionError):
-            keyless.resolver()(keyless.mirroir().connections[0])
+            keyless.resolver()(keyless.miroir().connections[0])
         with self.assertRaises(SecretResolutionError):
             keyless.set_credential("music", "access_token", "x")
         result = keyless.check_connection("music")
@@ -243,7 +241,7 @@ class ConnectionSecretTests(unittest.TestCase):
         }
         self.config.write_text(json.dumps(config))
         with patch.dict(os.environ, {"LB_TOKEN": "from-env"}):
-            resolved = keyless.resolver()(keyless.mirroir().connections[0])
+            resolved = keyless.resolver()(keyless.miroir().connections[0])
         self.assertEqual(resolved, {"access_token": "from-env"})
         with self.assertRaises(OperationError):
             self.service.set_credential("music", "access_token", "x")
@@ -342,7 +340,7 @@ class SecretWebAndCliTests(ConnectionSecretTests):
         self.add()
         env = {
             **os.environ,
-            "MIRROIR_SECRET_KEY": self.key,
+            "MIROIR_SECRET_KEY": self.key,
             "RUNTIME__DLTHUB_TELEMETRY": "false",
         }
         metadata = f"sqlite:///{self.root / 'meta.sqlite'}"

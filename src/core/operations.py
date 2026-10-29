@@ -1,7 +1,7 @@
 """Operation and attempt records: the metadata store behind truthful status.
 
 Execution history stays in Prefect and load state stays in dlt. This store only
-maps product identities (mirroir, connection, operation) to backend references
+maps product identities (miroir, connection, operation) to backend references
 and records per-stage outcomes, so status can tell ingestion and analysis apart.
 """
 
@@ -20,7 +20,7 @@ from typing import Any, Literal
 import sqlalchemy as sa
 
 SCHEMA_VERSION = 3
-POSTGRES_SCHEMA = "mirroir_meta"
+POSTGRES_SCHEMA = "miroir_meta"
 LOCK_POLL_SECONDS = 1.0
 
 
@@ -43,7 +43,7 @@ operations = sa.Table(
     "operations",
     metadata,
     sa.Column("id", sa.String(36), primary_key=True),
-    sa.Column("mirroir_id", sa.String(24), nullable=False),
+    sa.Column("miroir_id", sa.String(24), nullable=False),
     sa.Column("connection_id", sa.String(24), nullable=False),
     sa.Column("integration", sa.String(24), nullable=False),
     sa.Column("kind", sa.String(16), nullable=False),
@@ -72,7 +72,7 @@ artifacts = sa.Table(
     "artifacts",
     metadata,
     sa.Column("id", sa.String(36), primary_key=True),
-    sa.Column("mirroir_id", sa.String(24), nullable=False),
+    sa.Column("miroir_id", sa.String(24), nullable=False),
     sa.Column("connection_id", sa.String(24), nullable=False),
     sa.Column("sha256", sa.String(64), nullable=False),
     sa.Column("size", sa.BigInteger, nullable=False),
@@ -83,7 +83,7 @@ artifacts = sa.Table(
     sa.Column("retention", sa.String(16), nullable=False),
     sa.Column("received_at", sa.DateTime(timezone=True), nullable=False),
     # Identical bytes from two accounts are two artifacts.
-    sa.UniqueConstraint("mirroir_id", "connection_id", "sha256"),
+    sa.UniqueConstraint("miroir_id", "connection_id", "sha256"),
 )
 
 attempts = sa.Table(
@@ -109,7 +109,7 @@ attempts = sa.Table(
 secrets = sa.Table(
     "secrets",
     metadata,
-    sa.Column("mirroir_id", sa.String(24), primary_key=True),
+    sa.Column("miroir_id", sa.String(24), primary_key=True),
     sa.Column("connection_id", sa.String(24), primary_key=True),
     sa.Column("name", sa.String(64), primary_key=True),
     # Fernet token; the key is never stored here.
@@ -122,7 +122,7 @@ connection_checks = sa.Table(
     "connection_checks",
     metadata,
     sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-    sa.Column("mirroir_id", sa.String(24), nullable=False),
+    sa.Column("miroir_id", sa.String(24), nullable=False),
     sa.Column("connection_id", sa.String(24), nullable=False),
     sa.Column("checked_at", sa.DateTime(timezone=True), nullable=False),
     sa.Column("ok", sa.Boolean, nullable=False),
@@ -142,7 +142,7 @@ class ConnectionBusy(OperationError):
 @dataclass(frozen=True)
 class Operation:
     id: str
-    mirroir_id: str
+    miroir_id: str
     connection_id: str
     integration: str
     kind: str
@@ -304,14 +304,14 @@ class MetadataStore:
             ).all()
         return [_attempt(row) for row in rows]
 
-    def connection_status(self, mirroir_id: str, connection_id: str) -> dict:
+    def connection_status(self, miroir_id: str, connection_id: str) -> dict:
         """Project recorded evidence into a status summary for one connection.
 
         `running` attempts are not reconciled with Prefect yet: a crashed or
         cancelled worker leaves them running here, so they are reported unverified.
         """
         scope = sa.and_(
-            operations.c.mirroir_id == mirroir_id,
+            operations.c.miroir_id == miroir_id,
             operations.c.connection_id == connection_id,
         )
         joined = attempts.join(operations)
@@ -360,14 +360,14 @@ class MetadataStore:
             "requested_not_started": pending,
         }
 
-    def last_executed_revision(self, mirroir_id: str, connection_id: str) -> str | None:
+    def last_executed_revision(self, miroir_id: str, connection_id: str) -> str | None:
         """Connection configuration revision used by the latest attempt that ran."""
         with self.engine.connect() as db:
             revision: str | None = db.execute(
                 sa.select(operations.c.config_revision)
                 .select_from(attempts.join(operations))
                 .where(
-                    operations.c.mirroir_id == mirroir_id,
+                    operations.c.miroir_id == miroir_id,
                     operations.c.connection_id == connection_id,
                     attempts.c.ingestion != "blocked",
                 )
@@ -377,14 +377,14 @@ class MetadataStore:
         return revision
 
     def recent_operations(
-        self, mirroir_id: str, connection_id: str, limit: int = 20
+        self, miroir_id: str, connection_id: str, limit: int = 20
     ) -> list[dict[str, Any]]:
         """Newest operations first, each with its attempts (oldest first)."""
         with self.engine.connect() as db:
             rows = db.execute(
                 operations.select()
                 .where(
-                    operations.c.mirroir_id == mirroir_id,
+                    operations.c.miroir_id == miroir_id,
                     operations.c.connection_id == connection_id,
                 )
                 .order_by(operations.c.created_at.desc())
@@ -399,10 +399,10 @@ class MetadataStore:
         return result
 
     def put_secret(
-        self, mirroir_id: str, connection_id: str, name: str, ciphertext: bytes
+        self, miroir_id: str, connection_id: str, name: str, ciphertext: bytes
     ) -> None:
         key = {
-            "mirroir_id": mirroir_id,
+            "miroir_id": miroir_id,
             "connection_id": connection_id,
             "name": name,
         }
@@ -420,27 +420,25 @@ class MetadataStore:
                     )
                 )
 
-    def get_secret(
-        self, mirroir_id: str, connection_id: str, name: str
-    ) -> bytes | None:
+    def get_secret(self, miroir_id: str, connection_id: str, name: str) -> bytes | None:
         with self.engine.connect() as db:
             value: bytes | None = db.execute(
                 sa.select(secrets.c.ciphertext).where(
-                    secrets.c.mirroir_id == mirroir_id,
+                    secrets.c.miroir_id == miroir_id,
                     secrets.c.connection_id == connection_id,
                     secrets.c.name == name,
                 )
             ).scalar()
         return value
 
-    def secret_metadata(self, mirroir_id: str, connection_id: str) -> dict[str, dict]:
+    def secret_metadata(self, miroir_id: str, connection_id: str) -> dict[str, dict]:
         """Name -> timestamps for stored secrets. Never returns ciphertext."""
         with self.engine.connect() as db:
             rows = db.execute(
                 sa.select(
                     secrets.c.name, secrets.c.created_at, secrets.c.updated_at
                 ).where(
-                    secrets.c.mirroir_id == mirroir_id,
+                    secrets.c.miroir_id == miroir_id,
                     secrets.c.connection_id == connection_id,
                 )
             ).all()
@@ -453,10 +451,10 @@ class MetadataStore:
         }
 
     def delete_secrets(
-        self, mirroir_id: str, connection_id: str, names: list[str] | None = None
+        self, miroir_id: str, connection_id: str, names: list[str] | None = None
     ) -> int:
         query = secrets.delete().where(
-            secrets.c.mirroir_id == mirroir_id,
+            secrets.c.miroir_id == miroir_id,
             secrets.c.connection_id == connection_id,
         )
         if names is not None:
@@ -471,7 +469,7 @@ class MetadataStore:
         return [
             (
                 {
-                    "mirroir_id": row.mirroir_id,
+                    "miroir_id": row.miroir_id,
                     "connection_id": row.connection_id,
                     "name": row.name,
                 },
@@ -482,7 +480,7 @@ class MetadataStore:
 
     def record_check(
         self,
-        mirroir_id: str,
+        miroir_id: str,
         connection_id: str,
         ok: bool,
         rejected: bool,
@@ -491,7 +489,7 @@ class MetadataStore:
         with self.engine.begin() as db:
             db.execute(
                 connection_checks.insert().values(
-                    mirroir_id=mirroir_id,
+                    miroir_id=miroir_id,
                     connection_id=connection_id,
                     checked_at=_now(),
                     ok=ok,
@@ -500,7 +498,7 @@ class MetadataStore:
                 )
             )
 
-    def credential_status(self, mirroir_id: str, connection_id: str) -> dict[str, Any]:
+    def credential_status(self, miroir_id: str, connection_id: str) -> dict[str, Any]:
         """Latest evidence about the credentials: a check or a run.
 
         `rejected` if the latest evidence is a refused check or a run that failed
@@ -508,7 +506,7 @@ class MetadataStore:
         load; `unknown` before any evidence.
         """
         scope_checks = sa.and_(
-            connection_checks.c.mirroir_id == mirroir_id,
+            connection_checks.c.miroir_id == miroir_id,
             connection_checks.c.connection_id == connection_id,
         )
         with self.engine.connect() as db:
@@ -524,7 +522,7 @@ class MetadataStore:
                 )
                 .select_from(attempts.join(operations))
                 .where(
-                    operations.c.mirroir_id == mirroir_id,
+                    operations.c.miroir_id == miroir_id,
                     operations.c.connection_id == connection_id,
                     sa.or_(
                         attempts.c.ingestion == "succeeded",
@@ -549,7 +547,7 @@ class MetadataStore:
         at, state, message, source = max(evidence, key=lambda item: item[0])
         return {"state": state, "message": message, "at": _iso(at), "source": source}
 
-    def unverified(self, mirroir_id: str) -> list[dict[str, Any]]:
+    def unverified(self, miroir_id: str) -> list[dict[str, Any]]:
         """Submitted work whose outcome only the orchestrator knows.
 
         Attempts still `running`, and operations bound to a backend run that never
@@ -564,7 +562,7 @@ class MetadataStore:
                 )
                 .select_from(attempts.join(operations))
                 .where(
-                    operations.c.mirroir_id == mirroir_id,
+                    operations.c.miroir_id == miroir_id,
                     attempts.c.ingestion == "running",
                     operations.c.backend_run_id.is_not(None),
                 )
@@ -575,7 +573,7 @@ class MetadataStore:
                 )
                 .select_from(operations.outerjoin(attempts))
                 .where(
-                    operations.c.mirroir_id == mirroir_id,
+                    operations.c.miroir_id == miroir_id,
                     operations.c.backend_run_id.is_not(None),
                     attempts.c.id.is_(None),
                 )
@@ -622,7 +620,7 @@ class MetadataStore:
         decides which rows the file contributes.
         """
         scope = sa.and_(
-            artifacts.c.mirroir_id == values["mirroir_id"],
+            artifacts.c.miroir_id == values["miroir_id"],
             artifacts.c.connection_id == values["connection_id"],
             artifacts.c.sha256 == values["sha256"],
         )
@@ -642,11 +640,11 @@ class MetadataStore:
             )
         return artifact, created
 
-    def get_artifact(self, mirroir_id: str, artifact_id: str) -> dict[str, Any]:
+    def get_artifact(self, miroir_id: str, artifact_id: str) -> dict[str, Any]:
         with self.engine.connect() as db:
             row = db.execute(
                 artifacts.select().where(
-                    artifacts.c.mirroir_id == mirroir_id,
+                    artifacts.c.miroir_id == miroir_id,
                     artifacts.c.id == artifact_id,
                 )
             ).first()
@@ -675,12 +673,12 @@ class MetadataStore:
             result.append(attempt)
         return result
 
-    def list_artifacts(self, mirroir_id: str, connection_id: str) -> list[dict]:
+    def list_artifacts(self, miroir_id: str, connection_id: str) -> list[dict]:
         with self.engine.connect() as db:
             rows = db.execute(
                 artifacts.select()
                 .where(
-                    artifacts.c.mirroir_id == mirroir_id,
+                    artifacts.c.miroir_id == miroir_id,
                     artifacts.c.connection_id == connection_id,
                 )
                 .order_by(artifacts.c.received_at)
@@ -705,7 +703,7 @@ class MetadataStore:
             return True
 
         if self.engine.dialect.name == "postgresql":
-            digest = hashlib.sha256(f"mirroir:{pipeline_name}".encode()).digest()
+            digest = hashlib.sha256(f"miroir:{pipeline_name}".encode()).digest()
             key = int.from_bytes(digest[:8], "big", signed=True)
             with self.engine.connect() as db:
                 while not db.execute(

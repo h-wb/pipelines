@@ -1,1 +1,1 @@
-"""Adapters from mirroir concepts to external systems."""
+"""Adapters from miroir concepts to external systems."""

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from src.core.config import ResolvedConnection, ResolvedMirroir
+from src.core.config import ResolvedConnection, ResolvedMiroir
 from src.core.operations import MetadataStore, OperationError, Role
 from src.integrations.formats import VALIDATORS
 
@@ -27,9 +27,9 @@ class Received:
 
 
 def receive_file(
-    source: Path, root: Path, mirroir_id: str, connection_id: str
+    source: Path, root: Path, miroir_id: str, connection_id: str
 ) -> Received:
-    directory = root / mirroir_id / connection_id
+    directory = root / miroir_id / connection_id
     directory.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256()
     size = 0
@@ -56,7 +56,7 @@ def receive_file(
 
 
 def submit_artifact(
-    mirroir: ResolvedMirroir,
+    miroir: ResolvedMiroir,
     connection: ResolvedConnection,
     source: Path,
     role: Role,
@@ -76,9 +76,9 @@ def submit_artifact(
     ):
         raise OperationError("Integration does not accept files")
     VALIDATORS[input_format](source)
-    received = receive_file(source, root, mirroir.id, connection.config.id)
+    received = receive_file(source, root, miroir.id, connection.config.id)
     return store.register_artifact(
-        mirroir_id=mirroir.id,
+        miroir_id=miroir.id,
         connection_id=connection.config.id,
         sha256=received.sha256,
         size=received.size,

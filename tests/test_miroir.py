@@ -9,24 +9,24 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from src.cli.main import main
-from src.core.config import ConfigurationError, parse_mirroir
+from src.core.config import ConfigurationError, parse_miroir
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def example():
-    return json.loads((ROOT / "examples/mirroir.json").read_text())
+    return json.loads((ROOT / "examples/miroir.json").read_text())
 
 
-class MirroirTests(unittest.TestCase):
+class MiroirTests(unittest.TestCase):
     def parse(self, config):
-        return parse_mirroir(json.dumps(config))
+        return parse_miroir(json.dumps(config))
 
     def test_revision_is_independent_of_format_key_and_connection_order(self):
         config = example()
         first = self.parse(config)
         config["connections"].reverse()
-        second = parse_mirroir(json.dumps(config, sort_keys=True, indent=4))
+        second = parse_miroir(json.dumps(config, sort_keys=True, indent=4))
         self.assertEqual(first.revision, second.revision)
         config["connections"][0]["settings"]["cutoff"] = "2026-06-05"
         self.assertNotEqual(first.revision, self.parse(config).revision)
@@ -41,7 +41,7 @@ class MirroirTests(unittest.TestCase):
         self.assertNotEqual(first.binding.pipeline_name, second.binding.pipeline_name)
         self.assertNotEqual(first.binding.dataset_name, second.binding.dataset_name)
 
-    def test_mirroir_and_connection_underscores_do_not_alias(self):
+    def test_miroir_and_connection_underscores_do_not_alias(self):
         config = example()
         config["connections"] = config["connections"][:1]
         config["id"], config["connections"][0]["id"] = "a_b", "c"
@@ -97,7 +97,7 @@ class MirroirTests(unittest.TestCase):
 
     def test_duplicate_json_keys_are_rejected(self):
         with self.assertRaises(ConfigurationError):
-            parse_mirroir('{"id":"one","id":"two"}')
+            parse_miroir('{"id":"one","id":"two"}')
 
     def test_cli_error_does_not_echo_secret_values_or_unknown_keys(self):
         config = example()
@@ -134,7 +134,7 @@ def forbidden(*args, **kwargs):
 socket.socket = forbidden
 subprocess.Popen = forbidden
 os.environ['LISTENBRAINZ__ACCESS_TOKEN'] = 'SECRET_SENTINEL'
-assert main(['--config', 'examples/mirroir.json', 'connections']) == 0
+assert main(['--config', 'examples/miroir.json', 'connections']) == 0
 assert 'dlt' not in sys.modules
 assert 'prefect' not in sys.modules
 """

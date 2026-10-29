@@ -1,4 +1,4 @@
-"""Mirroir CLI.
+"""Miroir CLI.
 
 `integrations`, `validate`, and `connections` are read-only: no network, credential
 lookup, or runtime imports. `status` and `artifacts` read the metadata store.
@@ -14,11 +14,11 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from src.core.config import ConfigurationError, load_mirroir
+from src.core.config import ConfigurationError, load_miroir
 from src.integrations.registry import INTEGRATIONS
 
-DEFAULT_METADATA = "sqlite:///.mirroir/metadata.sqlite"
-DEFAULT_ARTIFACTS = ".mirroir/artifacts"
+DEFAULT_METADATA = "sqlite:///.miroir/metadata.sqlite"
+DEFAULT_ARTIFACTS = ".miroir/artifacts"
 # Requested operations queue behind a running one for the same connection.
 EXECUTE_LOCK_WAIT = 3600.0
 
@@ -26,8 +26,8 @@ EXECUTE_LOCK_WAIT = 3600.0
 def main(argv: list[str] | None = None) -> int:
     from src.core.config import metadata_url
 
-    parser = argparse.ArgumentParser(prog="pipelines-mirroir")
-    parser.add_argument("--config", type=Path, default=Path("mirroir.json"))
+    parser = argparse.ArgumentParser(prog="pipelines-miroir")
+    parser.add_argument("--config", type=Path, default=Path("miroir.json"))
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("integrations", help="List bundled connector capabilities")
     commands.add_parser("validate", help="Validate desired configuration locally")
@@ -44,7 +44,7 @@ def main(argv: list[str] | None = None) -> int:
     submit.add_argument(
         "--artifacts",
         type=Path,
-        default=Path(os.environ.get("MIRROIR_ARTIFACT_DIR", DEFAULT_ARTIFACTS)),
+        default=Path(os.environ.get("MIROIR_ARTIFACT_DIR", DEFAULT_ARTIFACTS)),
         help="Directory for retained original files",
     )
     load = commands.add_parser(
@@ -64,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
     execute.add_argument("--duckdb", type=Path, required=True)
     execute.add_argument("operation")
     serve = commands.add_parser(
-        "serve", help="Web interface and HTTP API (needs MIRROIR_API_TOKEN)"
+        "serve", help="Web interface and HTTP API (needs MIROIR_API_TOKEN)"
     )
     serve.add_argument("--duckdb", type=Path, required=True)
     serve.add_argument("--host", default="127.0.0.1")
@@ -72,15 +72,15 @@ def main(argv: list[str] | None = None) -> int:
     serve.add_argument(
         "--artifacts",
         type=Path,
-        default=Path(os.environ.get("MIRROIR_ARTIFACT_DIR", DEFAULT_ARTIFACTS)),
+        default=Path(os.environ.get("MIROIR_ARTIFACT_DIR", DEFAULT_ARTIFACTS)),
         help="Directory for retained original files",
     )
     commands.add_parser(
-        "generate-key", help="Print a new MIRROIR_SECRET_KEY (Fernet key)"
+        "generate-key", help="Print a new MIROIR_SECRET_KEY (Fernet key)"
     )
     credential = commands.add_parser(
         "set-credential",
-        help="Store a connection credential in the mirroir (reads stdin or prompts)",
+        help="Store a connection credential in the miroir (reads stdin or prompts)",
     )
     credential.add_argument("connection")
     credential.add_argument("name")
@@ -90,11 +90,11 @@ def main(argv: list[str] | None = None) -> int:
     check.add_argument("connection")
     rotate = commands.add_parser(
         "rotate-secrets",
-        help="Re-encrypt stored secrets with the first key of MIRROIR_SECRET_KEY",
+        help="Re-encrypt stored secrets with the first key of MIROIR_SECRET_KEY",
     )
     deployments = commands.add_parser(
         "deployments",
-        help="Reconcile Prefect deployments with the mirroir (needs MIRROIR_PREFECT_POOL)",
+        help="Reconcile Prefect deployments with the miroir (needs MIROIR_PREFECT_POOL)",
     )
     deployments.add_argument("action", choices=("plan", "apply"))
     refresh = commands.add_parser(
@@ -123,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
         print(generate_key())
         return 0
     if args.command == "serve" and not args.config.exists():
-        # A new installation starts with an empty mirroir; connections are added
+        # A new installation starts with an empty miroir; connections are added
         # through the interface.
         args.config.write_text(
             json.dumps(
@@ -132,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
             + "\n"
         )
         print(
-            f"Created an empty mirroir configuration at {args.config}",
+            f"Created an empty miroir configuration at {args.config}",
             file=sys.stderr,
         )
     if args.command == "integrations":
@@ -150,35 +150,35 @@ def main(argv: list[str] | None = None) -> int:
         ]
     else:
         try:
-            mirroir = load_mirroir(args.config)
+            miroir = load_miroir(args.config)
         except ConfigurationError as error:
             print(f"Configuration error: {error}", file=sys.stderr)
             return 2
         if args.command == "validate":
             result = {
                 "valid": True,
-                "mirroir": mirroir.id,
-                "revision": mirroir.revision,
-                "connection_count": len(mirroir.connections),
+                "miroir": miroir.id,
+                "revision": miroir.revision,
+                "connection_count": len(miroir.connections),
             }
         elif args.command == "connections":
-            result = [connection.summary() for connection in mirroir.connections]
+            result = [connection.summary() for connection in miroir.connections]
         else:
-            return _operate(args, mirroir)
+            return _operate(args, miroir)
     print(json.dumps(result, indent=2))
     return 0
 
 
-def _operate(args: argparse.Namespace, mirroir: Any) -> int:
+def _operate(args: argparse.Namespace, miroir: Any) -> int:
     from src.core.operations import MetadataStore
     from src.core.secrets import SecretKeyError
 
-    ids = [c.config.id for c in mirroir.connections]
+    ids = [c.config.id for c in miroir.connections]
     if getattr(args, "connection", None) not in (None, *ids):
         print("Unknown connection", file=sys.stderr)
         return 2
     if args.metadata == DEFAULT_METADATA:
-        Path(".mirroir").mkdir(exist_ok=True)
+        Path(".miroir").mkdir(exist_ok=True)
     store = MetadataStore(args.metadata)
     try:
         secrets = _secret_store(store)
@@ -188,7 +188,7 @@ def _operate(args: argparse.Namespace, mirroir: Any) -> int:
             return _credentials(args, store, secrets)
         if args.command in ("deployments", "refresh"):
             return _orchestrate(args, store, secrets)
-        return _with_store(args, mirroir, store, ids, secrets)
+        return _with_store(args, miroir, store, ids, secrets)
     except SecretKeyError as error:
         print(str(error), file=sys.stderr)
         return 2
@@ -207,7 +207,7 @@ def _secret_store(store: Any) -> Any:
 
 def _orchestrator(args: argparse.Namespace, store: Any) -> Any:
     """The Prefect adapter, configured from the installation's environment."""
-    pool = os.environ.get("MIRROIR_PREFECT_POOL")
+    pool = os.environ.get("MIROIR_PREFECT_POOL")
     if not pool:
         return None
     from src.adapters.prefect import PrefectOrchestrator
@@ -216,21 +216,21 @@ def _orchestrator(args: argparse.Namespace, store: Any) -> Any:
         store,
         pool,
         # Where flow runs find the configuration (worker or Job mount).
-        os.environ.get("MIRROIR_PREFECT_CONFIG_PATH", str(args.config.resolve())),
-        image=os.environ.get("MIRROIR_IMAGE") or None,
-        job_variables=json.loads(os.environ.get("MIRROIR_PREFECT_JOB_VARIABLES", "{}")),
+        os.environ.get("MIROIR_PREFECT_CONFIG_PATH", str(args.config.resolve())),
+        image=os.environ.get("MIROIR_IMAGE") or None,
+        job_variables=json.loads(os.environ.get("MIROIR_PREFECT_JOB_VARIABLES", "{}")),
     )
 
 
 def _orchestrate(args: argparse.Namespace, store: Any, secrets: Any) -> int:
-    from src.core.service import MirroirService
+    from src.core.service import MiroirService
 
     store.migrate()
     orchestrator = _orchestrator(args, store)
     if orchestrator is None:
-        print("Set MIRROIR_PREFECT_POOL to use Prefect", file=sys.stderr)
+        print("Set MIROIR_PREFECT_POOL to use Prefect", file=sys.stderr)
         return 2
-    service = MirroirService(
+    service = MiroirService(
         args.config, store, Path(DEFAULT_ARTIFACTS), orchestrator, secrets, orchestrator
     )
     if args.command == "refresh":
@@ -245,15 +245,15 @@ def _credentials(args: argparse.Namespace, store: Any, secrets: Any) -> int:
 
     from src.core.operations import OperationError
     from src.core.secrets import SecretResolutionError
-    from src.core.service import InlineExecutor, MirroirService
+    from src.core.service import InlineExecutor, MiroirService
 
     store.migrate()
     if args.command == "rotate-secrets":
         if secrets is None:
-            print("Set MIRROIR_SECRET_KEY first", file=sys.stderr)
+            print("Set MIROIR_SECRET_KEY first", file=sys.stderr)
             return 2
         return _print({"rotated": secrets.rotate_all()})
-    service = MirroirService(
+    service = MiroirService(
         args.config, store, Path(DEFAULT_ARTIFACTS), InlineExecutor(print), secrets
     )
     if args.command == "check":
@@ -275,20 +275,20 @@ def _credentials(args: argparse.Namespace, store: Any, secrets: Any) -> int:
 
 
 def _with_store(
-    args: argparse.Namespace, mirroir: Any, store: Any, ids: list, secrets: Any
+    args: argparse.Namespace, miroir: Any, store: Any, ids: list, secrets: Any
 ) -> int:
     from src.core.operations import OperationError
 
     store.migrate()
     selected = [args.connection] if getattr(args, "connection", None) else ids
     if args.command == "status":
-        result = [store.connection_status(mirroir.id, c) for c in selected]
+        result = [store.connection_status(miroir.id, c) for c in selected]
         return _print(result)
     if args.command == "artifacts":
         result = [
             {**artifact, "imports": store.artifact_imports(artifact["id"])}
             for c in selected
-            for artifact in store.list_artifacts(mirroir.id, c)
+            for artifact in store.list_artifacts(miroir.id, c)
         ]
         return _print(result)
     if args.command == "submit":
@@ -296,11 +296,11 @@ def _with_store(
         from src.integrations.formats import InvalidArtifact
 
         connection = next(
-            c for c in mirroir.connections if c.config.id == args.connection
+            c for c in miroir.connections if c.config.id == args.connection
         )
         try:
             artifact, created = submit_artifact(
-                mirroir,
+                miroir,
                 connection,
                 args.file,
                 args.role,
@@ -332,13 +332,13 @@ def _with_store(
     try:
         if args.command == "execute":
             outcome = execute_operation(
-                mirroir, args.operation, lock_wait=EXECUTE_LOCK_WAIT, **common
+                miroir, args.operation, lock_wait=EXECUTE_LOCK_WAIT, **common
             )
         elif args.command == "run":
-            outcome = run_connection(mirroir, args.connection, origin="local", **common)
+            outcome = run_connection(miroir, args.connection, origin="local", **common)
         else:
             outcome = import_artifact(
-                mirroir,
+                miroir,
                 args.connection,
                 args.artifact,
                 replay=args.replay,
@@ -366,12 +366,12 @@ def _print(result: Any) -> int:
 def _serve(args: argparse.Namespace, store: Any, secrets: Any) -> int:
     import uvicorn
 
-    from src.core.service import MirroirService, SubprocessExecutor
+    from src.core.service import MiroirService, SubprocessExecutor
     from src.web.app import create_app
 
-    token = os.environ.get("MIRROIR_API_TOKEN", "")
+    token = os.environ.get("MIROIR_API_TOKEN", "")
     if len(token) < 16:
-        print("Set MIRROIR_API_TOKEN (16+ characters) to serve", file=sys.stderr)
+        print("Set MIROIR_API_TOKEN (16+ characters) to serve", file=sys.stderr)
         return 2
     store.migrate()
     orchestrator = _orchestrator(args, store)
@@ -388,11 +388,11 @@ def _serve(args: argparse.Namespace, store: Any, secrets: Any) -> int:
     )
     if secrets is None:
         print(
-            "MIRROIR_SECRET_KEY is not set: credentials cannot be stored in the "
-            "mirroir (generate one with `pipelines-mirroir generate-key`)",
+            "MIROIR_SECRET_KEY is not set: credentials cannot be stored in the "
+            "miroir (generate one with `pipelines-miroir generate-key`)",
             file=sys.stderr,
         )
-    service = MirroirService(
+    service = MiroirService(
         args.config.resolve(),
         store,
         args.artifacts.resolve(),

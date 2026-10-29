@@ -16,10 +16,10 @@ from typing import Any, Protocol
 
 from src.core.config import (
     ResolvedConnection,
-    ResolvedMirroir,
+    ResolvedMiroir,
     file_revision,
-    load_mirroir,
-    save_mirroir,
+    load_miroir,
+    save_miroir,
 )
 from src.core.operations import MetadataStore, OperationError, Role
 from src.core.secrets import SecretResolutionError, SecretStore, make_resolver
@@ -47,7 +47,7 @@ class InlineExecutor:
 
 @dataclass
 class SubprocessExecutor:
-    """Runs each operation as `pipelines-mirroir execute` in its own process.
+    """Runs each operation as `pipelines-miroir execute` in its own process.
 
     A crash or kill only affects that operation, as on a worker. Finished
     children are reaped on the next submission.
@@ -69,12 +69,12 @@ class SubprocessExecutor:
 
 
 @dataclass
-class MirroirService:
+class MiroirService:
     config_path: Path
     store: MetadataStore
     artifact_root: Path
     executor: Executor
-    # None when MIRROIR_SECRET_KEY is not set: built-in secrets are unavailable,
+    # None when MIROIR_SECRET_KEY is not set: built-in secrets are unavailable,
     # external (env/fnox) references still work.
     secrets: SecretStore | None = None
     # The Prefect adapter when an orchestrator is configured (decision 013). It is
@@ -84,19 +84,19 @@ class MirroirService:
     def resolver(self) -> Callable[[ResolvedConnection], dict[str, str]]:
         return make_resolver(self.secrets)
 
-    def mirroir(self) -> ResolvedMirroir:
-        return load_mirroir(self.config_path)
+    def miroir(self) -> ResolvedMiroir:
+        return load_miroir(self.config_path)
 
     def _connection(
-        self, mirroir: ResolvedMirroir, connection_id: str
+        self, miroir: ResolvedMiroir, connection_id: str
     ) -> ResolvedConnection:
-        for connection in mirroir.connections:
+        for connection in miroir.connections:
             if connection.config.id == connection_id:
                 return connection
         raise OperationError("Unknown connection")
 
-    def _links(self, mirroir: ResolvedMirroir, connection: ResolvedConnection) -> dict:
-        metabase = mirroir.links.metabase
+    def _links(self, miroir: ResolvedMiroir, connection: ResolvedConnection) -> dict:
+        metabase = miroir.links.metabase
         return {
             "dashboards": [
                 {"name": name, "url": f"{metabase.rstrip('/')}/dashboard/{id_}"}
@@ -107,27 +107,25 @@ class MirroirService:
         }
 
     def run_link(
-        self, mirroir: ResolvedMirroir, backend_run_id: str | None
+        self, miroir: ResolvedMiroir, backend_run_id: str | None
     ) -> str | None:
-        ui = mirroir.links.prefect_ui
+        ui = miroir.links.prefect_ui
         if ui and backend_run_id:
             return f"{ui.rstrip('/')}/runs/flow-run/{backend_run_id}"
         return None
 
     def overview(self) -> dict[str, Any]:
-        mirroir = self.mirroir()
+        miroir = self.miroir()
         return {
-            "mirroir": mirroir.id,
-            "revision": mirroir.revision,
-            "connections": [self._summary(mirroir, c) for c in mirroir.connections],
+            "miroir": miroir.id,
+            "revision": miroir.revision,
+            "connections": [self._summary(miroir, c) for c in miroir.connections],
         }
 
-    def _summary(
-        self, mirroir: ResolvedMirroir, connection: ResolvedConnection
-    ) -> dict:
+    def _summary(self, miroir: ResolvedMiroir, connection: ResolvedConnection) -> dict:
         from src.core.runner import model_selector
 
-        status = self.store.connection_status(mirroir.id, connection.config.id)
+        status = self.store.connection_status(miroir.id, connection.config.id)
         selector, reason = model_selector(connection)
         if selector is None and status["analysis"] != "no_data":
             # Loaded data no model reads is not "stale": nothing will ever build it.
@@ -135,8 +133,8 @@ class MirroirService:
             status["analysis_detail"] = reason
         last = status["last_attempt"]
         if last is not None:
-            last["run_url"] = self.run_link(mirroir, last.get("backend_run_id"))
-        applied = self.store.last_executed_revision(mirroir.id, connection.config.id)
+            last["run_url"] = self.run_link(miroir, last.get("backend_run_id"))
+        applied = self.store.last_executed_revision(miroir.id, connection.config.id)
         return {
             **connection.summary(),
             "status": status,
@@ -154,18 +152,18 @@ class MirroirService:
             if "incremental_sync" in connection.integration.capabilities
             else "Scan folder",
             "accepts_files": "artifact_import" in connection.integration.capabilities,
-            "credentials": self._credentials(mirroir, connection),
+            "credentials": self._credentials(miroir, connection),
             "credential_status": self.store.credential_status(
-                mirroir.id, connection.config.id
+                miroir.id, connection.config.id
             ),
-            **self._links(mirroir, connection),
+            **self._links(miroir, connection),
         }
 
     def _credentials(
-        self, mirroir: ResolvedMirroir, connection: ResolvedConnection
+        self, miroir: ResolvedMiroir, connection: ResolvedConnection
     ) -> list[dict[str, Any]]:
         """Write-only view: where each credential lives and whether it is set."""
-        stored = self.store.secret_metadata(mirroir.id, connection.config.id)
+        stored = self.store.secret_metadata(miroir.id, connection.config.id)
         result = []
         for credential in connection.integration.credentials:
             reference = connection.config.credentials[credential.name]
@@ -175,7 +173,7 @@ class MirroirService:
                 "help": credential.help,
                 "provider": reference.provider,
             }
-            if reference.provider == "mirroir":
+            if reference.provider == "miroir":
                 item["set"] = credential.name in stored
                 item["updated_at"] = stored.get(credential.name, {}).get("updated_at")
             else:
@@ -184,29 +182,29 @@ class MirroirService:
         return result
 
     def connection(self, connection_id: str) -> dict[str, Any]:
-        mirroir = self.mirroir()
-        connection = self._connection(mirroir, connection_id)
-        operations = self.store.recent_operations(mirroir.id, connection_id)
-        artifacts = self.artifacts(connection_id, mirroir)
+        miroir = self.miroir()
+        connection = self._connection(miroir, connection_id)
+        operations = self.store.recent_operations(miroir.id, connection_id)
+        artifacts = self.artifacts(connection_id, miroir)
         names = {artifact["id"]: artifact["original_name"] for artifact in artifacts}
         for operation in operations:
-            operation["run_url"] = self.run_link(mirroir, operation["backend_run_id"])
+            operation["run_url"] = self.run_link(miroir, operation["backend_run_id"])
             operation["artifact_name"] = names.get(operation["artifact_id"])
         return {
-            **self._summary(mirroir, connection),
+            **self._summary(miroir, connection),
             "operations": operations,
             "artifacts": artifacts,
         }
 
     def artifacts(
-        self, connection_id: str, mirroir: ResolvedMirroir | None = None
+        self, connection_id: str, miroir: ResolvedMiroir | None = None
     ) -> list:
-        mirroir = mirroir or self.mirroir()
-        self._connection(mirroir, connection_id)
+        miroir = miroir or self.miroir()
+        self._connection(miroir, connection_id)
         return [
             {**artifact, "imports": self.store.artifact_imports(artifact["id"])}
             for artifact in reversed(
-                self.store.list_artifacts(mirroir.id, connection_id)
+                self.store.list_artifacts(miroir.id, connection_id)
             )
         ]
 
@@ -214,7 +212,7 @@ class MirroirService:
         from src.core.runner import request_sync
 
         operation = request_sync(
-            self.mirroir(), connection_id, store=self.store, origin=origin
+            self.miroir(), connection_id, store=self.store, origin=origin
         )
         self.executor.submit(operation.id)
         return operation.id
@@ -231,10 +229,10 @@ class MirroirService:
         from src.core.artifacts import submit_artifact
         from src.core.runner import AlreadyImported
 
-        mirroir = self.mirroir()
+        miroir = self.miroir()
         artifact, created = submit_artifact(
-            mirroir,
-            self._connection(mirroir, connection_id),
+            miroir,
+            self._connection(miroir, connection_id),
             path,
             role,
             store=self.store,
@@ -261,7 +259,7 @@ class MirroirService:
         from src.core.runner import request_import
 
         operation = request_import(
-            self.mirroir(),
+            self.miroir(),
             connection_id,
             artifact_id,
             store=self.store,
@@ -279,7 +277,7 @@ class MirroirService:
         except (OSError, UnicodeError):
             text = ""
         try:
-            load_mirroir(self.config_path)
+            load_miroir(self.config_path)
             error = None
         except ConfigurationError as problem:
             error = str(problem)
@@ -289,8 +287,8 @@ class MirroirService:
             "error": error,
         }
 
-    def save_configuration(self, text: str, file_revision: str) -> ResolvedMirroir:
-        return save_mirroir(self.config_path, text, file_revision)
+    def save_configuration(self, text: str, file_revision: str) -> ResolvedMiroir:
+        return save_miroir(self.config_path, text, file_revision)
 
     # ---- Connections and credentials ------------------------------------------
 
@@ -317,12 +315,10 @@ class MirroirService:
         revision = file_revision(self.config_path)
         return json.loads(self.config_path.read_text(encoding="utf-8")), revision
 
-    def _write_config(self, raw: dict[str, Any], revision: str) -> ResolvedMirroir:
+    def _write_config(self, raw: dict[str, Any], revision: str) -> ResolvedMiroir:
         import json
 
-        return save_mirroir(
-            self.config_path, json.dumps(raw, indent=2) + "\n", revision
-        )
+        return save_miroir(self.config_path, json.dumps(raw, indent=2) + "\n", revision)
 
     def create_connection(
         self,
@@ -331,14 +327,14 @@ class MirroirService:
         settings: dict[str, Any],
         credentials: dict[str, str],
     ) -> str:
-        """Add a connection whose credentials are stored by the mirroir.
+        """Add a connection whose credentials are stored by the miroir.
 
         Validates the new configuration first, stores secrets, then saves the
         configuration; if saving fails, the just-stored secrets are removed.
         """
         import json
 
-        from src.core.config import ConfigurationError, parse_mirroir
+        from src.core.config import ConfigurationError, parse_miroir
         from src.integrations.registry import INTEGRATIONS
 
         definition = INTEGRATIONS.get(integration)
@@ -349,7 +345,7 @@ class MirroirService:
         secrets = self.secrets
         if credentials and secrets is None:
             raise SecretResolutionError(
-                "Set MIRROIR_SECRET_KEY to store credentials in the mirroir"
+                "Set MIROIR_SECRET_KEY to store credentials in the miroir"
             )
         raw, revision = self._raw_config()
         raw.setdefault("connections", []).append(
@@ -357,12 +353,12 @@ class MirroirService:
                 "id": connection_id,
                 "integration": integration,
                 "settings": settings,
-                "credentials": {name: {"provider": "mirroir"} for name in credentials},
+                "credentials": {name: {"provider": "miroir"} for name in credentials},
             }
         )
-        mirroir = parse_mirroir(json.dumps(raw))  # validate before storing anything
-        connection = self._connection(mirroir, connection_id)
-        if self.store.secret_metadata(mirroir.id, connection_id):
+        miroir = parse_miroir(json.dumps(raw))  # validate before storing anything
+        connection = self._connection(miroir, connection_id)
+        if self.store.secret_metadata(miroir.id, connection_id):
             raise ConfigurationError("Secrets already exist for this connection ID")
         try:
             for name, value in credentials.items():
@@ -370,24 +366,24 @@ class MirroirService:
                 secrets.put(connection, name, value)
             self._write_config(raw, revision)
         except BaseException:
-            self.store.delete_secrets(mirroir.id, connection_id)
+            self.store.delete_secrets(miroir.id, connection_id)
             raise
         return connection_id
 
     def set_credential(self, connection_id: str, name: str, value: str) -> None:
-        mirroir = self.mirroir()
-        connection = self._connection(mirroir, connection_id)
+        miroir = self.miroir()
+        connection = self._connection(miroir, connection_id)
         reference = connection.config.credentials.get(name)
         if reference is None:
             raise OperationError("Unknown credential for this connection")
-        if reference.provider != "mirroir":
+        if reference.provider != "miroir":
             raise OperationError(
                 f"This credential comes from {reference.provider} ({reference.key}); "
-                "change it there, or switch it to the mirroir in the configuration"
+                "change it there, or switch it to the miroir in the configuration"
             )
         if self.secrets is None:
             raise SecretResolutionError(
-                "Set MIRROIR_SECRET_KEY to store credentials in the mirroir"
+                "Set MIROIR_SECRET_KEY to store credentials in the miroir"
             )
         self.secrets.put(connection, name, value)
 
@@ -396,8 +392,8 @@ class MirroirService:
         from src.core.secrets import SecretKeyError
         from src.integrations.checks import CheckFailed
 
-        mirroir = self.mirroir()
-        connection = self._connection(mirroir, connection_id)
+        miroir = self.miroir()
+        connection = self._connection(miroir, connection_id)
         check = connection.integration.check
         ok, rejected = False, False
         credentials: dict[str, str] = {}
@@ -415,7 +411,7 @@ class MirroirService:
             message, rejected = str(error), error.rejected
         for value in credentials.values():
             message = message.replace(value, "***")
-        self.store.record_check(mirroir.id, connection_id, ok, rejected, message)
+        self.store.record_check(miroir.id, connection_id, ok, rejected, message)
         return {"ok": ok, "rejected": rejected, "message": message}
 
     def remove_connection(self, connection_id: str) -> None:
@@ -423,34 +419,32 @@ class MirroirService:
 
         Loaded data, artifacts, and history are kept: purging them is separate.
         """
-        mirroir = self.mirroir()
-        self._connection(mirroir, connection_id)
+        miroir = self.miroir()
+        self._connection(miroir, connection_id)
         raw, revision = self._raw_config()
         raw["connections"] = [
             c for c in raw["connections"] if c.get("id") != connection_id
         ]
         self._write_config(raw, revision)
-        self.store.delete_secrets(mirroir.id, connection_id)
+        self.store.delete_secrets(miroir.id, connection_id)
 
     # ---- Orchestrator -------------------------------------------------------------
 
     def _orchestrator(self) -> Any:
         if self.orchestrator is None:
-            raise OperationError(
-                "No orchestrator configured (set MIRROIR_PREFECT_POOL)"
-            )
+            raise OperationError("No orchestrator configured (set MIROIR_PREFECT_POOL)")
         return self.orchestrator
 
     def deployments_plan(self) -> list[dict[str, Any]]:
-        return list(self._orchestrator().plan(self.mirroir()))
+        return list(self._orchestrator().plan(self.miroir()))
 
     def deployments_apply(self) -> list[dict[str, Any]]:
-        mirroir = self.mirroir()
+        miroir = self.miroir()
         orchestrator = self._orchestrator()
-        changes = orchestrator.plan(mirroir)
-        orchestrator.apply(mirroir, changes)
+        changes = orchestrator.plan(miroir)
+        orchestrator.apply(miroir, changes)
         return list(changes)
 
     def refresh(self) -> list[dict[str, Any]]:
         """Reconcile unverified runs with the orchestrator."""
-        return list(self._orchestrator().observe(self.mirroir()))
+        return list(self._orchestrator().observe(self.miroir()))

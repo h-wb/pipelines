@@ -1,1 +1,1 @@
-"""CLI transport for mirroir application services."""
+"""CLI transport for miroir application services."""

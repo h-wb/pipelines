@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% from "_macros.html" import badge, when %}
-{% block title %}Connections · {{ overview.mirroir }}{% endblock %}
+{% block title %}Connections · {{ overview.miroir }}{% endblock %}
 {% block body %}
-<h1>Connections <span class="muted">{{ overview.mirroir }}</span></h1>
+<h1>Connections <span class="muted">{{ overview.miroir }}</span></h1>
 <p><a href="/connections/new">Add a connection</a></p>
 {% if not overview.connections %}
 <p class="muted">No connections yet. Add one to start mirroring your data.</p>
@@ -13,7 +13,7 @@
   {% set s = c.status %}
   <tr>
     <td><a href="/connections/{{ c.id }}"><strong>{{ c.id }}</strong></a><div class="muted">{{ c.integration }}</div></td>
-    <td>{% if c.credentials %}{{ badge(c.credential_status.state) }}{% if c.credentials | rejectattr("provider", "ne", "mirroir") | rejectattr("set") | list %}<div class="failed">not set</div>{% endif %}{% else %}<span class="muted">none needed</span>{% endif %}</td>
+    <td>{% if c.credentials %}{{ badge(c.credential_status.state) }}{% if c.credentials | rejectattr("provider", "ne", "miroir") | rejectattr("set") | list %}<div class="failed">not set</div>{% endif %}{% else %}<span class="muted">none needed</span>{% endif %}</td>
     <td>
       {% if s.last_attempt %}{{ badge(s.last_attempt.ingestion) }}{% if not s.last_attempt.verified %} <span class="muted">unverified</span>{% endif %}
       <div class="muted">{{ when(s.last_attempt.started_at) }}</div>{% else %}<span class="muted">never run</span>{% endif %}

@@ -1,7 +1,7 @@
 """Connection secrets: encrypted storage and per-connection resolution.
 
 Built-in secrets are encrypted with Fernet (`cryptography`) under a key from
-`MIRROIR_SECRET_KEY` and stored in the metadata database (decision 011).
+`MIROIR_SECRET_KEY` and stored in the metadata database (decision 011).
 External references (`env`, `fnox`) resolve through their own tools. Values are
 returned to the caller only: never cached, logged, or put in the environment.
 Errors never include a value.
@@ -17,7 +17,7 @@ from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 from src.core.config import ResolvedConnection, SecretReference
 from src.core.operations import MetadataStore
 
-KEY_VARIABLE = "MIRROIR_SECRET_KEY"
+KEY_VARIABLE = "MIROIR_SECRET_KEY"
 
 
 class SecretResolutionError(RuntimeError):
@@ -47,7 +47,7 @@ class SecretBox:
             return cls(MultiFernet([Fernet(part.encode()) for part in parts]))
         except ValueError:
             raise SecretKeyError(
-                f"{KEY_VARIABLE} must be Fernet keys (pipelines-mirroir generate-key)"
+                f"{KEY_VARIABLE} must be Fernet keys (pipelines-miroir generate-key)"
             ) from None
 
     @classmethod
@@ -119,14 +119,14 @@ class SecretStore:
                 "Credential must be nonempty, without surrounding spaces"
             )
         self.store.put_secret(
-            connection.mirroir_id,
+            connection.miroir_id,
             connection.config.id,
             name,
             self._box().encrypt(value),
         )
 
-    def get(self, mirroir_id: str, connection_id: str, name: str) -> str | None:
-        token = self.store.get_secret(mirroir_id, connection_id, name)
+    def get(self, miroir_id: str, connection_id: str, name: str) -> str | None:
+        token = self.store.get_secret(miroir_id, connection_id, name)
         return None if token is None else self._box().decrypt(token)
 
     def rotate_all(self) -> int:
@@ -148,12 +148,10 @@ def make_resolver(
         resolved = {}
         for name in connection.integration.credential_names:
             reference: SecretReference = connection.config.credentials[name]
-            if reference.provider == "mirroir":
+            if reference.provider == "miroir":
                 if secrets is None:
-                    raise SecretResolutionError(
-                        "Mirroir secrets are not available here"
-                    )
-                value = secrets.get(connection.mirroir_id, connection.config.id, name)
+                    raise SecretResolutionError("Miroir secrets are not available here")
+                value = secrets.get(connection.miroir_id, connection.config.id, name)
             else:
                 value = external[reference.provider](str(reference.key))
             if not value:

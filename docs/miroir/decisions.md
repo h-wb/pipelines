@@ -403,46 +403,46 @@ Prefect's own APIs:
 The subprocess executor remains for development and tests only (manual requests,
 no schedules). It is not a product mode.
 
-## 014 — The product is Mirroir; "workspace" is retired
+## 014 — The product is Miroir; "workspace" is retired
 
 Status: accepted, 2026-10-29.
 
 Until now "workspace" was both the working title of the product ("the personal
 data workspace") and the name of everything inside it: the configuration unit,
 the environment variables, the metadata schema, the CLI. The product is
-**Mirroir** — one installation mirrors one person's data — and the old name is
+**Miroir** — one installation mirrors one person's data — and the old name is
 gone entirely rather than half-kept:
 
-- Python (`MirroirConfig`, `MirroirService`, `load_mirroir`, `mirroir_id`, …),
-  the CLI binary (`pipelines-mirroir`, config file `mirroir.json`, local state
-  in `.mirroir/`), the environment (`MIRROIR_*`), the metadata schema
-  (`mirroir_meta`), the built-in secrets provider value (`{"provider":
-  "mirroir"}`), the Prefect work pool (`mirroir-k8s`), and the cluster
+- Python (`MiroirConfig`, `MiroirService`, `load_miroir`, `miroir_id`, …),
+  the CLI binary (`pipelines-miroir`, config file `miroir.json`, local state
+  in `.miroir/`), the environment (`MIROIR_*`), the metadata schema
+  (`miroir_meta`), the built-in secrets provider value (`{"provider":
+  "miroir"}`), the Prefect work pool (`miroir-k8s`), and the cluster
   resources in home-ops.
-- One unit of configuration is a mirroir: one `mirroir.json`, one owner, its
+- One unit of configuration is a miroir: one `miroir.json`, one owner, its
   connections inside. The name no longer means two things.
 
 Earlier entries in this log keep the wording of their time; paths moved with
-`docs/workspace/` → `docs/mirroir/`.
+`docs/workspace/` → `docs/miroir/`.
 
 ## 015 — The metadata store gets its own Postgres, not Metabase's
 
 Status: accepted, 2026-10-29.
 
-The metadata store is Mirroir's control plane (operations, attempts, artifact
+The metadata store is Miroir's control plane (operations, attempts, artifact
 registry, connection checks, encrypted connection secrets). It ran in
 postgres-metabase because that instance already existed, but that couples a BI
 database's lifecycle to the pipeline bookkeeping and widens the blast radius of
-either. Following home-ops' standard pattern, Mirroir gets its own CloudNativePG
-cluster — `postgres-mirroir` in the automation namespace, bootstrapped with the
+either. Following home-ops' standard pattern, Miroir gets its own CloudNativePG
+cluster — `postgres-miroir` in the automation namespace, bootstrapped with the
 `cnpg/initdb` component, backed up to Garage via Barman like every other
 cluster — and the job template reads its credentials from the generated
-`postgres-mirroir-app` secret.
+`postgres-miroir-app` secret.
 
 The **warehouse data** (dlt datasets, dbt models, Metabase dashboards) stays on
 postgres-metabase; moving it would be a data migration with dashboard
 re-pointing and buys nothing. The destination credentials keep coming from
 `postgres-metabase-app`.
 
-`MIRROIR_METADATA__*` (host, port, database, username, password) compose the
+`MIROIR_METADATA__*` (host, port, database, username, password) compose the
 metadata URL, so the database password still exists nowhere outside CNPG.

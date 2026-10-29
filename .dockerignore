@@ -5,7 +5,7 @@
 .git
 .github
 .venv
-.mirroir
+.miroir
 **/__pycache__
 docs
 examples

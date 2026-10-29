@@ -2,7 +2,7 @@
 
 HTTP is intercepted at the requests transport boundary. No live service credentials
 or production destination are used. These tests validate adapter compatibility, not
-an implemented mirroir execution service or artifact inbox.
+an implemented miroir execution service or artifact inbox.
 """
 
 import copy
@@ -17,9 +17,9 @@ import dlt
 import duckdb
 import requests
 
-from src.core.config import parse_mirroir
+from src.core.config import parse_miroir
 from src.integrations.sources import create_source
-from tests.test_mirroir import example
+from tests.test_miroir import example
 
 
 class ReferenceSourceTests(unittest.TestCase):
@@ -50,7 +50,7 @@ class ReferenceSourceTests(unittest.TestCase):
         second["id"] = "other_music"
         second["settings"]["username"] = "other_user"
         config["connections"].append(second)
-        connections = parse_mirroir(json.dumps(config)).connections
+        connections = parse_miroir(json.dumps(config)).connections
         requests_seen = []
 
         def respond(session, request, **kwargs):
@@ -124,7 +124,7 @@ class ReferenceSourceTests(unittest.TestCase):
         config = example()
         config["connections"] = config["connections"][1:]
         config["connections"][0]["settings"]["data_dir"] = str(directory)
-        connection = parse_mirroir(json.dumps(config)).connections[0]
+        connection = parse_miroir(json.dumps(config)).connections[0]
         for _ in range(2):
             self.pipeline(connection).run(create_source(connection, {}))
             self.assertEqual(self.count(connection, "metrics"), 2)
@@ -135,7 +135,7 @@ class ReferenceSourceTests(unittest.TestCase):
         self.assertEqual(sources, [("unknown",)])
 
     def test_source_requires_explicit_credentials(self):
-        connection = parse_mirroir(json.dumps(example())).connections[0]
+        connection = parse_miroir(json.dumps(example())).connections[0]
         with self.assertRaises(ValueError):
             create_source(connection, {})
         with self.assertRaises(ValueError):

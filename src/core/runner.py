@@ -15,7 +15,7 @@ from typing import Any
 
 from sqlalchemy.exc import SQLAlchemyError
 
-from src.core.config import ResolvedConnection, ResolvedMirroir
+from src.core.config import ResolvedConnection, ResolvedMiroir
 from src.core.operations import (
     ConnectionBusy,
     MetadataStore,
@@ -118,7 +118,7 @@ def model_selector(connection: ResolvedConnection) -> tuple[str | None, str]:
 
 def _new_operation(
     store: MetadataStore,
-    mirroir: ResolvedMirroir,
+    miroir: ResolvedMiroir,
     connection: ResolvedConnection,
     origin: Origin,
     kind: str = "sync",
@@ -126,7 +126,7 @@ def _new_operation(
 ) -> Operation:
     values.setdefault("backend_run_id", None)
     return store.create_operation(
-        mirroir_id=mirroir.id,
+        miroir_id=miroir.id,
         connection_id=connection.config.id,
         integration=connection.integration.name,
         kind=kind,
@@ -140,23 +140,23 @@ def _new_operation(
 
 
 def request_sync(
-    mirroir: ResolvedMirroir,
+    miroir: ResolvedMiroir,
     connection_id: str,
     *,
     store: MetadataStore,
     origin: Origin,
 ) -> Operation:
     """Record a sync request. It shows as requested until an executor runs it."""
-    connection = _connection(mirroir, connection_id)
+    connection = _connection(miroir, connection_id)
     if not {"incremental_sync", "directory_import"} & set(
         connection.integration.capabilities
     ):
         raise OperationError("Integration has nothing to sync")
-    return _new_operation(store, mirroir, connection, origin)
+    return _new_operation(store, miroir, connection, origin)
 
 
 def request_import(
-    mirroir: ResolvedMirroir,
+    miroir: ResolvedMiroir,
     connection_id: str,
     artifact_id: str,
     *,
@@ -172,8 +172,8 @@ def request_import(
     """
     from src.integrations.formats import PARSER_VERSIONS
 
-    connection = _connection(mirroir, connection_id)
-    artifact = store.get_artifact(mirroir.id, artifact_id)
+    connection = _connection(miroir, connection_id)
+    artifact = store.get_artifact(miroir.id, artifact_id)
     if artifact["connection_id"] != connection.config.id:
         raise OperationError("Artifact belongs to a different connection")
     parser_version = PARSER_VERSIONS[artifact["input_format"]]
@@ -188,7 +188,7 @@ def request_import(
                 raise AlreadyImported(previous["operation_id"])
     return _new_operation(
         store,
-        mirroir,
+        miroir,
         connection,
         origin,
         kind="replay" if replay else "import",
@@ -199,7 +199,7 @@ def request_import(
 
 
 def execute_operation(
-    mirroir: ResolvedMirroir,
+    miroir: ResolvedMiroir,
     operation_id: str,
     *,
     store: MetadataStore,
@@ -227,9 +227,9 @@ def execute_operation(
     from src.integrations.sources import create_artifact_source, create_source
 
     operation = store.get_operation(operation_id)
-    if operation.mirroir_id != mirroir.id:
-        raise OperationError("Operation belongs to a different mirroir")
-    connection = _connection(mirroir, operation.connection_id)
+    if operation.miroir_id != miroir.id:
+        raise OperationError("Operation belongs to a different miroir")
+    connection = _connection(miroir, operation.connection_id)
     if backend_run_id is not None:
         store.bind_backend_run(operation.id, backend_run_id)
 
@@ -240,7 +240,7 @@ def execute_operation(
     elif operation.kind == "sync":
         make_source = lambda credentials: create_source(connection, credentials)
     else:
-        artifact = store.get_artifact(mirroir.id, str(operation.artifact_id))
+        artifact = store.get_artifact(miroir.id, str(operation.artifact_id))
         options = json.loads(operation.options or "{}")
         if operation.parser_version != PARSER_VERSIONS[artifact["input_format"]]:
             reason = "Parser version changed since this import was requested"
@@ -268,7 +268,7 @@ def execute_operation(
 
 
 def run_connection(
-    mirroir: ResolvedMirroir,
+    miroir: ResolvedMiroir,
     connection_id: str,
     *,
     store: MetadataStore,
@@ -282,19 +282,19 @@ def run_connection(
     Without an operation ID, a backend run that already has an operation (a
     Prefect retry) adds an attempt to it; anything else registers a new one.
     """
-    connection = _connection(mirroir, connection_id)
+    connection = _connection(miroir, connection_id)
     if operation_id is None and backend_run_id is not None:
         existing = store.find_by_backend_run(backend_run_id)
         if existing is not None:
             operation_id = existing.id
     if operation_id is None:
         operation_id = _new_operation(
-            store, mirroir, connection, origin, backend_run_id=backend_run_id
+            store, miroir, connection, origin, backend_run_id=backend_run_id
         ).id
     elif store.get_operation(operation_id).connection_id != connection.config.id:
         raise OperationError("Operation belongs to a different connection")
     return execute_operation(
-        mirroir,
+        miroir,
         operation_id,
         store=store,
         backend_run_id=backend_run_id,
@@ -303,7 +303,7 @@ def run_connection(
 
 
 def import_artifact(
-    mirroir: ResolvedMirroir,
+    miroir: ResolvedMiroir,
     connection_id: str,
     artifact_id: str,
     *,
@@ -314,9 +314,9 @@ def import_artifact(
 ) -> RunOutcome:
     """Request and immediately execute an artifact import."""
     operation = request_import(
-        mirroir, connection_id, artifact_id, store=store, origin=origin, replay=replay
+        miroir, connection_id, artifact_id, store=store, origin=origin, replay=replay
     )
-    return execute_operation(mirroir, operation.id, store=store, **execution)
+    return execute_operation(miroir, operation.id, store=store, **execution)
 
 
 def artifact_options(connection: ResolvedConnection) -> dict[str, Any]:
@@ -324,8 +324,8 @@ def artifact_options(connection: ResolvedConnection) -> dict[str, Any]:
     return {"cutoff": getattr(connection.settings, "cutoff", None)}
 
 
-def _connection(mirroir: ResolvedMirroir, connection_id: str) -> ResolvedConnection:
-    for connection in mirroir.connections:
+def _connection(miroir: ResolvedMiroir, connection_id: str) -> ResolvedConnection:
+    for connection in miroir.connections:
         if connection.config.id == connection_id:
             return connection
     raise OperationError("Unknown connection")

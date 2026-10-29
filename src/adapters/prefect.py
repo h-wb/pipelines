@@ -1,6 +1,6 @@
-"""Prefect as the mirroir's orchestrator (decision 013).
+"""Prefect as the miroir's orchestrator (decision 013).
 
-The mirroir owns desired state (connections, schedules); Prefect owns execution.
+The miroir owns desired state (connections, schedules); Prefect owns execution.
 This adapter only translates: deployments from configuration (plan/apply),
 requests into flow runs (submit), and flow run states back into attempts (observe).
 """
@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from src.core.config import ResolvedConnection, ResolvedMirroir
+from src.core.config import ResolvedConnection, ResolvedMiroir
 from src.core.operations import MetadataStore
 
 FLOW_NAME = "sync-connection"
@@ -52,7 +52,7 @@ class DeploymentSpec:
 class PrefectOrchestrator:
     store: MetadataStore
     work_pool: str
-    # Path of the mirroir configuration where flow runs execute (worker or Job).
+    # Path of the miroir configuration where flow runs execute (worker or Job).
     config_path: str
     image: str | None = None
     # Extra job variables (e.g. `working_dir` for a process pool).
@@ -61,15 +61,15 @@ class PrefectOrchestrator:
     # ---- Deployments ------------------------------------------------------------
 
     def deployment_name(
-        self, mirroir: ResolvedMirroir, connection: ResolvedConnection
+        self, miroir: ResolvedMiroir, connection: ResolvedConnection
     ) -> str:
-        return f"{mirroir.id}-{connection.config.id}"
+        return f"{miroir.id}-{connection.config.id}"
 
-    def desired(self, mirroir: ResolvedMirroir) -> dict[str, DeploymentSpec]:
+    def desired(self, miroir: ResolvedMiroir) -> dict[str, DeploymentSpec]:
         specs = {}
-        for connection in mirroir.connections:
+        for connection in miroir.connections:
             schedule = connection.config.schedule
-            name = self.deployment_name(mirroir, connection)
+            name = self.deployment_name(miroir, connection)
             specs[name] = DeploymentSpec(
                 name=name,
                 connection_id=connection.config.id,
@@ -85,10 +85,10 @@ class PrefectOrchestrator:
             )
         return specs
 
-    def _tag(self, mirroir: ResolvedMirroir) -> str:
-        return f"mirroir:{mirroir.id}"
+    def _tag(self, miroir: ResolvedMiroir) -> str:
+        return f"miroir:{miroir.id}"
 
-    def actual(self, mirroir: ResolvedMirroir) -> dict[str, dict[str, Any]]:
+    def actual(self, miroir: ResolvedMiroir) -> dict[str, dict[str, Any]]:
         from prefect import get_client
         from prefect.client.schemas.filters import (
             DeploymentFilter,
@@ -102,7 +102,7 @@ class PrefectOrchestrator:
             deployments = client.read_deployments(
                 flow_filter=FlowFilter(name=FlowFilterName(any_=[FLOW_NAME])),
                 deployment_filter=DeploymentFilter(
-                    tags=DeploymentFilterTags(all_=[self._tag(mirroir)])
+                    tags=DeploymentFilterTags(all_=[self._tag(miroir)])
                 ),
             )
         result = {}
@@ -126,9 +126,9 @@ class PrefectOrchestrator:
             }
         return result
 
-    def plan(self, mirroir: ResolvedMirroir) -> list[dict[str, Any]]:
-        """Changes needed for Prefect to match the mirroir. Read-only."""
-        desired, actual = self.desired(mirroir), self.actual(mirroir)
+    def plan(self, miroir: ResolvedMiroir) -> list[dict[str, Any]]:
+        """Changes needed for Prefect to match the miroir. Read-only."""
+        desired, actual = self.desired(miroir), self.actual(miroir)
         changes: list[dict[str, Any]] = []
         for name, spec in sorted(desired.items()):
             want = spec.comparable()
@@ -151,14 +151,14 @@ class PrefectOrchestrator:
             )
         return changes
 
-    def apply(self, mirroir: ResolvedMirroir, changes: list[dict[str, Any]]) -> None:
+    def apply(self, miroir: ResolvedMiroir, changes: list[dict[str, Any]]) -> None:
         """Perform a plan. Create and update are the same upsert in Prefect."""
         from prefect import get_client
         from prefect.client.schemas.schedules import CronSchedule
 
-        from src.pipelines.mirroir import sync_connection
+        from src.pipelines.miroir import sync_connection
 
-        desired = self.desired(mirroir)
+        desired = self.desired(miroir)
         for change in changes:
             if change["action"] == "delete":
                 with get_client(sync_client=True) as client:
@@ -175,7 +175,7 @@ class PrefectOrchestrator:
                     work_pool_name=spec.work_pool,
                     job_variables=spec.job_variables,
                     concurrency_limit=1,  # Prefect queues overlapping runs of a connection
-                    tags=["mirroir", self._tag(mirroir)],
+                    tags=["miroir", self._tag(miroir)],
                 )
             )
             _sync(deployment.apply(work_pool_name=spec.work_pool, image=spec.image))
@@ -191,7 +191,7 @@ class PrefectOrchestrator:
         from prefect.deployments import run_deployment
 
         operation = self.store.get_operation(operation_id)
-        name = f"{FLOW_NAME}/{operation.mirroir_id}-{operation.connection_id}"
+        name = f"{FLOW_NAME}/{operation.miroir_id}-{operation.connection_id}"
         flow_run = _sync(
             run_deployment(
                 name,
@@ -206,7 +206,7 @@ class PrefectOrchestrator:
         )
         self.store.bind_backend_run(operation.id, str(flow_run.id))
 
-    def observe(self, mirroir: ResolvedMirroir) -> list[dict[str, Any]]:
+    def observe(self, miroir: ResolvedMiroir) -> list[dict[str, Any]]:
         """Close attempts whose flow run ended without recording an outcome."""
         from prefect import get_client
         from prefect.client.schemas.objects import StateType
@@ -214,7 +214,7 @@ class PrefectOrchestrator:
 
         closed = []
         with get_client(sync_client=True) as client:
-            for item in self.store.unverified(mirroir.id):
+            for item in self.store.unverified(miroir.id):
                 try:
                     run = client.read_flow_run(uuid.UUID(item["backend_run_id"]))
                     state = run.state.type if run.state else None

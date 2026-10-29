@@ -1,6 +1,6 @@
-# Mirroir development
+# Miroir development
 
-This is the implementation record for Mirroir. The current
+This is the implementation record for Miroir. The current
 slice is a read-only CLI and validated reference integrations. Production flows
 continue to use their existing entry points and deployment configuration.
 
@@ -8,20 +8,20 @@ continue to use their existing entry points and deployment configuration.
 - [Baseline and migration constraints](baseline.md)
 - [Design decisions](decisions.md)
 - [Implementation log and next steps](implementation-log.md)
-- [Synthetic example configuration](../../examples/mirroir.json)
+- [Synthetic example configuration](../../examples/miroir.json)
 
 ## Try the first slice
 
 From the repo root:
 
 ```bash
-uv run --locked pipelines-mirroir integrations
-uv run --locked pipelines-mirroir --config examples/mirroir.json validate
-uv run --locked pipelines-mirroir --config examples/mirroir.json connections
+uv run --locked pipelines-miroir integrations
+uv run --locked pipelines-miroir --config examples/miroir.json validate
+uv run --locked pipelines-miroir --config examples/miroir.json connections
 ```
 
 Output is JSON. Exit status is 0 for success and 2 for an invalid/unreadable
-configuration. The default path is `mirroir.json` in the current directory;
+configuration. The default path is `miroir.json` in the current directory;
 that root-level local file is gitignored. Pass `--config` before the subcommand.
 `integrations`, `validate`, and `connections` never fetch credentials, connect to
 services, start a pipeline, or write configuration. The Python module entry point
@@ -34,8 +34,8 @@ Apple Health XML support.
 ### Running a connection and reading its status
 
 ```bash
-uv run --locked pipelines-mirroir --config mirroir.json run music --duckdb /tmp/mirror.duckdb
-uv run --locked pipelines-mirroir --config mirroir.json status
+uv run --locked pipelines-miroir --config miroir.json run music --duckdb /tmp/mirror.duckdb
+uv run --locked pipelines-miroir --config miroir.json status
 ```
 
 `run` resolves the connection's credentials (`env` or `fnox`), loads into the given
@@ -52,18 +52,18 @@ many requested operations have not started. A `running` attempt is marked
 it from the orchestrator's state.
 
 Both commands use the metadata store at `--metadata` (a SQLAlchemy URL), defaulting
-to `$MIRROIR_METADATA_URL` or `sqlite:///.mirroir/metadata.sqlite` (gitignored).
+to `$MIROIR_METADATA_URL` or `sqlite:///.miroir/metadata.sqlite` (gitignored).
 
 ### Importing an export file
 
 ```bash
-uv run --locked pipelines-mirroir submit health ~/Downloads/export.json --role historical
-uv run --locked pipelines-mirroir import health <artifact-id> --duckdb /tmp/mirror.duckdb
-uv run --locked pipelines-mirroir artifacts health
+uv run --locked pipelines-miroir submit health ~/Downloads/export.json --role historical
+uv run --locked pipelines-miroir import health <artifact-id> --duckdb /tmp/mirror.duckdb
+uv run --locked pipelines-miroir artifacts health
 ```
 
 `submit` validates the file's format, copies it into artifact storage
-(`--artifacts`, default `$MIRROIR_ARTIFACT_DIR` or `.mirroir/artifacts`, named
+(`--artifacts`, default `$MIROIR_ARTIFACT_DIR` or `.miroir/artifacts`, named
 by SHA-256 and read-only), and registers it. It does not load anything. Invalid
 files are rejected before anything is stored. Submitting identical bytes again
 returns the existing artifact; submitting them with a different role is refused.
@@ -81,21 +81,21 @@ attempt, its parser version, and options.
 
 ### Credentials
 
-Connection secrets (decision 011) are stored encrypted by the mirroir under a
+Connection secrets (decision 011) are stored encrypted by the miroir under a
 master key that you provide:
 
 ```bash
-export MIRROIR_SECRET_KEY="$(uv run --locked pipelines-mirroir generate-key)"
+export MIROIR_SECRET_KEY="$(uv run --locked pipelines-miroir generate-key)"
 # Back this key up separately from the database: stored secrets need it.
 ```
 
 Add a connection in the web interface (**Add a connection**: settings plus
 credentials, then an automatic test), or from the CLI by editing the configuration
-with `{"provider": "mirroir"}` and storing the value:
+with `{"provider": "miroir"}` and storing the value:
 
 ```bash
-uv run --locked pipelines-mirroir set-credential music access_token   # prompts, or reads stdin
-uv run --locked pipelines-mirroir check music
+uv run --locked pipelines-miroir set-credential music access_token   # prompts, or reads stdin
+uv run --locked pipelines-miroir check music
 ```
 
 Credentials are write-only: no page, API response, log, or file shows them again.
@@ -105,8 +105,8 @@ passing check or a successful load. External references still work, for values
 managed elsewhere: `{"provider": "fnox", "key": "LISTENBRAINZ__ACCESS_TOKEN"}` or
 `{"provider": "env", "key": "..."}`.
 
-Key rotation: set `MIRROIR_SECRET_KEY="<new>,<old>"`, run
-`pipelines-mirroir rotate-secrets`, then drop the old key.
+Key rotation: set `MIROIR_SECRET_KEY="<new>,<old>"`, run
+`pipelines-miroir rotate-secrets`, then drop the old key.
 
 ### Schedules and the Prefect orchestrator
 
@@ -118,23 +118,23 @@ and `zoneinfo`:
 ```
 
 Prefect is the single orchestrator, on a cluster or on one machine (`prefect
-server` plus a process worker). The mirroir only reconciles with it; set
-`MIRROIR_PREFECT_POOL` to enable the integration:
+server` plus a process worker). The miroir only reconciles with it; set
+`MIROIR_PREFECT_POOL` to enable the integration:
 
 ```bash
-export MIRROIR_PREFECT_POOL=mirroir-k8s
+export MIROIR_PREFECT_POOL=miroir-k8s
 # Where flow runs find the configuration (worker or Job mount):
-export MIRROIR_PREFECT_CONFIG_PATH=/srv/pipelines/mirroir.json
+export MIROIR_PREFECT_CONFIG_PATH=/srv/pipelines/miroir.json
 # Optional, for image-based work pools:
-export MIRROIR_IMAGE=ghcr.io/h-wb/pipelines:abc
+export MIROIR_IMAGE=ghcr.io/h-wb/pipelines:abc
 
-uv run --locked pipelines-mirroir deployments plan
-uv run --locked pipelines-mirroir deployments apply
-uv run --locked pipelines-mirroir refresh
+uv run --locked pipelines-miroir deployments plan
+uv run --locked pipelines-miroir deployments apply
+uv run --locked pipelines-miroir refresh
 ```
 
 Each connection gets one deployment of `sync_connection`
-(`sync-connection/<mirroir>-<connection>`) with a concurrency limit of 1.
+(`sync-connection/<miroir>-<connection>`) with a concurrency limit of 1.
 `plan` reports creates, updates, and removals against what Prefect has — hand
 edits in Prefect show as drift; `apply` performs them. With the pool configured,
 `serve` submits requested syncs as Prefect flow runs (idempotent on the operation
@@ -144,42 +144,42 @@ without recording an outcome: crashed becomes `lost`, cancelled `cancelled`.
 On the cluster this is deployed (decisions 012, 015): the image
 `ghcr.io/h-wb/pipelines` is built in CI from `uv.lock` (Python 3.12, Prefect
 matching the server; `PIPELINES_CODE_REVISION` baked in), a Kubernetes work pool
-`mirroir-k8s` gives each flow run its own Job with the NFS data export mounted
-at `/mirroir/data` (configuration and artifacts live under
-`/mirroir/data/mirroir/`), and a dedicated worker runs it. Nothing secret lives
-in Prefect, and no database password is copied anywhere: the mirroir-k8s base
+`miroir-k8s` gives each flow run its own Job with the NFS data export mounted
+at `/miroir/data` (configuration and artifacts live under
+`/miroir/data/miroir/`), and a dedicated worker runs it. Nothing secret lives
+in Prefect, and no database password is copied anywhere: the miroir-k8s base
 job template in home-ops injects the warehouse credentials from the
 CNPG-generated `postgres-metabase-app` secret, and the metadata credentials from
-the `postgres-mirroir-app` secret of Mirroir's own CNPG cluster — the mirroir
+the `postgres-miroir-app` secret of Miroir's own CNPG cluster — the miroir
 composes its metadata URL from the
-`MIRROIR_METADATA__{HOST,PORT,DATABASE,USERNAME,PASSWORD}` parts
-(`MIRROIR_METADATA_URL` still wins when set). The only other value a flow run
-needs is the mirroir master key, in the `mirroir-secret` Secret — placed by hand
-for now, later owned by the Bitwarden `mirroir` ExternalSecret. Reconcile from
-a checkout of the repo (its gitignored `mirroir.json` must match the NFS copy):
+`MIROIR_METADATA__{HOST,PORT,DATABASE,USERNAME,PASSWORD}` parts
+(`MIROIR_METADATA_URL` still wins when set). The only other value a flow run
+needs is the miroir master key, in the `miroir-secret` Secret — placed by hand
+for now, later owned by the Bitwarden `miroir` ExternalSecret. Reconcile from
+a checkout of the repo (its gitignored `miroir.json` must match the NFS copy):
 
 ```bash
-mise run mirroir:deploy     # deployments apply (plan first to review drift)
-mise run mirroir:refresh    # close unverified runs
+mise run miroir:deploy     # deployments apply (plan first to review drift)
+mise run miroir:refresh    # close unverified runs
 ```
 
 The tasks get the metadata password from the ProtonPass item
-`env-dlt/mirroir/metadata-password` (the app-user password of the
-postgres-mirroir cluster — create the item from the cluster's
-`postgres-mirroir-app` secret after bootstrap); the other
-`MIRROIR_METADATA__*` parts are non-secret defaults in `mise.toml`.
+`env-dlt/miroir/metadata-password` (the app-user password of the
+postgres-miroir cluster — create the item from the cluster's
+`postgres-miroir-app` secret after bootstrap); the other
+`MIROIR_METADATA__*` parts are non-secret defaults in `mise.toml`.
 
 Installation secrets (the master key, Postgres roles, Prefect and Metabase
 credentials) are environment variables provided by whoever deploys. They are not
-stored by the mirroir.
+stored by the miroir.
 
 ### Web interface and HTTP API
 
 ```bash
-export MIRROIR_API_TOKEN="$(openssl rand -hex 24)"
-export MIRROIR_SECRET_KEY="$(uv run --locked pipelines-mirroir generate-key)"
-uv run --locked pipelines-mirroir --config mirroir.json serve --duckdb /tmp/mirror.duckdb
-# http://127.0.0.1:8765 — log in with the token. A missing mirroir.json is created empty.
+export MIROIR_API_TOKEN="$(openssl rand -hex 24)"
+export MIROIR_SECRET_KEY="$(uv run --locked pipelines-miroir generate-key)"
+uv run --locked pipelines-miroir --config miroir.json serve --duckdb /tmp/mirror.duckdb
+# http://127.0.0.1:8765 — log in with the token. A missing miroir.json is created empty.
 ```
 
 The interface lists connections with their last attempt, when data was last loaded,
@@ -194,11 +194,11 @@ Dashboard and Prefect run links appear when `links` and `dashboards` are configu
 "connections": [{"id": "health", "...": "...", "dashboards": {"Health": 24}}]
 ```
 
-Requests run as `pipelines-mirroir execute <operation>` subprocesses against
-the same local DuckDB file; with `MIRROIR_PREFECT_POOL` set they are submitted
+Requests run as `pipelines-miroir execute <operation>` subprocesses against
+the same local DuckDB file; with `MIROIR_PREFECT_POOL` set they are submitted
 as Prefect flow runs instead. Requests for one connection queue behind each other.
 
-The JSON API takes `Authorization: Bearer $MIRROIR_API_TOKEN`:
+The JSON API takes `Authorization: Bearer $MIROIR_API_TOKEN`:
 
 | Method and path | Purpose |
 | --- | --- |
@@ -211,23 +211,23 @@ The JSON API takes `Authorization: Bearer $MIRROIR_API_TOKEN`:
 | `POST /api/connections` | Add a connection: `{"integration", "id", "settings", "credentials"}`; returns the check result |
 | `PUT /api/connections/{id}/credentials/{name}` | Replace a credential: `{"value": "..."}` (204) |
 | `POST /api/connections/{id}/check`, `DELETE /api/connections/{id}` | Test or remove a connection |
-| `POST /api/refresh`, `GET /api/deployments/plan` | Reconcile with Prefect (needs `MIRROIR_PREFECT_POOL`) |
+| `POST /api/refresh`, `GET /api/deployments/plan` | Reconcile with Prefect (needs `MIROIR_PREFECT_POOL`) |
 
 The artifact endpoint is the replacement for the n8n receiver (decision 009):
 point Health Auto Export's REST automation at it with the bearer header.
 Uploads are capped at 512 MiB.
 
-The Prefect flow `src/pipelines/mirroir.py:sync_connection` uses the same runner
+The Prefect flow `src/pipelines/miroir.py:sync_connection` uses the same runner
 against Postgres and runs dbt. It is not in `prefect.yaml`; see decision 007.
 
-Configuration version 1 currently contains a mirroir ID and connections. Each
+Configuration version 1 currently contains a miroir ID and connections. Each
 connection has an integration, validated settings, credential references, and an
 optional explicit pipeline/dataset binding. Credentials are objects with `provider`
 (`env` or `fnox`) and a `key`; the corresponding resolver is future work. Inline
 credential fields and unknown settings are rejected. The configuration's content
 revision is a hash of normalized settings/references/bindings, not a deployed revision.
 
-Generated names distinguish accounts and mirroirs. Existing connections can be
+Generated names distinguish accounts and miroirs. Existing connections can be
 mapped explicitly, for example:
 
 ```json
@@ -239,7 +239,7 @@ mapped explicitly, for example:
 
 This only describes a binding. It does not adopt, reset, or modify any live state.
 The validator rejects duplicate connection IDs, pipeline names, and dataset names
-within a mirroir. The first design assumes one warehouse per mirroir.
+within a miroir. The first design assumes one warehouse per miroir.
 
 Schedules, source selection, destinations, machine-local overlays, and stored
 immutable revisions are deliberately absent from this initial schema. Unsupported fields fail validation rather than being ignored.
@@ -250,10 +250,10 @@ Add each through a documented schema change when its operation is implemented.
 Use a task-specific virtualenv so this does not change a shared worker environment:
 
 ```bash
-export UV_PROJECT_ENVIRONMENT="$(mktemp -d /tmp/mirroir-validation.XXXXXX)"
+export UV_PROJECT_ENVIRONMENT="$(mktemp -d /tmp/miroir-validation.XXXXXX)"
 uv sync --locked --python 3.12 --no-dev --group test
 RUNTIME__DLTHUB_TELEMETRY=false "$UV_PROJECT_ENVIRONMENT/bin/python" -m unittest discover -v
-"$UV_PROJECT_ENVIRONMENT/bin/pipelines-mirroir" --config examples/mirroir.json validate
+"$UV_PROJECT_ENVIRONMENT/bin/pipelines-miroir" --config examples/miroir.json validate
 ```
 
 The test group adds DuckDB for synthetic source compatibility checks. HTTP calls
@@ -272,9 +272,9 @@ artifact replay, or crash recovery of pending packages.
 For lint and type checks after `uv sync --locked --dev`:
 
 ```bash
-uv run --locked ruff check src/core src/integrations src/cli src/pipelines/mirroir.py tests
-uv run --locked ruff format --check src/core src/integrations src/cli src/pipelines/mirroir.py tests
-uv run --locked mypy --follow-imports=silent src/core src/integrations src/cli src/pipelines/mirroir.py
+uv run --locked ruff check src/core src/integrations src/cli src/pipelines/miroir.py tests
+uv run --locked ruff format --check src/core src/integrations src/cli src/pipelines/miroir.py tests
+uv run --locked mypy --follow-imports=silent src/core src/integrations src/cli src/pipelines/miroir.py
 ```
 
 ## How to continue this PR

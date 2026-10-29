@@ -27,7 +27,7 @@ dependencies = [
 ]
 
 [project.scripts]
-pipelines-mirroir = "src.cli.main:main"
+pipelines-miroir = "src.cli.main:main"
 
 [dependency-groups]
 test = [

@@ -25,22 +25,22 @@ from src.integrations.registry import INTEGRATIONS, IntegrationDefinition
 def metadata_url() -> str | None:
     """The metadata store's URL from the environment, or None if unset.
 
-    `MIRROIR_METADATA_URL` wins when set. Otherwise the URL is composed from
-    `MIRROIR_METADATA__{HOST,USERNAME,PASSWORD}` (required) and
-    `MIRROIR_METADATA__{PORT,DATABASE}` (default 5432 and the username), so a
+    `MIROIR_METADATA_URL` wins when set. Otherwise the URL is composed from
+    `MIROIR_METADATA__{HOST,USERNAME,PASSWORD}` (required) and
+    `MIROIR_METADATA__{PORT,DATABASE}` (default 5432 and the username), so a
     cluster can mount credentials it already manages — e.g. the CNPG
     application secret — as environment variables without copying the password
     into a secret store.
     """
-    if url := os.environ.get("MIRROIR_METADATA_URL"):
+    if url := os.environ.get("MIROIR_METADATA_URL"):
         return url
-    host = os.environ.get("MIRROIR_METADATA__HOST")
-    username = os.environ.get("MIRROIR_METADATA__USERNAME")
-    password = os.environ.get("MIRROIR_METADATA__PASSWORD")
+    host = os.environ.get("MIROIR_METADATA__HOST")
+    username = os.environ.get("MIROIR_METADATA__USERNAME")
+    password = os.environ.get("MIROIR_METADATA__PASSWORD")
     if not (host and username and password):
         return None
-    port = os.environ.get("MIRROIR_METADATA__PORT") or "5432"
-    database = os.environ.get("MIRROIR_METADATA__DATABASE") or username
+    port = os.environ.get("MIROIR_METADATA__PORT") or "5432"
+    database = os.environ.get("MIROIR_METADATA__DATABASE") or username
     return (
         f"postgresql://{quote_plus(username)}:{quote_plus(password)}"
         f"@{host}:{port}/{database}"
@@ -58,18 +58,18 @@ class ConfigurationConflict(ConfigurationError):
 class SecretReference(StrictModel):
     """Where a credential's value lives. Never the value itself.
 
-    `mirroir` secrets are stored encrypted by the mirroir and identified by
+    `miroir` secrets are stored encrypted by the miroir and identified by
     their connection and credential name, so they take no key. External
     providers (`env`, `fnox`) name the key they resolve.
     """
 
-    provider: Literal["mirroir", "env", "fnox"]
+    provider: Literal["miroir", "env", "fnox"]
     key: SecretKey | None = None
 
     @model_validator(mode="after")
     def key_matches_provider(self) -> "SecretReference":
-        if (self.provider == "mirroir") != (self.key is None):
-            raise ValueError("mirroir secrets take no key; env and fnox need one")
+        if (self.provider == "miroir") != (self.key is None):
+            raise ValueError("miroir secrets take no key; env and fnox need one")
         return self
 
 
@@ -129,7 +129,7 @@ class ConnectionConfig(StrictModel):
     ] = Field(default_factory=dict)
 
 
-class MirroirConfig(StrictModel):
+class MiroirConfig(StrictModel):
     schema_version: Literal[1]
     id: Identifier
     # Empty is valid: a new installation starts with no connections.
@@ -150,10 +150,10 @@ class ResolvedConnection:
     integration: IntegrationDefinition
     settings: StrictModel
     binding: Binding
-    # Hash of this connection's normalized configuration (with the mirroir ID).
+    # Hash of this connection's normalized configuration (with the miroir ID).
     # Operations record it, so editing one connection does not block another's.
     revision: str = ""
-    mirroir_id: str = ""
+    miroir_id: str = ""
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -168,7 +168,7 @@ class ResolvedConnection:
 
 
 @dataclass(frozen=True)
-class ResolvedMirroir:
+class ResolvedMiroir:
     id: str
     revision: str
     connections: tuple[ResolvedConnection, ...]
@@ -201,15 +201,15 @@ def _unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def parse_mirroir(text: str) -> ResolvedMirroir:
+def parse_miroir(text: str) -> ResolvedMiroir:
     try:
         raw = json.loads(text, object_pairs_hook=_unique_keys)
     except (ValueError, RecursionError) as error:
         raise ConfigurationError("Invalid JSON configuration") from error
     try:
-        config = MirroirConfig.model_validate(raw)
+        config = MiroirConfig.model_validate(raw)
     except ValidationError as error:
-        raise _validation_error(error, "mirroir") from error
+        raise _validation_error(error, "miroir") from error
 
     connections = []
     ids: set[str] = set()
@@ -228,7 +228,7 @@ def parse_mirroir(text: str) -> ResolvedMirroir:
             raise ConfigurationError(
                 f"{prefix}.credentials: incorrect credential names"
             )
-        # Length-prefix the mirroir ID so (a_b, c) and (a, b_c) cannot alias.
+        # Length-prefix the miroir ID so (a_b, c) and (a, b_c) cannot alias.
         name = f"ws_{len(config.id)}_{config.id}_{connection.id}"
         binding = connection.binding or Binding(pipeline_name=name, dataset_name=name)
         for value, seen, label in (
@@ -260,8 +260,8 @@ def parse_mirroir(text: str) -> ResolvedMirroir:
     connections = [
         replace(
             c,
-            revision=_hash({"mirroir": config.id, **entries[c.config.id]}),
-            mirroir_id=config.id,
+            revision=_hash({"miroir": config.id, **entries[c.config.id]}),
+            miroir_id=config.id,
         )
         for c in connections
     ]
@@ -270,7 +270,7 @@ def parse_mirroir(text: str) -> ResolvedMirroir:
         "id": config.id,
         "connections": [entries[key] for key in sorted(entries)],
     }
-    return ResolvedMirroir(
+    return ResolvedMiroir(
         config.id,
         _hash(normalized),
         tuple(connections),
@@ -283,22 +283,22 @@ def _hash(value: Any) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def load_mirroir(path: Path) -> ResolvedMirroir:
+def load_miroir(path: Path) -> ResolvedMiroir:
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
         raise ConfigurationError("Cannot read UTF-8 configuration file") from error
-    return parse_mirroir(text)
+    return parse_miroir(text)
 
 
-def save_mirroir(path: Path, text: str, expected_revision: str) -> ResolvedMirroir:
+def save_miroir(path: Path, text: str, expected_revision: str) -> ResolvedMiroir:
     """Replace the configuration file if it is still at `expected_revision`.
 
     The revision check and the write happen under one lock, and the new file is
     validated, flushed, and renamed into place, so a concurrent CLI or UI edit
     cannot be silently overwritten and readers never see a partial file.
     """
-    mirroir = parse_mirroir(text)
+    miroir = parse_miroir(text)
     with open(path.with_name(f".{path.name}.lock"), "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         if file_revision(path) != expected_revision:
@@ -316,7 +316,7 @@ def save_mirroir(path: Path, text: str, expected_revision: str) -> ResolvedMirro
             if os.path.exists(temporary):
                 os.unlink(temporary)
             raise
-    return mirroir
+    return miroir
 
 
 def file_revision(path: Path) -> str:
