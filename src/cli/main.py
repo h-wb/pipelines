@@ -126,7 +126,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "serve" and not args.config.exists():
         # A new installation starts with an empty miroir; connections are added
-        # through the interface.
+        # through the interface. The parent may not exist yet (e.g. a fresh
+        # NFS export mounted at a fixed path).
+        args.config.parent.mkdir(parents=True, exist_ok=True)
         args.config.write_text(
             json.dumps(
                 {"schema_version": 1, "id": "personal", "connections": []}, indent=2
