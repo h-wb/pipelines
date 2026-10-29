@@ -327,7 +327,7 @@ class MetadataUrlTests(unittest.TestCase):
         # Port and database default to the CNPG convention: 5432, db = username.
         self.assertEqual(
             metadata_url(),
-            "postgresql://metabase:p%40ss+word%2F2@postgres-rw.automation.svc:5432/metabase",
+            "postgresql+psycopg2://metabase:p%40ss+word%2F2@postgres-rw.automation.svc:5432/metabase",
         )
         os.environ.update(
             {
@@ -337,7 +337,7 @@ class MetadataUrlTests(unittest.TestCase):
         )
         self.assertEqual(
             metadata_url(),
-            "postgresql://metabase:p%40ss+word%2F2@postgres-rw.automation.svc:5433/other",
+            "postgresql+psycopg2://metabase:p%40ss+word%2F2@postgres-rw.automation.svc:5433/other",
         )
 
     def test_unconfigured_is_none(self):

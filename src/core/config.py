@@ -41,8 +41,10 @@ def metadata_url() -> str | None:
         return None
     port = os.environ.get("MIROIR_METADATA__PORT") or "5432"
     database = os.environ.get("MIROIR_METADATA__DATABASE") or username
+    # psycopg2 (the driver dlt already ships): SQLAlchemy's bare `postgresql://`
+    # resolves to psycopg 3, which is not installed.
     return (
-        f"postgresql://{quote_plus(username)}:{quote_plus(password)}"
+        f"postgresql+psycopg2://{quote_plus(username)}:{quote_plus(password)}"
         f"@{host}:{port}/{database}"
     )
 
