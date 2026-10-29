@@ -81,15 +81,17 @@ findings. Secrets for mise tasks come from ProtonPass via fnox
 ## Release and deploy cycle
 
 1. Commit to `main` and push (pipelines repo). CI builds the image (≈2 min).
-2. Pin the new `sha-<full-commit>` in home-ops (server + worker HelmRelease
-   images) — until the miroir.json `deployment` section carries the image, the
-   server's `MIROIR_IMAGE` env must match too. Push home-ops `main`.
+2. Set the new `sha-<full-commit>` in the live miroir.json `deployment.image`
+   and Apply deployments; then pin it in home-ops (server + worker HelmRelease
+   images) and push home-ops `main`. Execution settings now live in the config;
+   the server no longer carries pool/image/job-variable fallback pins.
 3. `flux -n flux-system reconcile source git flux-system`, then
    `flux -n automation reconcile kustomization <app> --with-source` (the
    kubeconfig: `kubernetes/clusters/main/kubeconfig` in home-ops; `kubectl`
    works read-only, `flux` reconcile and pod deletion are allowed).
-4. Long-term (decision 016): the image pin belongs in miroir.json's
-   `deployment` section — one config edit, applied from the UI.
+4. Verify server/worker readiness, a flow run using the same image, and an empty
+   deployments plan. Schema 4 was deployed with decision 017; schema 3 runtimes
+   cannot run against it.
 
 ## Working conventions
 
@@ -107,14 +109,11 @@ findings. Secrets for mise tasks come from ProtonPass via fnox
 
 ## Known remaining work (2026-10-29)
 
-- miroir.json on the NFS should gain the `deployment` section (work_pool
-  miroir-k8s, the current sha image, namespace job variables) — then drop the
-  env fallback pins from the server HelmRelease.
 - Add a schedule to the ListenBrainz connection (cron in config → Apply
   deployments). First sync already succeeded end to end.
 - Apple Health n8n cutover (decision 009): point Health Auto Export at
   `POST /api/connections/health/receive` with a connection-specific delivery token
-  after deploying decision 017. Folder-free setup and token management are built;
+  (decision 017 is deployed). Folder-free setup and token management are live;
   real phone delivery remains to verify. Metadata schema 4 requires updating the
   server, worker, and flow-run image together.
 - Legacy cutover: map the connection binding to `listenbrainz_data`

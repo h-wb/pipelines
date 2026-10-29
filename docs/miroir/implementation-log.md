@@ -527,3 +527,48 @@ the phone needs the home network or VPN. Apply the connection's deployment befor
 its first production import, verify receipts/imports, then perform decision 009's
 explicit n8n/legacy cutover. No live schedules, credentials, bindings, or n8n
 workflows were changed.
+
+## 2026-10-29 — Deployed file delivery and config-owned execution settings
+
+Released pipelines `78138ad82abf7a64ae2718e58de21f9c6c016e99` through the
+successful Image workflow; home-ops `26f1fcfc4d8468cae6ae02969b93dc48bf66a670`
+pins that SHA image for the server and Kubernetes worker. Both HelmReleases are
+ready after Flux reconciliation (miroir v9, prefect v51), and the new server
+started successfully with metadata schema 4.
+
+The live configuration now carries `deployment` with pool `miroir-k8s`, the
+release image, and namespace `automation` (decision 016). Saved through the API's
+revision check, then applied: the sole existing deployment's image was the only
+change, and the subsequent plan is empty. Removed the three environment fallback
+pins from the server HelmRelease. No schedules or existing dataset bindings changed.
+Private pre-release configuration, overview, and deployment-plan snapshots were
+kept outside Git. CNPG reported healthy replication/archiving and a successful
+backup before release; there were no Miroir runs in flight.
+
+Validation:
+
+- home-ops pre-commit formatting/safety checks, both Kustomize builds, and Helm
+  rendering against app-template 5.3.0 passed. Pushed main and reconciled the
+  Flux GitRepository plus the prefect and miroir Kustomizations.
+- A temporary file-only connection created through the live API passed its check
+  without a folder. Created a scoped delivery token; it was refused access to
+  configuration, accepted authentication at the receive endpoint, rejected invalid
+  export JSON without creating artifacts/operations, and stopped authenticating
+  after revocation. Removed the temporary connection; deployment drift is still
+  empty. No synthetic warehouse data was loaded.
+- A manual incremental ListenBrainz sync completed successfully in Prefect on a
+  Kubernetes Job using the release SHA image, with the attempt recorded in Miroir.
+  No new load IDs were produced on this repeat sync. Transformation was skipped
+  because the generated dataset is not `listenbrainz_data`; analysis correctly
+  remains `not_modelled`.
+- HTTPS `/healthz` returned 200 through envoy-internal with TLS verification. The
+  pod's DNS does not resolve the internal hostname, so this route check explicitly
+  resolved it to the gateway's address while preserving Host/SNI. Both workload
+  images and the connection's Prefect deployment match the release image.
+
+The deployment is complete. Real Health Auto Export delivery still requires a
+phone on the home network/VPN. Create the desired Health connection and delivery
+token, apply its deployment, and verify a real JSON export before the explicit
+n8n/legacy cutover. Existing n8n workflows and legacy schedules remain active.
+An application-only rollback to schema 3 is unsupported; retain schema-4-capable
+runtimes or restore the pre-migration database with a coordinated rollback.
