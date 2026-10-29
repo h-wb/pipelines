@@ -117,6 +117,17 @@ class Schedule(StrictModel):
         return value
 
 
+class AnalysisSettings(StrictModel):
+    """Interpretation for analysis, independent of source credentials/delivery."""
+
+    timezone: str = "UTC"
+
+    @field_validator("timezone")
+    @classmethod
+    def known_timezone(cls, value: str) -> str:
+        return Schedule.known_timezone(value)
+
+
 class ConnectionConfig(StrictModel):
     id: Identifier
     integration: Identifier
@@ -124,6 +135,7 @@ class ConnectionConfig(StrictModel):
     credentials: dict[str, SecretReference] = Field(default_factory=dict)
     binding: Binding | None = None
     schedule: Schedule | None = None
+    analysis: AnalysisSettings = Field(default_factory=AnalysisSettings)
     # Metabase dashboard name -> ID, shown as links next to the connection.
     dashboards: dict[
         Annotated[str, StringConstraints(min_length=1, max_length=100)],
@@ -278,6 +290,7 @@ def parse_miroir(text: str) -> ResolvedMiroir:
             "settings": c.settings.model_dump(),
             "credentials": {k: v.model_dump() for k, v in c.config.credentials.items()},
             "binding": c.binding.model_dump(),
+            "analysis": c.config.analysis.model_dump(),
         }
         for c in connections
     }

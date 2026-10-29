@@ -1,0 +1,28 @@
+{
+  "apple_health": {
+    "title": "Health",
+    "description": "Data imported into this Miroir connection. Blank values mean no imported measurement. Charts show the available history; the tables show recent imported records.",
+    "charts": [
+      {"name": "Steps per day", "display": "line", "query": "select day, steps from {health}.daily_summary order by day", "dimension": "day", "metrics": ["steps"]},
+      {"name": "Sleep per night (hours)", "display": "line", "query": "select day, sleep_h from {health}.daily_summary order by day", "dimension": "day", "metrics": ["sleep_h"]},
+      {"name": "Resting heart rate (bpm)", "display": "line", "query": "select day, resting_hr from {health}.daily_summary order by day", "dimension": "day", "metrics": ["resting_hr"]},
+      {"name": "Heart rate variability (ms)", "display": "line", "query": "select day, hrv_ms from {health}.daily_summary order by day", "dimension": "day", "metrics": ["hrv_ms"]},
+      {"name": "Active energy per day (kcal)", "display": "line", "query": "select day, active_kcal from {health}.daily_summary order by day", "dimension": "day", "metrics": ["active_kcal"]},
+      {"name": "Imported days", "display": "table", "query": "select min(day) as first_day, max(day) as latest_day, count(*) as days, count(steps) as days_with_steps, count(sleep_h) as days_with_sleep from {health}.daily_summary"},
+      {"name": "Recent daily summaries", "display": "table", "query": "select day, steps, active_kcal, sleep_h, resting_hr, hrv_ms from {health}.daily_summary order by day desc limit 30"},
+      {"name": "Recent workouts", "display": "table", "query": "select started_at, workout_type, duration_min, distance_km, avg_hr from {health}.workout_summary order by started_at desc limit 100"}
+    ]
+  },
+  "listenbrainz": {
+    "title": "Music",
+    "description": "Data imported into this Miroir connection. Dates and hours use the connection's analysis timezone. Charts show the available history; the tables show recent imported records.",
+    "charts": [
+      {"name": "Listens per day", "display": "line", "query": "select day, listens from {music}.daily order by day", "dimension": "day", "metrics": ["listens"]},
+      {"name": "New artists per day", "display": "line", "query": "select day, new_artists from {music}.daily order by day", "dimension": "day", "metrics": ["new_artists"]},
+      {"name": "Monthly favorites", "display": "table", "query": "select month, top_artist, top_track, listens from {music}.monthly_top order by month desc"},
+      {"name": "Most played artists", "display": "table", "query": "select artist, plays, tracks, first_listen, last_listen from {music}.artists order by plays desc limit 30"},
+      {"name": "Recent listening sessions", "display": "table", "query": "select started_at, tracks, minutes, top_artist from {music}.sessions order by started_at desc limit 100"},
+      {"name": "Recent listens", "display": "table", "query": "select started_at, artist, track, album, service from {music}.listens order by started_at desc limit 100"}
+    ]
+  }
+}

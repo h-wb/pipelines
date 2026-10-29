@@ -15,6 +15,7 @@ from typing import Any
 
 from sqlalchemy.exc import SQLAlchemyError
 
+from src.core.analysis import AnalysisPlan, analysis_plan
 from src.core.config import ResolvedConnection, ResolvedMiroir
 from src.core.operations import (
     ConnectionBusy,
@@ -23,7 +24,6 @@ from src.core.operations import (
     OperationError,
     Origin,
 )
-from src.integrations.registry import ModelBinding
 
 log = logging.getLogger(__name__)
 
@@ -106,14 +106,22 @@ def failure_kind(error: BaseException) -> str | None:
     return None
 
 
-def model_selector(connection: ResolvedConnection) -> tuple[str | None, str]:
-    """The dbt selector for this connection, or why models do not apply to it."""
-    models: ModelBinding | None = connection.integration.models
-    if models is None:
-        return None, "integration has no models"
-    if connection.binding.dataset_name != models.dataset_name:
-        return None, f"models read {models.dataset_name}, not this connection"
-    return f"source:{models.dbt_source}+", f"source:{models.dbt_source}+"
+def request_models(
+    miroir: ResolvedMiroir,
+    connection_id: str,
+    *,
+    store: MetadataStore,
+    origin: Origin,
+) -> Operation:
+    connection = _connection(miroir, connection_id)
+    if analysis_plan(connection) is None:
+        raise OperationError("This integration has no analysis models")
+    if (
+        store.connection_status(miroir.id, connection_id)["last_ingestion_success"]
+        is None
+    ):
+        raise OperationError("Import or sync data before rebuilding analysis")
+    return _new_operation(store, miroir, connection, origin, kind="models")
 
 
 def _new_operation(
@@ -208,7 +216,7 @@ def execute_operation(
     destination: Any,
     resolve_credentials: Callable[[ResolvedConnection], dict[str, str]],
     backend_run_id: str | None = None,
-    transform: Callable[[str], None] | None = None,
+    transform: Callable[[AnalysisPlan], None] | None = None,
     pipelines_dir: str | None = None,
     lock_wait: float = 0,
 ) -> RunOutcome:
@@ -236,11 +244,14 @@ def execute_operation(
         store.bind_backend_run(operation.id, backend_run_id)
 
     reason = None
-    make_source: Callable[[dict[str, str]], Any]
+    make_source: Callable[[dict[str, str]], Any] | None = None
     if operation.config_revision != connection.revision:
         reason = "Connection configuration changed since this operation was requested"
     elif operation.kind == "sync":
         make_source = lambda credentials: create_source(connection, credentials)
+    elif operation.kind == "models":
+        if analysis_plan(connection) is None:
+            reason = "This integration has no analysis models"
     else:
         artifact = store.get_artifact(miroir.id, str(operation.artifact_id))
         options = json.loads(operation.options or "{}")
@@ -337,16 +348,25 @@ def _run_locked(
     store: MetadataStore,
     operation_id: str,
     connection: ResolvedConnection,
-    make_source: Callable[[dict[str, str]], Any],
+    make_source: Callable[[dict[str, str]], Any] | None,
     destination: Any,
     resolve_credentials: Callable[[ResolvedConnection], dict[str, str]],
-    transform: Callable[[str], None] | None,
+    transform: Callable[[AnalysisPlan], None] | None,
     pipelines_dir: str | None,
     lock_wait: float = 0,
 ) -> RunOutcome:
     try:
         with store.connection_lock(connection.binding.pipeline_name, lock_wait):
-            attempt, number = store.start_attempt(operation_id, "running")
+            attempt, number = store.start_attempt(
+                operation_id, "not_run" if make_source is None else "running"
+            )
+            if make_source is None:
+                transformation, recorded = _transform(
+                    store, attempt, connection, transform, []
+                )
+                return RunOutcome(
+                    operation_id, number, "not_run", transformation, (), recorded
+                )
             return _execute(
                 store,
                 operation_id,
@@ -376,7 +396,7 @@ def _execute(
     make_source: Callable[[dict[str, str]], Any],
     destination: Any,
     resolve_credentials: Callable[[ResolvedConnection], dict[str, str]],
-    transform: Callable[[str], None] | None,
+    transform: Callable[[AnalysisPlan], None] | None,
     pipelines_dir: str | None,
 ) -> RunOutcome:
     import dlt
@@ -416,14 +436,41 @@ def _execute(
         log.exception("Load %s succeeded but could not be recorded", load_ids)
         recorded = False
 
-    selector, detail = model_selector(connection)
-    if selector is None:
+    transformation, models_recorded = _transform(
+        store, attempt, connection, transform, secrets
+    )
+    return RunOutcome(
+        operation_id,
+        number,
+        "succeeded",
+        transformation,
+        load_ids,
+        recorded and models_recorded,
+    )
+
+
+def _transform(
+    store: MetadataStore,
+    attempt: int,
+    connection: ResolvedConnection,
+    transform: Callable[[AnalysisPlan], None] | None,
+    secrets: list[str],
+) -> tuple[str, bool]:
+    plan = analysis_plan(connection)
+    detail = plan.receipt if plan else "integration has no models"
+    recorded = True
+    if plan is None:
         transformation = "skipped"
     elif transform is None:
         transformation, detail = "skipped", "no transform configured"
     else:
         try:
-            transform(selector)
+            store.update_attempt(attempt, transformation="running")
+        except SQLAlchemyError:
+            log.exception("Transformation start could not be recorded")
+            recorded = False
+        try:
+            transform(plan)
             transformation = "succeeded"
         except Exception as error:  # noqa: BLE001 - dbt must not fail the load
             transformation = "failed"
@@ -436,6 +483,4 @@ def _execute(
     except SQLAlchemyError:
         log.exception("Transformation outcome could not be recorded")
         recorded = False
-    return RunOutcome(
-        operation_id, number, "succeeded", transformation, load_ids, recorded
-    )
+    return transformation, recorded

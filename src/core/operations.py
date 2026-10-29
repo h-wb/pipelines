@@ -28,8 +28,19 @@ Origin = Literal["local", "request", "prefect", "webhook"]
 Role = Literal["historical", "ongoing"]
 # `lost` (the run crashed) and `cancelled` come from reconciling with the
 # orchestrator; they are kept apart from `failed`, which the runner recorded itself.
-Ingestion = Literal["running", "succeeded", "failed", "blocked", "lost", "cancelled"]
-Transformation = Literal["pending", "succeeded", "failed", "skipped", "not_run"]
+Ingestion = Literal[
+    "running", "succeeded", "failed", "blocked", "lost", "cancelled", "not_run"
+]
+Transformation = Literal[
+    "pending",
+    "running",
+    "succeeded",
+    "failed",
+    "skipped",
+    "not_run",
+    "lost",
+    "cancelled",
+]
 
 metadata = sa.MetaData()
 
@@ -308,7 +319,9 @@ class MetadataStore:
                     number=number,
                     started_at=_now(),
                     ingestion=ingestion,
-                    transformation="pending" if ingestion == "running" else "not_run",
+                    transformation="pending"
+                    if ingestion in ("running", "not_run")
+                    else "not_run",
                 )
             ).inserted_primary_key
         assert row is not None
@@ -364,6 +377,15 @@ class MetadataStore:
                 .select_from(joined)
                 .where(scope)
             ).scalar()
+            built = db.execute(
+                sa.select(
+                    operations.c.config_revision, attempts.c.transformation_detail
+                )
+                .select_from(joined)
+                .where(scope, attempts.c.transformed_at.is_not(None))
+                .order_by(attempts.c.transformed_at.desc(), attempts.c.id.desc())
+                .limit(1)
+            ).first()
             pending = db.execute(
                 sa.select(sa.func.count())
                 .select_from(operations.outerjoin(attempts))
@@ -381,12 +403,15 @@ class MetadataStore:
             last = _attempt(latest)
             last["origin"] = latest.origin
             last["backend_run_id"] = latest.backend_run_id
-            last["verified"] = last["ingestion"] != "running"
+            last["verified"] = last["ingestion"] != "running" and last[
+                "transformation"
+            ] not in ("pending", "running")
         return {
             "connection": connection_id,
             "last_attempt": last,
             "last_ingestion_success": _iso(ingested),
             "last_transformation_success": _iso(transformed),
+            "last_build": dict(built._mapping) if built is not None else None,
             "analysis": analysis,
             "requested_not_started": pending,
         }
@@ -654,7 +679,10 @@ class MetadataStore:
                 .select_from(attempts.join(operations))
                 .where(
                     operations.c.miroir_id == miroir_id,
-                    attempts.c.ingestion == "running",
+                    sa.or_(
+                        attempts.c.ingestion == "running",
+                        attempts.c.transformation.in_(("pending", "running")),
+                    ),
                     operations.c.backend_run_id.is_not(None),
                 )
             ).all()
@@ -691,17 +719,42 @@ class MetadataStore:
         attempt_id: int | None,
         outcome: Ingestion,
         message: str,
-    ) -> None:
+    ) -> bool:
         """Record what the orchestrator says happened to a run we never heard back from."""
         if attempt_id is None:
-            attempt_id, _ = self.start_attempt(operation_id, outcome)
-        self.update_attempt(
-            attempt_id,
-            ingestion=outcome,
-            transformation="not_run",
-            error_type="Orchestrator",
-            error_message=message,
-        )
+            with self.engine.connect() as db:
+                attempt_id = db.execute(
+                    sa.select(attempts.c.id)
+                    .where(attempts.c.operation_id == operation_id)
+                    .order_by(attempts.c.id.desc())
+                    .limit(1)
+                ).scalar()
+            if attempt_id is None:
+                kind = self.get_operation(operation_id).kind
+                attempt_id, _ = self.start_attempt(
+                    operation_id, "not_run" if kind == "models" else "running"
+                )
+        # Guard the write: a final outcome may have been recorded since observation.
+        # Preserve committed ingestion when only the model build was interrupted.
+        modelling = attempts.c.ingestion.in_(("succeeded", "not_run"))
+        with self.engine.begin() as db:
+            updated = db.execute(
+                attempts.update()
+                .where(
+                    attempts.c.id == attempt_id,
+                    sa.or_(
+                        attempts.c.ingestion == "running",
+                        attempts.c.transformation.in_(("pending", "running")),
+                    ),
+                )
+                .values(
+                    ingestion=sa.case((modelling, attempts.c.ingestion), else_=outcome),
+                    transformation=sa.case((modelling, outcome), else_="not_run"),
+                    error_type="Orchestrator",
+                    error_message=message,
+                )
+            ).rowcount
+        return updated == 1
 
     def register_artifact(self, **values: Any) -> tuple[dict[str, Any], bool]:
         """Record received bytes; returns (artifact, newly_registered).

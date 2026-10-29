@@ -34,6 +34,7 @@ ROLES = ("historical", "ongoing")
 # Fixed messages for redirects: nothing user-supplied is reflected from the URL.
 NOTICES = {
     "sync_requested": "Sync requested.",
+    "models_requested": "Analysis rebuild requested.",
     "import_requested": "Import requested.",
     "submitted": "File stored.",
     "duplicate": "This exact file was already stored; nothing new was saved.",
@@ -184,6 +185,10 @@ def create_app(
     def api_sync(connection_id: str) -> dict:
         return {"operation_id": service.request_sync(connection_id)}
 
+    @app.post("/api/connections/{connection_id}/models", status_code=202)
+    def api_models(connection_id: str) -> dict:
+        return {"operation_id": service.request_models(connection_id)}
+
     @app.post("/api/connections/{connection_id}/artifacts")
     async def api_upload(
         request: Request,
@@ -281,6 +286,16 @@ def create_app(
             connection_id, settings, request.headers.get("if-match", "").strip('"')
         )
         return {"saved": True, "check": service.check_connection(connection_id)}
+
+    @app.put("/api/connections/{connection_id}/analysis")
+    async def api_save_analysis_settings(request: Request, connection_id: str) -> dict:
+        settings = await request.json()
+        if not isinstance(settings, dict):
+            raise OperationError("Expected an analysis settings object")
+        service.update_analysis_settings(
+            connection_id, settings, request.headers.get("if-match", "").strip('"')
+        )
+        return {"saved": True}
 
     @app.post("/api/connections/{connection_id}/prepare")
     def api_prepare_connection(connection_id: str) -> dict:
@@ -404,6 +419,11 @@ def create_app(
         service.request_sync(connection_id)
         return back(connection_id, "sync_requested")
 
+    @app.post("/connections/{connection_id}/models")
+    def rebuild_models(connection_id: str) -> Response:
+        service.request_models(connection_id)
+        return back(connection_id, "models_requested")
+
     @app.post("/connections/{connection_id}/upload")
     async def upload(
         connection_id: str,
@@ -468,5 +488,12 @@ def _in_flight(status: dict) -> bool:
     """Refresh the page while something is requested or running."""
     last = status["last_attempt"]
     return bool(
-        status["requested_not_started"] or (last and last["ingestion"] == "running")
+        status["requested_not_started"]
+        or (
+            last
+            and (
+                last["ingestion"] == "running"
+                or last["transformation"] in ("pending", "running")
+            )
+        )
     )

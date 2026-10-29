@@ -528,3 +528,36 @@ existing tokens are not silently replaced by a retry or by viewing a page. First
 receipt and first successful import are separate evidence, and readiness to receive
 is never shown as proof that a phone is connected. One-time token responses stay
 uncacheable and never refresh automatically.
+
+## 019 — Analysis follows a connection's binding; source-local builds are independent
+
+Status: accepted, 2026-10-29.
+
+Real Health Auto Export delivery is verified. Its generated raw dataset must feed
+analysis without rebinding it to a legacy dataset. Integration metadata declares
+a source-local dbt selector and reporting relations. The core resolves a plan with
+the actual source binding, stable output namespace derived from miroir/connection
+identity, and analysis settings. The dbt adapter executes that plan; transports
+and the runner do not infer SQL dependencies.
+
+Health and music build their models and ancestors, never every descendant of a
+raw source. Existing crossover models require health, music, and bike-share data;
+they stay on the legacy path until those inputs can be explicitly bound together.
+A second account is never silently combined with the first. Legacy dbt invocations
+retain their source/output schemas. Miroir writes isolated schemas even when
+reading an explicit legacy raw binding, preserving existing dashboards.
+
+dlt infers columns/tables from received data. Staging projects typed nulls for
+absent optional fields and empty typed inputs for absent resources. Present tables
+missing required identity/time fields fail clearly. Missing metrics remain null;
+an absent input does not establish zero activity. Health keeps exported local
+dates; music uses the connection's analysis timezone (UTC by default).
+
+Successful imports/syncs rebuild source-local analysis. An explicit model rebuild
+runs under the same connection lock without loading data or resolving source
+credentials, with independent operation history. Freshness requires a successful
+build after the last load using the current configuration and analysis-plan version.
+Ingestion success survives model failure. Activity presents build status, output
+relations, rebuild, and configured Metabase links. Analysis settings stay separate
+from source settings. Dashboard packaging/reconciliation and explicit cross-source
+input selection remain subsequent work (product-plan milestone 6).

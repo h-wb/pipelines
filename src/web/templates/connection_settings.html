@@ -45,6 +45,17 @@
 {% if method.advanced %}</details>{% else %}</section>{% endif %}
 {% endfor %}
 
+{% if c.analysis %}
+<h2>Analysis settings</h2>
+<form class="stack" method="post" action="/connections/{{ c.id }}/analysis">
+  <input type="hidden" name="file_revision" value="{{ file_revision }}">
+  <label>Timezone <input name="timezone" value="{{ analysis_values.timezone }}" required></label>
+  <p class="muted">IANA timezone, for example America/Toronto or Europe/Paris. Used for music days and hours. Health keeps the local dates in your exports.</p>
+  <button>Save analysis settings</button>
+  <p class="muted">Rebuild analysis after saving to update existing results.</p>
+</form>
+{% endif %}
+
 <details class="setting-block"><summary>Remove connection</summary>
 <form method="post" action="/connections/{{ c.id }}/remove" class="stack">
   <p>Deletes configuration, source credentials, and the delivery token. Loaded data, files, and history are kept.</p>

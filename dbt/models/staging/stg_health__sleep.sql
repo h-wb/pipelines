@@ -1,6 +1,16 @@
 -- One row per night, keyed by the day the sleep ends.
 -- Before 2025 only time in bed was recorded; stages start in 2025.
-with nights as (
+with input as (
+    {{ optional_input('apple_health', 'metrics', {
+        'metric_name': 'text', 'date': 'text', 'total_sleep': 'double precision',
+        'in_bed__v_double': 'double precision', 'in_bed': 'double precision',
+        'deep__v_double': 'double precision', 'deep': 'double precision',
+        'rem__v_double': 'double precision', 'rem': 'double precision',
+        'core__v_double': 'double precision', 'core': 'double precision',
+        'awake__v_double': 'double precision', 'awake': 'double precision',
+        'sleep_start': 'text', 'in_bed_start': 'text', 'sleep_end': 'text', 'in_bed_end': 'text'
+    }, ['metric_name', 'date']) }}
+), nights as (
     select
         left(date, 10)::date as day,
         max(case when total_sleep > 0 then total_sleep else coalesce(in_bed__v_double, in_bed) end) as sleep_h,
@@ -10,7 +20,7 @@ with nights as (
         max(coalesce(awake__v_double, awake)) filter (where total_sleep > 0) as awake_h,
         max(coalesce(nullif(sleep_start, ''), in_bed_start)) as sleep_start,
         max(coalesce(nullif(sleep_end, ''), in_bed_end)) as sleep_end
-    from {{ source('apple_health', 'metrics') }}
+    from input
     where metric_name = 'sleep_analysis'
     group by 1
 )

@@ -178,6 +178,16 @@ class PrefectAdapterTests(unittest.TestCase):
         # The worker started this one and recorded a running attempt.
         self.store.start_attempt(running.id, "running")
 
+        modelling = request_sync(ws, "music", store=self.store, origin="request")
+        self.orchestrator.submit(modelling.id)
+        model_attempt, _ = self.store.start_attempt(modelling.id, "running")
+        # The load committed, but the process disappears before/during dbt.
+        self.store.update_attempt(model_attempt, ingestion="succeeded")
+
+        rebuilding = request_sync(ws, "music", store=self.store, origin="request")
+        self.orchestrator.submit(rebuilding.id)
+        self.store.start_attempt(rebuilding.id, "not_run")
+
         # Nothing has ended yet.
         self.assertEqual(self.orchestrator.observe(ws), [])
         with get_client(sync_client=True) as client:
@@ -192,14 +202,33 @@ class PrefectAdapterTests(unittest.TestCase):
                 Crashed(),
                 force=True,
             )
+            for operation in (modelling, rebuilding):
+                client.set_flow_run_state(
+                    uuid.UUID(self.store.get_operation(operation.id).backend_run_id),
+                    Crashed(),
+                    force=True,
+                )
         closed = {
             item["operation_id"]: item["outcome"]
             for item in self.orchestrator.observe(ws)
         }
         self.assertEqual(
-            closed, {crashed.id: "lost", cancelled.id: "cancelled", running.id: "lost"}
+            closed,
+            {
+                crashed.id: "lost",
+                cancelled.id: "cancelled",
+                running.id: "lost",
+                modelling.id: "lost",
+                rebuilding.id: "lost",
+            },
         )
         self.assertEqual(self.store.attempts(running.id)[0]["ingestion"], "lost")
+        self.assertEqual(self.store.attempts(modelling.id)[0]["ingestion"], "succeeded")
+        self.assertEqual(self.store.attempts(modelling.id)[0]["transformation"], "lost")
+        self.assertEqual(self.store.attempts(rebuilding.id)[0]["ingestion"], "not_run")
+        self.assertEqual(
+            self.store.attempts(rebuilding.id)[0]["transformation"], "lost"
+        )
         self.assertEqual(self.orchestrator.observe(ws), [])  # already closed
 
     def test_schedules_are_validated(self):

@@ -212,6 +212,26 @@ def connection_pages(service: MiroirService, page: Page) -> APIRouter:
         service.check_connection(connection_id)
         return back(connection_id, "saved")
 
+    @router.post("/connections/{connection_id}/analysis")
+    async def save_analysis(request: Request, connection_id: str) -> Response:
+        form = await request.form()
+        revision = str(form.get("file_revision", ""))
+        values = {"timezone": str(form.get("timezone", ""))}
+        try:
+            service.update_analysis_settings(connection_id, values, revision)
+        except (ConfigurationError, OperationError) as error:
+            view = service.connection_settings(connection_id)
+            view["analysis_values"].update(values)
+            view["file_revision"] = revision
+            response = page(
+                request, "connection_settings.html", **view, error=str(error)
+            )
+            response.status_code = (
+                409 if isinstance(error, ConfigurationConflict) else 400
+            )
+            return response
+        return back(connection_id, "saved")
+
     @router.post("/connections/{connection_id}/credentials/{name}")
     def set_credential(connection_id: str, name: str, value: str = Form()) -> Response:
         service.set_credential(connection_id, name, value)

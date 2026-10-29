@@ -16,7 +16,7 @@ from src.core.config import load_miroir, metadata_url
 from src.core.operations import MetadataStore
 from src.core.runner import run_connection
 from src.core.secrets import SecretBox, SecretStore, make_resolver
-from src.pipelines.transform import build_models
+from src.pipelines.transform import build_connection_models
 
 
 @flow
@@ -54,7 +54,7 @@ def sync_connection(
         origin="request" if operation_id else "prefect",
         operation_id=operation_id,
         backend_run_id=str(flow_run.id),
-        transform=build_models,
+        transform=build_connection_models,
         # Overlapping runs of one connection queue instead of failing.
         lock_wait=3600,
     )

@@ -231,6 +231,42 @@ Dashboard and Prefect run links appear when `links` and `dashboards` are configu
 "connections": [{"id": "health", "...": "...", "dashboards": {"Health": 24}}]
 ```
 
+Health and music analysis rebuild automatically after successful Postgres imports
+and syncs. Each connection reads its own bound raw dataset and writes separate
+`miroir_<connection>_<identity>_{staging,health,music}` schemas; **Model outputs**
+on Activity lists the exact reporting relations. Even an explicit legacy raw binding
+writes isolated model outputs. Existing `health.*`, `music.*`, and legacy dashboards
+are preserved. Point connection-specific Metabase questions at the listed output
+relations, then configure their dashboard links as above. Miroir does not yet
+create/reconcile dashboard assets on every installation.
+[`examples/analysis-dashboards.json`](../../examples/analysis-dashboards.json)
+provides source-local SQL/chart seeds with logical `{health}`/`{music}` schema
+placeholders. Resolve these against the listed output schema, create new questions
+and dashboards in Metabase, and retain their IDs in the connection's `dashboards`.
+The examples never reference this installation's backend IDs or overwrite assets.
+
+Health and music builds are independent: only their own models and ancestors are
+selected. Cross-source models remain on the legacy path until their health,
+music, and bike-share inputs can be explicitly linked. Missing optional columns
+and resources in small exports produce nulls/empty tables, rather than failing or
+substituting zero activity. Existing raw tables missing required identity/time
+fields fail clearly. Legacy dbt commands retain their original source schemas,
+output schemas, and column types.
+
+**Rebuild analysis** on Activity requests a model-only operation through the same
+executor/connection lock. It does not fetch source credentials, load rows, or change
+the last-ingestion time. Its result appears separately in history; model failure
+does not undo ingestion. Analysis is current only after a successful build after
+the latest load using the current configuration and analysis-plan version. The CLI
+equivalent is `pipelines-miroir --config miroir.json models <connection>` (Prefect
+deployment required). Local DuckDB execution keeps skipping Postgres models.
+
+**Analysis settings** contains an IANA timezone (UTC by default), stored as
+`"analysis": {"timezone": "America/Toronto"}` on the connection. It controls music
+days/hours. Health dates retain the exported local date. Save and rebuild to apply
+changes to already loaded data. Analysis settings are separate from source settings,
+delivery settings, credentials, and scheduling.
+
 Requests run as `pipelines-miroir execute <operation>` subprocesses against
 the same local DuckDB file; with `MIROIR_PREFECT_POOL` set they are submitted
 as Prefect flow runs instead. Requests for one connection queue behind each other.
@@ -241,6 +277,8 @@ The JSON API takes `Authorization: Bearer $MIROIR_API_TOKEN`:
 | --- | --- |
 | `GET /api/overview`, `GET /api/connections/{id}` | Status, history, files |
 | `POST /api/connections/{id}/sync` | Request a sync (202, operation ID) |
+| `POST /api/connections/{id}/models` | Request analysis rebuild without ingestion (202, operation ID); requires previously loaded data |
+| `PUT /api/connections/{id}/analysis` with `If-Match: <file_revision>` | Update analysis settings, e.g. `{"timezone": "America/Toronto"}` |
 | `POST /api/connections/{id}/artifacts?role=ongoing&import=true&name=…` | Store the raw request body as a file, optionally import it |
 | `POST /api/connections/{id}/artifacts/{artifact}/import?replay=false` | Request an import |
 | `POST /api/connections/{id}/delivery-token`, `DELETE /api/connections/{id}/delivery-token` | Create/replace (value shown once) or revoke a receive-only token; requires administrator auth |

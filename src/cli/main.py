@@ -102,6 +102,10 @@ def main(argv: list[str] | None = None) -> int:
     refresh = commands.add_parser(
         "refresh", help="Close runs Prefect reports as crashed or cancelled"
     )
+    models = commands.add_parser(
+        "models", help="Rebuild a connection's analysis in Prefect"
+    )
+    models.add_argument("connection")
     commands_with_store = (status, run, submit, load, listing, execute, serve)
     for command in (
         *commands_with_store,
@@ -110,6 +114,7 @@ def main(argv: list[str] | None = None) -> int:
         rotate,
         deployments,
         refresh,
+        models,
     ):
         command.add_argument(
             "--metadata",
@@ -196,7 +201,7 @@ def _operate(args: argparse.Namespace, miroir: Any) -> int:
             return _serve(args, miroir, store, secrets)
         if args.command in ("set-credential", "check", "rotate-secrets"):
             return _credentials(args, store, secrets)
-        if args.command in ("deployments", "refresh"):
+        if args.command in ("deployments", "refresh", "models"):
             return _orchestrate(args, miroir, store, secrets)
         return _with_store(args, miroir, store, ids, secrets)
     except SecretKeyError as error:
@@ -257,6 +262,8 @@ def _orchestrate(
     )
     if args.command == "refresh":
         return _print(service.refresh())
+    if args.command == "models":
+        return _print({"operation_id": service.request_models(args.connection)})
     if args.action == "plan":
         return _print(service.deployments_plan())
     return _print({"applied": service.deployments_apply()})
@@ -304,7 +311,12 @@ def _with_store(
     store.migrate()
     selected = [args.connection] if getattr(args, "connection", None) else ids
     if args.command == "status":
-        result = [store.connection_status(miroir.id, c) for c in selected]
+        from src.core.service import InlineExecutor, MiroirService
+
+        service = MiroirService(
+            args.config, store, Path(DEFAULT_ARTIFACTS), InlineExecutor(lambda _: None)
+        )
+        result = [service.connection(c)["status"] for c in selected]
         return _print(result)
     if args.command == "artifacts":
         result = [

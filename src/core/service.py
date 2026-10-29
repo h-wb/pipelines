@@ -126,14 +126,24 @@ class MiroirService:
         }
 
     def _summary(self, miroir: ResolvedMiroir, connection: ResolvedConnection) -> dict:
-        from src.core.runner import model_selector
+        from src.core.analysis import analysis_plan
 
         status = self.store.connection_status(miroir.id, connection.config.id)
-        selector, reason = model_selector(connection)
-        if selector is None and status["analysis"] != "no_data":
+        plan = analysis_plan(connection)
+        if plan is None and status["analysis"] != "no_data":
             # Loaded data no model reads is not "stale": nothing will ever build it.
             status["analysis"] = "not_modelled"
-            status["analysis_detail"] = reason
+            status["analysis_detail"] = "integration has no models"
+        elif plan is not None and status["analysis"] == "current":
+            built = status["last_build"] or {}
+            if (
+                built.get("config_revision") != connection.revision
+                or built.get("transformation_detail") != plan.receipt
+            ):
+                status["analysis"] = "stale"
+                status["analysis_detail"] = (
+                    "Rebuild analysis to apply the current settings and models"
+                )
         last = status["last_attempt"]
         if last is not None:
             last["run_url"] = self.run_link(miroir, last.get("backend_run_id"))
@@ -141,6 +151,7 @@ class MiroirService:
         return {
             **connection.summary(),
             "status": status,
+            "analysis": plan.summary() if plan else None,
             # Saved configuration vs the configuration its last execution used.
             "configuration": "never_run"
             if applied is None
@@ -328,6 +339,17 @@ class MiroirService:
         self.executor.submit(operation.id)
         return operation.id
 
+    def request_models(self, connection_id: str) -> str:
+        from src.core.runner import request_models
+
+        miroir = self.miroir()
+        self.prepare_connection(connection_id)
+        operation = request_models(
+            miroir, connection_id, store=self.store, origin="request"
+        )
+        self.executor.submit(operation.id)
+        return operation.id
+
     def configuration(self) -> dict[str, Any]:
         from src.core.config import ConfigurationError
 
@@ -397,6 +419,7 @@ class MiroirService:
             "connection": self.connection(connection_id),
             "integration": definition,
             "values": connection.settings.model_dump(mode="json"),
+            "analysis_values": connection.config.analysis.model_dump(mode="json"),
             "file_revision": revision,
         }
 
@@ -436,6 +459,23 @@ class MiroirService:
         target["settings"] = {
             key: value for key, value in updated.items() if value is not None
         }
+        self._write_config(raw, expected_revision)
+
+    def update_analysis_settings(
+        self, connection_id: str, settings: dict[str, Any], expected_revision: str
+    ) -> None:
+        from src.core.config import ConfigurationConflict
+
+        if not expected_revision:
+            raise OperationError("Reload settings before saving")
+        raw, revision = self._raw_config()
+        if revision != expected_revision:
+            raise ConfigurationConflict(
+                "Configuration changed; reload settings before saving"
+            )
+        self._connection(self.miroir(), connection_id)
+        target = next(c for c in raw["connections"] if c["id"] == connection_id)
+        target["analysis"] = {**target.get("analysis", {}), **settings}
         self._write_config(raw, expected_revision)
 
     def prepare_connection(self, connection_id: str) -> None:

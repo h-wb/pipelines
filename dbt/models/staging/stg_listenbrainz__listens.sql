@@ -1,3 +1,17 @@
+with input as (
+    {{ optional_input('listenbrainz', 'listens', {
+        '_dlt_id': 'text', 'listened_at': 'double precision',
+        'track_metadata__additional_info__duration_ms': 'double precision',
+        'track_metadata__additional_info__duration': 'double precision',
+        'track_metadata__artist_name': 'text', 'track_metadata__track_name': 'text',
+        'track_metadata__release_name': 'text',
+        'track_metadata__additional_info__submission_client': 'text',
+        'track_metadata__additional_info__music_service_name': 'text',
+        'track_metadata__additional_info__music_service': 'text',
+        'track_metadata__mbid_mapping__recording_mbid': 'text',
+        'track_metadata__mbid_mapping__caa_release_mbid': 'text'
+    }, ['_dlt_id', 'listened_at']) }}
+)
 select
     _dlt_id as listen_id,
     to_timestamp(listened_at) as started_at,
@@ -20,4 +34,4 @@ select
     end as service,
     track_metadata__mbid_mapping__recording_mbid as recording_mbid,
     track_metadata__mbid_mapping__caa_release_mbid as cover_release_mbid
-from {{ source('listenbrainz', 'listens') }}
+from input

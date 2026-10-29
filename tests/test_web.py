@@ -85,6 +85,70 @@ class WebFixture(unittest.TestCase):
 
 
 class WebTests(WebFixture):
+    def test_analysis_rebuild_and_settings_have_independent_history(self):
+        url = "/api/connections/health/models"
+        self.assertEqual(self.client.post(url, headers=BEARER).status_code, 400)
+        self.client.post(
+            "/api/connections/health/artifacts?role=ongoing&import=true",
+            content=json.dumps(export(("2026-06-05", 1))),
+            headers=BEARER,
+        )
+        loaded = self.service.connection("health")
+        ingested = loaded["status"]["last_ingestion_success"]
+        plans = []
+        self.service.executor = InlineExecutor(
+            lambda op: execute_operation(
+                load_miroir(self.config_path),
+                op,
+                store=self.store,
+                destination="unused",
+                resolve_credentials=lambda c: self.fail(
+                    "Rebuild tried to resolve source credentials"
+                ),
+                transform=plans.append,
+            )
+        )
+        self.assertEqual(self.client.post(url, headers=BEARER).status_code, 202)
+        detail = self.service.connection("health")
+        self.assertEqual(detail["status"]["analysis"], "current")
+        self.assertEqual(detail["operations"][0]["kind"], "models")
+        self.assertEqual(detail["status"]["last_ingestion_success"], ingested)
+        self.assertEqual(len(plans), 1)
+        config = self.client.get("/api/config", headers=BEARER).json()
+        revision = config["file_revision"]
+        response = self.client.put(
+            "/api/connections/health/analysis",
+            headers={**BEARER, "If-Match": revision},
+            json={"timezone": "America/Toronto"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            self.service.connection("health")["status"]["analysis"], "stale"
+        )
+        self.assertEqual(
+            self.client.put(
+                "/api/connections/health/analysis",
+                headers={**BEARER, "If-Match": revision},
+                json={"timezone": "UTC"},
+            ).status_code,
+            409,
+        )
+        original = json.loads(config["text"])
+        current = json.loads(self.config_path.read_text())
+        self.assertEqual(current["connections"][0], original["connections"][0])
+        self.assertEqual(
+            current["connections"][1]["settings"],
+            original["connections"][1]["settings"],
+        )
+        self.login()
+        page = self.client.get("/connections/health")
+        self.assertIn("Rebuild analysis", page.text)
+        self.assertIn("daily_summary", page.text)
+        self.assertIn("Open Health", page.text)
+        self.assertIn(
+            "Analysis settings", self.client.get("/connections/health/settings").text
+        )
+
     def test_everything_but_login_requires_the_token(self):
         self.assertEqual(self.client.get("/healthz").status_code, 200)
         self.assertEqual(self.client.get("/api/overview").status_code, 401)
@@ -129,8 +193,8 @@ class WebTests(WebFixture):
         detail = self.client.get("/api/connections/health", headers=BEARER).json()
         self.assertEqual(detail["status"]["last_attempt"]["ingestion"], "succeeded")
         self.assertEqual(detail["artifacts"][0]["original_name"], "auto.json")
-        # Generated dataset: dbt never reads it, which is not the same as stale.
-        self.assertEqual(detail["status"]["analysis"], "not_modelled")
+        # This local DuckDB executor has no Postgres/dbt transform configured.
+        self.assertEqual(detail["status"]["analysis"], "stale")
         self.assertEqual(detail["operations"][0]["artifact_name"], "auto.json")
         self.assertEqual(len(self.executed), 1)
 

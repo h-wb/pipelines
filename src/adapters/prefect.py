@@ -309,11 +309,12 @@ class PrefectOrchestrator:
                     outcome = "lost"
                 else:
                     continue  # scheduled, pending, running, paused: not ours to decide
-                self.store.close_unverified(
+                recorded = self.store.close_unverified(
                     item["operation_id"],
                     item["attempt_id"],
                     outcome,  # type: ignore[arg-type]
                     f"Prefect flow run ended as {label} without recording an outcome",
                 )
-                closed.append({**item, "outcome": outcome, "state": label})
+                if recorded:
+                    closed.append({**item, "outcome": outcome, "state": label})
         return closed

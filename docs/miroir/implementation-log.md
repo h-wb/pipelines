@@ -647,3 +647,57 @@ guessing or source-specific URL logic was added to the application.
 
 Real phone delivery and the n8n/legacy cutover remain separate; no live connection
 credentials, schedules, or dataset bindings were edited during this release.
+
+## 2026-10-29 — Connection-bound analysis after verified phone delivery (decision 019)
+
+The user verified real Health Auto Export delivery. The next slice connects those
+raw datasets to source-local analysis without moving their bindings into legacy
+schemas or requiring unrelated sources.
+
+Implemented:
+
+- `src/core/analysis.py` resolves registry model metadata into a versioned plan:
+  actual source schema, stable identity-derived output namespace, timezone,
+  source-local dbt selector, and reporting relations. Health/music select their
+  models and ancestors rather than all source descendants. Multiple accounts
+  have separate staging/reporting schemas; legacy commands keep their bindings,
+  schemas, inferred view types, and existing crossover builds.
+- dbt source schemas accept explicit per-run bindings; schema generation accepts
+  an isolated Miroir namespace. Miroir staging handles absent resources/optional
+  columns and numeric variant columns from evolving dlt schemas. Required fields
+  on present tables fail explicitly; unavailable metrics remain null. Each dbt
+  invocation uses a fresh parse and temporary target/log directories.
+- Successful loads invoke the resolved plan. Model-only operations use the same
+  executor and connection lock, resolve no source credentials, and leave ingestion
+  timestamps/load IDs unchanged. Added the API/UI rebuild action and Prefect CLI
+  `models` command. Attempts distinguish model running/failure/lost/cancellation
+  from ingestion. Observation preserves committed ingestion and conditionally
+  closes only still-active stages, protecting outcomes recorded during observation.
+- Freshness checks the successful build receipt/configuration as well as load/build
+  times. A changed timezone/configuration or plan version requires a rebuild.
+  CLI and web use the same projection. Activity shows analysis first, relevant
+  dashboard links, rebuild, and collapsed output-relation details. Analysis timezone
+  settings are revision-checked and separate from source/delivery settings.
+- Crossovers stay explicitly unavailable for Miroir until their health, music, and
+  bike-share inputs can be linked. Existing legacy schedules/triggers and Metabase
+  assets are preserved. Dashboard packaging/reconciliation is still later work.
+
+Validation:
+
+- Ruff lint/format and mypy passed for the whole maintained slice including
+  `src/pipelines/transform.py`.
+- The full unittest suite passed 99 tests, including the four real Prefect API
+  scenarios and three disposable Postgres/dbt scenarios. The latter exercise
+  automatic load/build with real Postgres metadata, two health accounts, explicit
+  raw binding, metrics-only exports, new sleep/workout columns, numeric variants,
+  sparse music, timezone-only rebuild without source access, absent resources,
+  required-column failure, and preservation of a sentinel legacy table. Set
+  `MIROIR_TEST_POSTGRES_BIN="$(mise where postgres@17.11)/bin"` to include them.
+- Live read-only inspection confirmed health currently has a metrics table and no
+  workouts table; its units match the existing domain models. Metabase's installed
+  OpenAPI and a read-only native query were checked before preparing new analysis
+  links. Release/runtime verification is recorded below after rollout.
+- Browser inspection with synthetic data confirmed the analysis card is visible
+  before uploads/files, shows current freshness and its dashboard/rebuild actions,
+  and keeps relation names collapsed. Added logical SQL dashboard examples under
+  `examples/analysis-dashboards.json`; they are seeds, not reconciled managed assets.

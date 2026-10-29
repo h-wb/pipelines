@@ -76,14 +76,13 @@ class ResourceDefinition:
 
 @dataclass(frozen=True)
 class ModelBinding:
-    """The dbt source that reads this integration, and the one schema it reads.
-
-    dbt source schemas are fixed in `dbt/models/staging/_sources.yml`, so models
-    only see a connection bound to exactly that dataset.
-    """
+    """Source-local analysis: select models and ancestors, never crossovers."""
 
     dbt_source: str
-    dataset_name: str
+    title: str
+    selector: str
+    group: str
+    relations: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -148,7 +147,21 @@ INTEGRATIONS = MappingProxyType(
                     "listens", ("listened_at", "recording_msid"), "listened_at"
                 ),
             ),
-            models=ModelBinding("listenbrainz", "listenbrainz_data"),
+            models=ModelBinding(
+                "listenbrainz",
+                "Music analysis",
+                "+path:models/music",
+                "music",
+                (
+                    "daily",
+                    "listens",
+                    "artists",
+                    "sessions",
+                    "monthly_top",
+                    "streaks",
+                    "on_repeat",
+                ),
+            ),
         ),
         "apple_health": IntegrationDefinition(
             name="apple_health",
@@ -191,7 +204,13 @@ INTEGRATIONS = MappingProxyType(
                 ResourceDefinition("state_of_mind", ("id",), None),
                 ResourceDefinition("medications", ("displayText", "start"), None),
             ),
-            models=ModelBinding("apple_health", "apple_health_data"),
+            models=ModelBinding(
+                "apple_health",
+                "Health analysis",
+                "+path:models/health",
+                "health",
+                ("daily_summary", "workout_summary"),
+            ),
         ),
     }
 )
