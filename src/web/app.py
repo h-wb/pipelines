@@ -42,6 +42,7 @@ NOTICES = {
     "credential_saved": "Credential saved.",
     "checked": "Connection checked; see the credentials status below.",
     "removed": "Connection removed. Its secrets were deleted; loaded data and files were kept.",
+    "applied": "Deployments applied: the configuration and Prefect now agree.",
 }
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -251,6 +252,15 @@ def create_app(
     @app.get("/api/deployments/plan")
     def api_deployments_plan() -> list:
         return service.deployments_plan()
+
+    @app.post("/api/deployments/apply")
+    def api_deployments_apply() -> list:
+        return service.deployments_apply()
+
+    @app.post("/deployments/apply")
+    def apply_deployments() -> Response:
+        service.deployments_apply()
+        return RedirectResponse("/?notice=applied", status_code=303)
 
     @app.get("/api/config")
     def api_config() -> dict:

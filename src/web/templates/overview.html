@@ -3,7 +3,7 @@
 {% block title %}Connections · {{ overview.miroir }}{% endblock %}
 {% block body %}
 <h1>Connections <span class="muted">{{ overview.miroir }}</span></h1>
-<p><a href="/connections/new">Add a connection</a></p>
+<p><a href="/connections/new">Add a connection</a> · <form method="post" action="/deployments/apply" style="display:inline"><button type="submit">Apply deployments</button></form></p>
 {% if not overview.connections %}
 <p class="muted">No connections yet. Add one to start mirroring your data.</p>
 {% else %}

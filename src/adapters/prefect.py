@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.core.config import ResolvedConnection, ResolvedMiroir
-from src.core.operations import MetadataStore
+from src.core.operations import MetadataStore, OperationError
 
 FLOW_NAME = "sync-connection"
 
@@ -188,22 +188,36 @@ class PrefectOrchestrator:
         The operation ID is the idempotency key: resubmitting after a timeout or
         crash returns the existing flow run instead of starting another.
         """
+        import httpx
         from prefect.deployments import run_deployment
+        from prefect.exceptions import ObjectNotFound
 
         operation = self.store.get_operation(operation_id)
         name = f"{FLOW_NAME}/{operation.miroir_id}-{operation.connection_id}"
-        flow_run = _sync(
-            run_deployment(
-                name,
-                parameters={
-                    "connection_id": operation.connection_id,
-                    "operation_id": operation.id,
-                    "config_path": self.config_path,
-                },
-                timeout=0,
-                idempotency_key=operation.id,
+        try:
+            flow_run = _sync(
+                run_deployment(
+                    name,
+                    parameters={
+                        "connection_id": operation.connection_id,
+                        "operation_id": operation.id,
+                        "config_path": self.config_path,
+                    },
+                    timeout=0,
+                    idempotency_key=operation.id,
+                )
             )
-        )
+        except ObjectNotFound as error:
+            raise OperationError(
+                f"Deployment {name} does not exist. Apply the deployments first"
+                " (Apply deployments in the interface, or `miroir:deploy`)."
+            ) from error
+        except httpx.HTTPStatusError as error:
+            raise OperationError(
+                "Prefect refused the request"
+                f" ({error.response.status_code}): check the server's Prefect"
+                " credentials."
+            ) from error
         self.store.bind_backend_run(operation.id, str(flow_run.id))
 
     def observe(self, miroir: ResolvedMiroir) -> list[dict[str, Any]]:
