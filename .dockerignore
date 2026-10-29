@@ -1,0 +1,11 @@
+# The build only COPYies pyproject.toml, uv.lock, src/, and dbt/; this keeps the
+# context small and states intent in one place.
+.git
+.github
+.venv
+.workspace
+**/__pycache__
+*.md
+docs
+examples
+tests

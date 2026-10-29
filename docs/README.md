@@ -3,6 +3,9 @@
 Personal data warehouse: every service I use, mirrored into one Postgres so it
 outlives the service's own retention and can be joined across sources.
 
+Workspace development: [implementation guide and decision log](workspace/README.md).
+Roadmap: [personal data workspace implementation plan](product-plan.md).
+
 ```
  source service ──(API / export / file drop)──▶ dlt source ──▶ Postgres  <source>_data   (raw)
                                                                    │

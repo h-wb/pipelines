@@ -27,6 +27,9 @@ class ListenBrainzPaginator(BasePaginator):
         request.params["min_ts"] = self._min_ts
 
     def update_state(self, response, data=None) -> None:
+        # Fail on HTTP errors (e.g. 401 for a revoked token) before reading the body,
+        # so the cause is an HTTPError rather than a KeyError on the error payload.
+        response.raise_for_status()
         listens = response.json()["payload"]["listens"]
         if len(listens) < PAGE_SIZE:
             self._has_next_page = False

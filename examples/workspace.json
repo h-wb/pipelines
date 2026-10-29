@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "personal",
+  "connections": [
+    {
+      "id": "music",
+      "integration": "listenbrainz",
+      "settings": {
+        "username": "example_user",
+        "start_date": "2020-01-01T00:00:00Z"
+      },
+      "credentials": {
+        "access_token": {"provider": "fnox", "key": "LISTENBRAINZ__ACCESS_TOKEN"}
+      }
+    },
+    {
+      "id": "health",
+      "integration": "apple_health",
+      "settings": {"data_dir": "/data/health", "cutoff": "2026-06-04"}
+    }
+  ]
+}

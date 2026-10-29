@@ -67,6 +67,29 @@ secrets = [
 ]
 run = "prefect deploy --all --prefect-file prefect.yaml"
 
+# Workspace reconciliation with the cluster's Prefect (decision 013). The local
+# workspace.json must match the copy on the NFS export; flow runs read the
+# cluster path (WORKSPACE_PREFECT_CONFIG_PATH), not this file.
+[tasks."workspace:deploy"]
+description = "Reconcile Prefect deployments with workspace.json (see plan first)"
+secrets = [
+  "PREFECT_API_URL",
+  "PREFECT_API_AUTH_STRING",
+  "WORKSPACE_METADATA_URL",
+]
+env = { WORKSPACE_PREFECT_POOL = "workspace-k8s", WORKSPACE_PREFECT_CONFIG_PATH = "/workspace/data/workspace/workspace.json", WORKSPACE_IMAGE = "ghcr.io/h-wb/pipelines:latest", WORKSPACE_PREFECT_JOB_VARIABLES = '{"namespace":"automation"}' }
+run = "pipelines-workspace --config workspace.json deployments apply"
+
+[tasks."workspace:refresh"]
+description = "Close unverified runs from Prefect's state (crash -> lost, cancel -> cancelled)"
+secrets = [
+  "PREFECT_API_URL",
+  "PREFECT_API_AUTH_STRING",
+  "WORKSPACE_METADATA_URL",
+]
+env = { WORKSPACE_PREFECT_POOL = "workspace-k8s" }
+run = "pipelines-workspace --config workspace.json refresh"
+
 [tasks.prefect]
 description = "Run the prefect CLI with secrets (e.g. mise run prefect -- deployment ls)"
 secrets = ["PREFECT_API_URL", "PREFECT_API_AUTH_STRING"]

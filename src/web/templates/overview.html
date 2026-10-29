@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge, when %}
+{% block title %}Connections · {{ overview.workspace }}{% endblock %}
+{% block body %}
+<h1>Connections <span class="muted">{{ overview.workspace }}</span></h1>
+<p><a href="/connections/new">Add a connection</a></p>
+{% if not overview.connections %}
+<p class="muted">No connections yet. Add one to start mirroring your data.</p>
+{% else %}
+<table>
+  <tr><th>Connection</th><th>Credentials</th><th>Last attempt</th><th>Data loaded</th><th>Analysis</th><th>Configuration</th><th>Open</th></tr>
+  {% for c in overview.connections %}
+  {% set s = c.status %}
+  <tr>
+    <td><a href="/connections/{{ c.id }}"><strong>{{ c.id }}</strong></a><div class="muted">{{ c.integration }}</div></td>
+    <td>{% if c.credentials %}{{ badge(c.credential_status.state) }}{% if c.credentials | rejectattr("provider", "ne", "workspace") | rejectattr("set") | list %}<div class="failed">not set</div>{% endif %}{% else %}<span class="muted">none needed</span>{% endif %}</td>
+    <td>
+      {% if s.last_attempt %}{{ badge(s.last_attempt.ingestion) }}{% if not s.last_attempt.verified %} <span class="muted">unverified</span>{% endif %}
+      <div class="muted">{{ when(s.last_attempt.started_at) }}</div>{% else %}<span class="muted">never run</span>{% endif %}
+      {% if s.requested_not_started %}<div>{{ badge("requested") }} {{ s.requested_not_started }}</div>{% endif %}
+    </td>
+    <td>{{ when(s.last_ingestion_success) }}</td>
+    <td>{{ badge(s.analysis) }}<div class="muted">models {{ when(s.last_transformation_success) }}</div></td>
+    <td>{{ badge(c.configuration) }}</td>
+    <td>
+      {% for d in c.dashboards %}<a href="{{ d.url }}" target="_blank" rel="noopener">{{ d.name }}</a><br>{% endfor %}
+      {% if s.last_attempt and s.last_attempt.run_url %}<a href="{{ s.last_attempt.run_url }}" target="_blank" rel="noopener">Prefect run</a>{% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+<p class="muted">“Stale” means data was loaded after the models were last built. “Not modelled” means
+the dbt models do not read this connection’s dataset. “Unverified” running attempts have not been checked against Prefect.</p>
+{% endblock %}
