@@ -569,3 +569,45 @@ loads build the analysis plan resolved when they execute. Model-only operations
 never mark changed source settings as applied. A failed/interrupted build makes
 analysis stale even without a newer load, because dbt may have replaced only some
 relations before failing.
+
+## 020 — Migrate connectors through explicit capabilities and owned lifecycle hooks
+
+Status: accepted, 2026-10-29. Extends 003, 017–019 for milestone 5.
+
+The API/file/reference workflow is verified end to end. GitHub, Bike Share Toronto,
+ and Firefox/Zen snapshots now exercise the contracts before analysis packaging.
+Each integration module owns typed source settings, credentials, checks, resource
+semantics, delivery metadata, and lazy execution hooks. The bundled registry only
+collects definitions. Shared runners/transports dispatch through those hooks;
+there are no integration-name/settings-type branches in product services.
+
+File-format definitions own validation, parser version, import options, and the
+artifact opener. Delivery produces an artifact; parsers consume that exact artifact.
+Execution opens sources in a context so temporary SQLite copies and resources are
+closed after success or failure. Browser snapshots merge profile-local identities
+into a connection's namespace; artifact imports read all snapshot rows, including
+older history, instead of applying a folder scanner's cursor. Gzip and plain SQLite
+are two encodings of the supported Firefox Places snapshot format, not arbitrary
+browser databases. Validation is bounded and SQLite is opened read-only.
+
+Connections may select declared resources; unselected resources keep their stored
+state/data. Resource declarations distinguish retained events, entities, and snapshots.
+No destructive replacement or upstream-deletion propagation is implied. GitHub API
+access checks that the token's account matches the configured login. Legacy GitHub
+export seeding (including bundled Git repositories and truncate/reseed behavior)
+stays an explicit legacy operation; ordinary sync never invokes it. Bike Share's new
+adapter uses merge/pagination with explicit TLS settings; existing entry points
+retain their bindings and compatibility defaults.
+
+Source-local dbt definitions belong in an independent analysis catalog. Integrations
+recommend an analysis by logical ID; the catalog owns selectors, versions, outputs,
+and typed analysis parameters. GitHub author-email matching is an analysis setting,
+not an ingestion credential or a process-global environment override. Existing
+health/music output identities and source revisions are preserved. Migrated models
+accept actual raw bindings and absent optional resources/fields; unknown data is
+not silently presented as measured zero. Cross-source packages remain a later slice.
+
+Validation uses isolated destinations and actual source/model executions. Production
+cutover remains separate: inventory mappings, drain writers, preserve state/backups,
+compare existing history, then change schedules/triggers. Adding a definition or
+binding alone never adopts a legacy deployment, resets its cursor, or disables it.

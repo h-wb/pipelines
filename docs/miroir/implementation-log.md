@@ -747,3 +747,71 @@ not silently executed/cancelled during this work. Submission recovery/cancellati
 needs a separate treatment rather than treating absence of a backend ID as proof
 that an ambiguous submission failed. Operator credentials used for release were
 kept outside the repository and removed from temporary files after verification.
+
+## 2026-10-29 — Connector migration: GitHub, Bike Share, browser history (decision 020)
+
+Started by Codex (design, decision 020, connector packages, new sources) and
+finished in a follow-up session after Codex hit its usage limit mid-test-update.
+
+### What changed
+
+- **Connector packages.** `src/integrations/<name>/` (listenbrainz, apple_health,
+  github, bikeshare, browser_history) each own settings, credentials, check,
+  resource declarations (`record_kind`: event/entity/snapshot; history retained),
+  delivery metadata, an optional `FileInput` (validator, parser version, import
+  options, artifact opener), and lazy `open_sync` hooks. `contracts.py` holds the
+  dataclasses; `registry.py` only lists definitions; `formats.py` derives
+  validators/parser versions from them. No integration-name or settings-type
+  branches remain in `sources.py`/`runner.py`.
+- **Sources are context managers.** `open_source`/`open_artifact_source` yield a
+  dlt source and close sessions/temporary SQLite copies after success or failure;
+  the runner runs the pipeline inside that scope. A connection's `resources`
+  selection is applied with `with_resources`.
+- **New sources, legacy untouched.** The new GitHub (API only; the token's account
+  must match the configured login; no export seeding), Bike Share (merge,
+  repeated-page detection, explicit `verify_tls`), and browser (read-only,
+  size-bounded Firefox Places snapshot, plain or gzip; artifact imports read all
+  rows) sources live in their packages. `src/sources/*` and the old flows are
+  unchanged and remain the legacy path.
+- **Analysis catalog.** `src/analyses/catalog.py` owns selectors, relations,
+  versions, and typed parameters (`AnalysisDefinition.bind` maps validated
+  parameters to dbt variables). Integrations name an analysis. GitHub identity is
+  `github_login` (from the connection) and `github_author_emails` (analysis
+  parameter, normalized), no longer a process environment override. Config
+  validates `analysis.parameters` against the analysis and `resources` against
+  the declarations.
+- **dbt.** Every raw input of the GitHub, Bike Share, and browser staging models
+  (and the two GitHub reporting models that read raw tables) now goes through
+  `optional_input`: absent tables are empty and absent optional columns are null,
+  so a new connection (no `export_*`, no `moz_places_metadata`, unselected
+  resources) builds. Legacy builds still compile to `select *`. Source schemas
+  take `miroir_sources` bindings. `github_my_emails()` prefers the analysis
+  variable and falls back to `GITHUB__AUTHOR_EMAILS` for legacy builds, escaping
+  quotes. `is_mine` on commits is now false (not null) when no identity matches.
+- **Delivery roles and names.** `FileDelivery.roles` is enforced in
+  `submit_artifact` (browser snapshots are `ongoing` only); the upload form shows
+  only declared roles; automatic delivery names artifacts with the connector's
+  `automatic_filename`.
+
+### Validation
+
+- Lint, format, and mypy clean on the slice (now including `src/analyses`).
+- 110 tests pass (`MIROIR_TEST_POSTGRES_BIN` set; without it the dbt class errors
+  in `setUpClass`). New: `tests/test_connectors.py` (catalog coverage, resource
+  selection validation and application, analysis parameter validation and
+  normalization, GitHub account mismatch check, Places snapshot validation, and
+  browser role enforcement). Also in `test_analysis.py` on real Postgres: all
+  three new analyses build from absent inputs; GitHub identity comes from the
+  connection and analysis parameters; a browser snapshot import without
+  interaction tables builds visits/domains.
+- Read-only `information_schema` query of the warehouse's legacy raw schemas
+  confirmed the column types declared in the staging models.
+
+### Not done
+
+- No release or deploy; no connections created on the cluster. Production cutover
+  stays separate per decision 020 (inventory, drain writers, compare history,
+  then switch schedules). Legacy GitHub export seeding remains a legacy operation.
+- Web resource selection UI and analysis-parameter forms are not built; both are
+  configuration-only for now.
+- Cross-source packages (crossovers, `int_rides`) remain on the legacy path.

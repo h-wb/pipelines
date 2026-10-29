@@ -408,3 +408,106 @@ class DbtPostgresTests(unittest.TestCase):
         self.assertEqual(
             service.connection("music_models")["status"]["analysis"], "stale"
         )
+
+    def migrated(self):
+        secret = {"provider": "env", "key": "UNUSED"}
+        return [
+            {
+                "id": "code",
+                "integration": "github",
+                "settings": {"username": "octo-cat"},
+                "credentials": {"access_token": secret},
+                "analysis": {"parameters": {"author_emails": ["Me@Example.org"]}},
+            },
+            {
+                "id": "rides",
+                "integration": "bikeshare",
+                "settings": {},
+                "credentials": {"member_id": secret, "authorization_token": secret},
+            },
+            {"id": "browsing", "integration": "browser_history", "settings": {}},
+        ]
+
+    def test_migrated_analyses_build_from_absent_inputs(self):
+        connections = self.migrated()
+        for connection in connections:  # own namespaces; the database is shared
+            connection["id"] += "_empty"
+        for connection in self.configuration(connections).connections:
+            plan = analysis_plan(connection)
+            build_connection_models(plan)
+            for relation in plan.relations:
+                self.assertEqual(
+                    self.query(f"select count(*) from {relation}"), [(0,)], relation
+                )
+
+    def test_github_identity_comes_from_the_connection_and_analysis(self):
+        github = self.migrated()[0]
+        github["id"] = "code_identity"  # its own namespace; the database is shared
+        connection = self.configuration([github]).connections[0]
+        raw = connection.binding.dataset_name
+        self.query(
+            f"create schema {raw}; create table {raw}.commits "
+            "(html_url text, sha text, commit__author__email text, "
+            "commit__author__date timestamptz)"
+        )
+        self.query(
+            f"insert into {raw}.commits values "
+            "('https://github.com/octo-cat/r/commit/a', 'a', 'me@example.org', now()), "
+            "('https://github.com/octo-cat/r/commit/b', 'b', 'o''brien@x.org', now())"
+        )
+        plan = analysis_plan(connection)
+        build_connection_models(plan)
+        commits = plan.relations[0]
+        self.assertEqual(
+            self.query(
+                f"select sha, is_mine, is_external_repo from {commits} order by sha"
+            ),
+            [("a", True, False), ("b", False, False)],
+        )
+
+    def test_browser_snapshot_import_builds_without_interaction_tables(self):
+        import gzip
+        import sqlite3
+
+        miroir = self.configuration(self.migrated())
+        places = self.root / "places.sqlite"
+        with closing(sqlite3.connect(places)) as db, db:
+            db.executescript(
+                "create table moz_origins (id integer primary key, host text);"
+                "create table moz_places (id integer primary key, url text, "
+                "title text, origin_id integer, last_visit_date integer);"
+                "create table moz_historyvisits (id integer primary key, "
+                "place_id integer, visit_date integer, from_visit integer, "
+                "visit_type integer, source integer);"
+                "insert into moz_origins values (1, 'www.example.org');"
+                "insert into moz_places values (1, 'https://www.example.org/', "
+                "'Example', 1, 1761700000000000);"
+                "insert into moz_historyvisits values "
+                "(1, 1, 1761700000000000, 0, 1, 0), (2, 1, 1761700100000000, 1, 9, 0);"
+            )
+        snapshot = self.root / "places.sqlite.gz"
+        snapshot.write_bytes(gzip.compress(places.read_bytes()))
+        connection = miroir.connections[2]
+        artifact, _ = submit_artifact(
+            miroir,
+            connection,
+            snapshot,
+            "ongoing",
+            store=self.store,
+            root=self.root / "artifacts",
+        )
+        outcome = import_artifact(
+            miroir, "browsing", artifact["id"], origin="local", **self.execution
+        )
+        self.assertEqual(outcome.transformation, "succeeded")
+        visits, daily = analysis_plan(connection).relations
+        self.assertEqual(
+            self.query(
+                f"select visit_type, is_navigation from {visits} order by visit_id"
+            ),
+            [("link", True), ("reload", False)],
+        )
+        self.assertEqual(
+            self.query(f"select domain, visits, view_minutes from {daily}"),
+            [("example.org", 1, 0)],
+        )

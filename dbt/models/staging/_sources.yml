@@ -12,14 +12,14 @@ sources:
     tables:
       - name: listens
   - name: bikeshare
-    schema: bikeshare_data
+    schema: "{{ var('miroir_sources', {}).get('bikeshare', 'bikeshare_data') }}"
     tables:
       - name: trips
       - name: trips__start_location
       - name: trips__end_location
   # GitHub, raw (load_github). export_* = one-shot seed from the account-data export
   - name: github
-    schema: github_data
+    schema: "{{ var('miroir_sources', {}).get('github', 'github_data') }}"
     tables:
       - name: repos
       - name: contributions_daily
@@ -38,7 +38,7 @@ sources:
       - name: export_bots
   # Zen (Firefox) history, raw moz_* tables from the places.sqlite snapshot (load_browser_history)
   - name: browser_history
-    schema: browser_history_data
+    schema: "{{ var('miroir_sources', {}).get('browser_history', 'browser_history_data') }}"
     tables:
       - name: zen_places
       - name: zen_historyvisits

@@ -248,9 +248,13 @@ class MiroirService:
         from src.core.runner import AlreadyImported
 
         miroir = self.miroir()
+        connection = self._connection(miroir, connection_id)
+        delivery = connection.integration.file_delivery
+        if original_name is None and delivery is not None:
+            original_name = delivery.automatic_filename
         artifact, created = submit_artifact(
             miroir,
-            self._connection(miroir, connection_id),
+            connection,
             path,
             role,
             store=self.store,

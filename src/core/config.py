@@ -19,7 +19,8 @@ from pydantic import (
 )
 
 from src.core.models import DatabaseIdentifier, Identifier, SecretKey, StrictModel
-from src.integrations.registry import INTEGRATIONS, IntegrationDefinition
+from src.integrations.contracts import IntegrationDefinition
+from src.integrations.registry import INTEGRATIONS
 
 
 def metadata_url() -> str | None:
@@ -121,6 +122,7 @@ class AnalysisSettings(StrictModel):
     """Interpretation for analysis, independent of source credentials/delivery."""
 
     timezone: str = "UTC"
+    parameters: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("timezone")
     @classmethod
@@ -134,6 +136,7 @@ class ConnectionConfig(StrictModel):
     settings: dict[str, Any]
     credentials: dict[str, SecretReference] = Field(default_factory=dict)
     binding: Binding | None = None
+    resources: list[Identifier] | None = None
     schedule: Schedule | None = None
     analysis: AnalysisSettings = Field(default_factory=AnalysisSettings)
     # Metabase dashboard name -> ID, shown as links next to the connection.
@@ -195,7 +198,13 @@ class ResolvedConnection:
             "binding": self.binding.model_dump(),
             "explicit_binding": self.config.binding is not None,
             "credential_names": list(self.integration.credential_names),
-            "resources": [resource.name for resource in self.integration.resources],
+            "resources": list(self.config.resources)
+            if self.config.resources is not None
+            else [resource.name for resource in self.integration.resources],
+            "resource_definitions": [
+                {"name": r.name, "record_kind": r.record_kind, "history": r.history}
+                for r in self.integration.resources
+            ],
             "capabilities": list(self.integration.capabilities),
         }
 
@@ -264,6 +273,25 @@ def parse_miroir(text: str) -> ResolvedMiroir:
             raise ConfigurationError(
                 f"{prefix}.credentials: incorrect credential names"
             )
+        if connection.resources is not None:
+            available = {r.name for r in definition.resources}
+            if (
+                not connection.resources
+                or len(set(connection.resources)) != len(connection.resources)
+                or set(connection.resources) - available
+            ):
+                raise ConfigurationError(
+                    f"{prefix}.resources: select distinct declared resources"
+                )
+        from src.analyses.catalog import ANALYSES
+
+        analysis = ANALYSES.get(definition.analysis or "")
+        try:
+            (analysis.parameters if analysis else StrictModel).model_validate(
+                connection.analysis.parameters
+            )
+        except ValidationError as error:
+            raise _validation_error(error, f"{prefix}.analysis.parameters") from error
         # Length-prefix the miroir ID so (a_b, c) and (a, b_c) cannot alias.
         name = f"ws_{len(config.id)}_{config.id}_{connection.id}"
         binding = connection.binding or Binding(pipeline_name=name, dataset_name=name)
@@ -291,6 +319,11 @@ def parse_miroir(text: str) -> ResolvedMiroir:
             "credentials": {k: v.model_dump() for k, v in c.config.credentials.items()},
             "binding": c.binding.model_dump(),
             "analysis": c.config.analysis.model_dump(),
+            **(
+                {"resources": c.config.resources}
+                if c.config.resources is not None
+                else {}
+            ),
         }
         for c in connections
     }

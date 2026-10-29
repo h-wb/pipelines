@@ -18,7 +18,7 @@ import duckdb
 import requests
 
 from src.core.config import parse_miroir
-from src.integrations.sources import create_source
+from src.integrations.sources import open_source
 from tests.test_miroir import example
 
 
@@ -85,14 +85,16 @@ class ReferenceSourceTests(unittest.TestCase):
         with patch.object(requests.Session, "send", respond):
             for connection in connections:
                 credentials = {"access_token": f"token-{connection.settings.username}"}
-                self.pipeline(connection).run(create_source(connection, credentials))
+                with open_source(connection, credentials) as source:
+                    self.pipeline(connection).run(source)
                 self.assertEqual(self.count(connection, "listens"), 1)
             # A fresh local working directory must restore the committed cursor from
             # the destination, then replay the boundary record without duplicating it.
             connection = connections[0]
-            self.pipeline(connection, "restarted-state").run(
-                create_source(connection, {"access_token": "token-example_user"})
-            )
+            with open_source(
+                connection, {"access_token": "token-example_user"}
+            ) as source:
+                self.pipeline(connection, "restarted-state").run(source)
         self.assertEqual(requests_seen[-1][1]["min_ts"], ["1709999999"])
         for connection in connections:
             self.assertEqual(self.count(connection, "listens"), 1)
@@ -126,7 +128,8 @@ class ReferenceSourceTests(unittest.TestCase):
         config["connections"][0]["settings"]["data_dir"] = str(directory)
         connection = parse_miroir(json.dumps(config)).connections[0]
         for _ in range(2):
-            self.pipeline(connection).run(create_source(connection, {}))
+            with open_source(connection, {}) as source:
+                self.pipeline(connection).run(source)
             self.assertEqual(self.count(connection, "metrics"), 2)
         with duckdb.connect(str(self.database)) as db:
             sources = db.execute(
@@ -136,10 +139,13 @@ class ReferenceSourceTests(unittest.TestCase):
 
     def test_source_requires_explicit_credentials(self):
         connection = parse_miroir(json.dumps(example())).connections[0]
-        with self.assertRaises(ValueError):
-            create_source(connection, {})
-        with self.assertRaises(ValueError):
-            create_source(connection, {"access_token": ""})
+        with self.assertRaises(ValueError), open_source(connection, {}):
+            pass
+        with (
+            self.assertRaises(ValueError),
+            open_source(connection, {"access_token": ""}),
+        ):
+            pass
 
 
 if __name__ == "__main__":

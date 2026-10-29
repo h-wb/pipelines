@@ -5,6 +5,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from src.analyses.catalog import ANALYSES
 from src.core.config import ResolvedConnection
 
 
@@ -36,7 +37,7 @@ class AnalysisPlan:
 
 
 def analysis_plan(connection: ResolvedConnection) -> AnalysisPlan | None:
-    models = connection.integration.models
+    models = ANALYSES.get(connection.integration.analysis or "")
     if models is None:
         return None
     identity = json.dumps([connection.miroir_id, connection.config.id])
@@ -50,6 +51,10 @@ def analysis_plan(connection: ResolvedConnection) -> AnalysisPlan | None:
             "miroir_sources": {models.dbt_source: connection.binding.dataset_name},
             "miroir_namespace": namespace,
             "timezone": connection.config.analysis.timezone,
+            **models.variables(
+                connection.settings, connection.config.analysis.parameters
+            ),
         },
         relations=tuple(f"{namespace}_{models.group}.{r}" for r in models.relations),
+        version=models.version,
     )

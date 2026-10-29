@@ -29,3 +29,5 @@ class FileDelivery:
     content_type: str
     sender_instructions: str
     role_help: str
+    roles: tuple[str, ...] = ("ongoing", "historical")
+    automatic_filename: str = "automatic-export.json"

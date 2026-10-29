@@ -31,7 +31,13 @@ is `python -m src.cli`.
 `integrations` lists connector metadata and settings schemas. Apple Health accepts
 Health Auto Export JSON through file uploads and automatic delivery. An optional
 server folder enables the compatibility scanner. Native Apple Health XML is not
-supported.
+supported. GitHub (personal access token for the configured login; the token's
+account is checked), Bike Share Toronto (mobile-app member ID and authorization
+token), and browser history (Firefox/Zen Places snapshots, plain or gzip, by upload,
+automatic delivery, or an optional server folder) are also available. Each
+connector package under `src/integrations/<name>/` owns its settings, credentials,
+check, resources, delivery metadata, file format, and dlt source; the registry only
+lists them. `src/sources/` and the old flow entry points are the legacy path.
 
 ### Running a connection and reading its status
 
@@ -245,8 +251,9 @@ placeholders. Resolve these against the listed output schema, create new questio
 and dashboards in Metabase, and retain their IDs in the connection's `dashboards`.
 The examples never reference this installation's backend IDs or overwrite assets.
 
-Health and music builds are independent: only their own models and ancestors are
-selected. Cross-source models remain on the legacy path until their health,
+Health, music, GitHub, biking, and browser builds are independent: only their own
+models and ancestors are selected. Analyses live in `src/analyses/catalog.py`;
+integrations recommend one by ID. Cross-source models remain on the legacy path until their health,
 music, and bike-share inputs can be explicitly linked. Missing optional columns
 and resources in small exports produce nulls/empty tables, rather than failing or
 substituting zero activity. Existing raw tables missing required identity/time
@@ -371,7 +378,11 @@ the legacy deployments only.
 Configuration version 1 contains a miroir ID, connections, and optional deployment
 settings and service links. Each
 connection has an integration, validated settings, credential references, and an
-optional explicit pipeline/dataset binding, schedule, and dashboard links.
+optional explicit pipeline/dataset binding, resource selection (`resources`: a
+subset of the integration's declared resources; unselected resources keep their
+stored state and rows), analysis settings (`analysis.timezone`,
+`analysis.parameters` validated by the analysis, e.g. GitHub `author_emails`),
+schedule, and dashboard links.
 Credentials use `provider: "miroir"` for the built-in encrypted store without a
 key, or `provider: "env"` / `"fnox"` with a `key` naming the external value. Inline
 credential fields and unknown settings are rejected. The configuration's content
@@ -422,9 +433,9 @@ artifact replay, or crash recovery of pending packages.
 For lint and type checks after `uv sync --locked --dev`:
 
 ```bash
-uv run --locked ruff check src/core src/integrations src/cli src/pipelines/miroir.py tests
-uv run --locked ruff format --check src/core src/integrations src/cli src/pipelines/miroir.py tests
-uv run --locked mypy --follow-imports=silent src/core src/integrations src/cli src/pipelines/miroir.py
+uv run --locked ruff check src/core src/integrations src/analyses src/cli src/pipelines/miroir.py tests
+uv run --locked ruff format --check src/core src/integrations src/analyses src/cli src/pipelines/miroir.py tests
+uv run --locked mypy --follow-imports=silent src/core src/integrations src/analyses src/cli src/pipelines/miroir.py
 ```
 
 ## How to continue this PR

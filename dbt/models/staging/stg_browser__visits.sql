@@ -1,5 +1,19 @@
 -- One row per Zen visit with its page. Firefox stores visit times in microseconds.
 -- visit_type codes: https://searchfox.org/mozilla-central/source/toolkit/components/places/nsINavHistoryService.idl
+with visits as (
+    {{ optional_input('browser_history', 'zen_historyvisits', {
+        'id': 'bigint', 'visit_date': 'bigint', 'from_visit': 'bigint', 'place_id': 'bigint',
+        'visit_type': 'bigint', 'source': 'bigint'
+    }, ['id', 'place_id', 'visit_date']) }}
+),
+places as (
+    {{ optional_input('browser_history', 'zen_places', {
+        'id': 'bigint', 'url': 'text', 'title': 'text', 'origin_id': 'bigint'
+    }, ['id', 'url']) }}
+),
+origins as (
+    {{ optional_input('browser_history', 'zen_origins', {'id': 'bigint', 'host': 'text'}, ['id']) }}
+)
 select
     v.id as visit_id,
     to_timestamp(v.visit_date / 1000000.0) as visited_at,
@@ -14,6 +28,6 @@ select
         when 8 then 'framed_link' when 9 then 'reload' else 'other'
     end as visit_type,
     case v.source when 0 then 'organic' when 1 then 'sync' when 2 then 'extension' when 3 then 'restore' end as source
-from {{ source('browser_history', 'zen_historyvisits') }} v
-join {{ source('browser_history', 'zen_places') }} p on p.id = v.place_id
-left join {{ source('browser_history', 'zen_origins') }} o on o.id = p.origin_id
+from visits v
+join places p on p.id = v.place_id
+left join origins o on o.id = p.origin_id

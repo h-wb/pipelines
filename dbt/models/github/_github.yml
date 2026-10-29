@@ -5,7 +5,8 @@ models:
     description: >
       Every commit in my repos (all branches, any author, line stats) plus mine elsewhere:
       the export's git log for history, the nightly API after. is_mine is by author email
-      (GITHUB__AUTHOR_EMAILS); forks include upstream history (filter on is_fork_repo).
+      (the github analysis parameter author_emails; GITHUB__AUTHOR_EMAILS for legacy builds);
+      forks include upstream history (filter on is_fork_repo).
     columns:
       - name: url
         data_tests: [unique, not_null]

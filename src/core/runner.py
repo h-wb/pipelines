@@ -242,7 +242,7 @@ def execute_operation(
     """
     from src.core.artifacts import stored_copy_is_intact
     from src.integrations.formats import PARSER_VERSIONS
-    from src.integrations.sources import create_artifact_source, create_source
+    from src.integrations.sources import open_artifact_source, open_source
 
     operation = store.get_operation(operation_id)
     if operation.miroir_id != miroir.id:
@@ -256,7 +256,7 @@ def execute_operation(
     if operation.config_revision != connection.revision:
         reason = "Connection configuration changed since this operation was requested"
     elif operation.kind == "sync":
-        make_source = lambda credentials: create_source(connection, credentials)
+        make_source = lambda credentials: open_source(connection, credentials)
     elif operation.kind == "models":
         plan = analysis_plan(connection)
         if plan is None:
@@ -276,8 +276,8 @@ def execute_operation(
         elif not stored_copy_is_intact(artifact):
             reason = "Stored artifact is missing or does not match its checksum"
         path = artifact["storage_path"]
-        make_source = lambda credentials: create_artifact_source(
-            connection, path, options
+        make_source = lambda credentials: open_artifact_source(
+            connection, credentials, path, options
         )
     if reason is not None:
         attempt, _ = store.start_attempt(operation.id, "blocked")
@@ -350,7 +350,8 @@ def import_artifact(
 
 def artifact_options(connection: ResolvedConnection) -> dict[str, Any]:
     """Connection settings that change how an artifact is interpreted."""
-    return {"cutoff": getattr(connection.settings, "cutoff", None)}
+    definition = connection.integration.file_input
+    return definition.options(connection.settings) if definition else {}
 
 
 def _connection(miroir: ResolvedMiroir, connection_id: str) -> ResolvedConnection:
@@ -431,7 +432,8 @@ def _execute(
             destination=destination,
             **options,
         )
-        info = pipeline.run(make_source(credentials))
+        with make_source(credentials) as source:
+            info = pipeline.run(source)
     except Exception as error:  # noqa: BLE001 - any failure is recorded, then raised
         error_type, message = redact(error, secrets)
         store.update_attempt(

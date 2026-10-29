@@ -1,14 +1,40 @@
 -- One row per PR url: my repos from the pulls endpoint, mine elsewhere from search,
 -- history from the export. State comes from the freshest source; the export fills
 -- fields the others lack (e.g. bodies and branch names of old PRs).
-with unioned as (
+with pull_requests as (
+    {{ optional_input('github', 'pull_requests', {
+        'html_url': 'text', 'base__repo__full_name': 'text', 'number': 'bigint',
+        'user__login': 'text', 'user__type': 'text', 'title': 'text', 'body': 'text', 'state': 'text',
+        'draft': 'boolean', 'base__ref': 'text', 'head__ref': 'text',
+        'created_at': 'timestamptz', 'updated_at': 'timestamptz', 'closed_at': 'timestamptz',
+        'merged_at': 'timestamptz', 'merge_commit_sha': 'text'
+    }, ['html_url']) }}
+),
+external_issues as (
+    {{ optional_input('github', 'external_issues', {
+        'html_url': 'text', 'repository_url': 'text', 'number': 'bigint',
+        'user__login': 'text', 'user__type': 'text', 'title': 'text', 'body': 'text', 'state': 'text',
+        'draft': 'boolean', 'created_at': 'timestamptz', 'updated_at': 'timestamptz',
+        'closed_at': 'timestamptz', 'pull_request__html_url': 'text',
+        'pull_request__merged_at': 'timestamptz'
+    }, ['html_url']) }}
+),
+export_pull_requests as (
+    {{ optional_input('github', 'export_pull_requests', {
+        'url': 'text', 'repository': 'text', 'user': 'text', 'title': 'text', 'body': 'text',
+        'work_in_progress': 'boolean', 'base__ref': 'text', 'head__ref': 'text',
+        'created_at': 'timestamptz', 'closed_at': 'timestamptz', 'merged_at': 'timestamptz',
+        'merge_commit_sha': 'text'
+    }, ['url']) }}
+),
+unioned as (
     select
         html_url as url, base__repo__full_name as repository, number,
         user__login as author_login, user__type as author_type,
         title, body, state, draft, base__ref as base_ref, head__ref as head_ref,
         created_at, updated_at, closed_at, merged_at, merge_commit_sha,
         1 as priority
-    from {{ source('github', 'pull_requests') }}
+    from pull_requests
     union all
     select
         html_url, replace(repository_url, 'https://api.github.com/repos/', ''), number,
@@ -16,7 +42,7 @@ with unioned as (
         title, body, state, draft, null, null,
         created_at, updated_at, closed_at, pull_request__merged_at, null,
         1
-    from {{ source('github', 'external_issues') }}
+    from external_issues
     where pull_request__html_url is not null
     union all
     select
@@ -26,7 +52,7 @@ with unioned as (
         base__ref, head__ref,
         created_at::timestamptz, null, closed_at::timestamptz, merged_at::timestamptz, merge_commit_sha,
         2
-    from {{ source('github', 'export_pull_requests') }}
+    from export_pull_requests
 ),
 freshest as (
     select distinct on (url) url, repository, number, title, state, created_at, updated_at, closed_at, merged_at

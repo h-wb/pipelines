@@ -222,7 +222,6 @@ def create_app(
                 path,
                 "ongoing",
                 import_now=True,
-                original_name="automatic-export.json",
                 origin="webhook",
             )
         finally:

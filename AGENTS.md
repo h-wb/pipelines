@@ -33,14 +33,21 @@ Miroir (decision 014); history keeps its own words.
   implements the same three verbs.
 - `src/pipelines/miroir.py` — the Prefect flow `sync_connection` (one
   deployment per connection), and `transform.py` (dbt build).
-- `src/integrations/`, `src/sources/` — connector registry, checks, dlt
-  sources. Integrations declare settings schemas and credential fields.
+- `src/integrations/<name>/` — one package per connector: settings, credentials,
+  check, resources, delivery/file format, and its dlt source (`source.py`);
+  `registry.py` only lists them. `src/sources/` + old `src/pipelines/*.py` flows
+  are the legacy path, kept only until each cutover (decision 020).
 - `dbt/` — models (staging + reporting), profiles read
   `DESTINATION__POSTGRES__CREDENTIALS__*` env.
-- `tests/` — unittest; no pytest. 100 tests, ~95s, include four against a real
-  temporary Prefect API (`prefect_test_harness`), CLI subprocess tests, and three
+- `src/analyses/catalog.py` — analysis definitions (dbt selector, output
+  relations, typed parameters, version); integrations recommend one by ID.
+- `tests/` — unittest; no pytest. 110 tests, ~105s, include four against a real
+  temporary Prefect API (`prefect_test_harness`), CLI subprocess tests, and six
   disposable Postgres/dbt scenarios (set `MIROIR_TEST_POSTGRES_BIN` to the bin
-  directory of an installed Postgres, or put `initdb`/`pg_ctl` on PATH).
+  directory of an installed Postgres, or put `initdb`/`pg_ctl` on PATH; in this
+  pod the mise shims have no default version, so use
+  `~/.local/share/mise/installs/postgres/17.11/bin`). Without it the dbt class
+  errors in `setUpClass`.
 
 ## Commands
 
@@ -52,8 +59,8 @@ mise run miroir:deploy    # deployments apply (needs fnox secrets, see below)
 mise run prefect -- <cmd> # prefect CLI with cluster credentials
 ```
 
-Lint/mypy the *slice* (`src/core src/adapters src/integrations src/cli src/web
-src/pipelines/miroir.py tests`) — legacy `src/pipelines/*.py` have pre-existing
+Lint/mypy the *slice* (`src/core src/adapters src/integrations src/analyses src/cli
+src/web src/pipelines/miroir.py tests`) — legacy `src/pipelines/*.py` have pre-existing
 findings. Secrets for mise tasks come from ProtonPass via fnox
 (`mise run pass:login`); grants are per task in `mise.toml`/`fnox.toml`.
 

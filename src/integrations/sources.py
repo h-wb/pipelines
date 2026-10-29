@@ -1,57 +1,50 @@
-"""Lazy adapters to existing dlt sources with explicit per-connection inputs.
+"""Open declared source hooks with scoped credentials and explicit cleanup."""
 
-Callers supply resolved credentials. This module does not resolve secret references,
-set environment variables, choose a destination, or start a pipeline.
-"""
-
-from typing import TYPE_CHECKING, Any
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import Any
 
 from src.core.config import ResolvedConnection
 from src.core.operations import OperationError
-from src.integrations.registry import AppleHealthSettings, ListenBrainzSettings
-
-if TYPE_CHECKING:
-    from dlt.extract import DltSource
 
 
-def create_source(
-    connection: ResolvedConnection, credentials: dict[str, str]
-) -> "DltSource":
+def _credentials(connection: ResolvedConnection, credentials: dict[str, str]) -> None:
     if set(credentials) != set(connection.integration.credential_names):
         raise ValueError("Incorrect resolved credential names")
-    if any(not isinstance(value, str) or not value for value in credentials.values()):
+    if any(not isinstance(v, str) or not v for v in credentials.values()):
         raise ValueError("Resolved credentials must be nonempty strings")
-    settings = connection.settings
-    if isinstance(settings, ListenBrainzSettings):
-        from src.sources.listenbrainz import listenbrainz_source
 
-        return listenbrainz_source(
-            username=settings.username,
-            access_token=credentials["access_token"],
-            start_date=settings.start_date,
+
+@contextmanager
+def open_source(
+    connection: ResolvedConnection, credentials: dict[str, str]
+) -> Iterator[Any]:
+    _credentials(connection, credentials)
+    opener = connection.integration.open_sync
+    if opener is None:
+        raise OperationError("This integration has no sync method")
+    with opener(connection.settings, credentials) as source:
+        yield (
+            source.with_resources(*connection.config.resources)
+            if connection.config.resources
+            else source
         )
-    if isinstance(settings, AppleHealthSettings):
-        if settings.data_dir is None:
-            raise OperationError(
-                "Upload an export or configure a server folder to scan"
-            )
-        from src.sources.apple_health import apple_health
-
-        return apple_health(data_dir=settings.data_dir, cutoff=settings.cutoff)
-    raise ValueError("No source adapter for the validated integration")
 
 
-def create_artifact_source(
-    connection: ResolvedConnection, path: str, options: dict[str, Any]
-) -> "DltSource":
-    """A source over one stored artifact, interpreted with recorded options."""
-    settings = connection.settings
-    if isinstance(settings, AppleHealthSettings):
-        from src.sources.apple_health import apple_health_artifact
-
-        return apple_health_artifact(
-            path=path,
-            cutoff=options["cutoff"],
-            historical=options["role"] == "historical",
+@contextmanager
+def open_artifact_source(
+    connection: ResolvedConnection,
+    credentials: dict[str, str],
+    path: str,
+    options: dict[str, Any],
+) -> Iterator[Any]:
+    _credentials(connection, credentials)
+    definition = connection.integration.file_input
+    if definition is None:
+        raise OperationError("This integration has no artifact parser")
+    with definition.open(connection.settings, credentials, path, options) as source:
+        yield (
+            source.with_resources(*connection.config.resources)
+            if connection.config.resources
+            else source
         )
-    raise ValueError("No artifact parser for the validated integration")

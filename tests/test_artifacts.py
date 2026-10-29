@@ -31,7 +31,7 @@ from src.core.operations import (
 )
 from src.core.runner import AlreadyImported, IngestionFailed, import_artifact
 from src.integrations.formats import InvalidArtifact
-from src.integrations.sources import create_source
+from src.sources.apple_health import apple_health as legacy_health_source
 from tests.test_miroir import example
 
 CUTOFF = "2026-06-04"  # from examples/miroir.json
@@ -175,10 +175,10 @@ class ArtifactTests(unittest.TestCase):
             destination=dlt.destinations.duckdb(credentials=str(self.database)),
             dataset_name=connection.binding.dataset_name,
         )
-        pipeline.run(create_source(connection, {}))
+        pipeline.run(legacy_health_source(data_dir=str(directory), cutoff=CUTOFF))
         legacy.write_text(json.dumps(export(("2026-06-05", 1), ("2026-06-06", 2))))
         os.utime(legacy, (stamp, stamp))
-        pipeline.run(create_source(connection, {}))
+        pipeline.run(legacy_health_source(data_dir=str(directory), cutoff=CUTOFF))
         # The legacy scanner's modification-time cursor skips the changed file...
         self.assertEqual(len(self.metrics()), 1)
         # ...while the same bytes submitted explicitly are a new artifact and load.

@@ -1,6 +1,22 @@
 -- Bike Share only estimates distance (duration x a fixed average speed), so the
 -- straight-line distance between the two stations is the only real distance we have.
-with trips as (
+with raw_trips as (
+    {{ optional_input('bikeshare', 'trips', {
+        '_dlt_id': 'text', 'rental_id': 'text', 'sd': 'bigint', 'ed': 'bigint', 'ss': 'text', 'es': 'text',
+        'distance_in_meters': 'bigint', 'bike__displayed_number': 'text'
+    }, ['_dlt_id', 'rental_id', 'sd']) }}
+),
+start_location as (
+    {{ optional_input('bikeshare', 'trips__start_location', {
+        '_dlt_parent_id': 'text', '_dlt_list_idx': 'bigint', 'value': 'double precision'
+    }, ['_dlt_parent_id', '_dlt_list_idx', 'value']) }}
+),
+end_location as (
+    {{ optional_input('bikeshare', 'trips__end_location', {
+        '_dlt_parent_id': 'text', '_dlt_list_idx': 'bigint', 'value': 'double precision'
+    }, ['_dlt_parent_id', '_dlt_list_idx', 'value']) }}
+),
+trips as (
     select
         t.rental_id as ride_id,
         to_timestamp(t.sd / 1000.0) as started_at,
@@ -15,9 +31,9 @@ with trips as (
         max(s.value) filter (where s._dlt_list_idx = 1) as start_lat,
         max(e.value) filter (where e._dlt_list_idx = 0) as end_lon,
         max(e.value) filter (where e._dlt_list_idx = 1) as end_lat
-    from {{ source('bikeshare', 'trips') }} t
-    left join {{ source('bikeshare', 'trips__start_location') }} s on s._dlt_parent_id = t._dlt_id
-    left join {{ source('bikeshare', 'trips__end_location') }} e on e._dlt_parent_id = t._dlt_id
+    from raw_trips t
+    left join start_location s on s._dlt_parent_id = t._dlt_id
+    left join end_location e on e._dlt_parent_id = t._dlt_id
     group by 1, 2, 3, 4, 5, 6, 7, 8
 )
 select

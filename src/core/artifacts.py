@@ -75,6 +75,11 @@ def submit_artifact(
         or "artifact_import" not in connection.integration.capabilities
     ):
         raise OperationError("Integration does not accept files")
+    delivery = connection.integration.file_delivery
+    if delivery is not None and role not in delivery.roles:
+        raise OperationError(
+            f"{delivery.label} files can only be imported as: {', '.join(delivery.roles)}"
+        )
     VALIDATORS[input_format](source)
     received = receive_file(source, root, miroir.id, connection.config.id)
     return store.register_artifact(

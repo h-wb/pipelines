@@ -12,12 +12,17 @@
 <p>Choose a {{ c.file_delivery.label }} file from your device. Miroir keeps the original and records each import.</p>
 <form method="post" action="/connections/{{ c.id }}/upload" enctype="multipart/form-data" class="upload-form">
   <label>Export file <input type="file" name="file" accept="{{ c.file_delivery.accept }}" required></label>
+  {% if c.file_delivery.roles | length > 1 %}
   <label>Dates to import
     <select name="role" required>
-      <option value="ongoing" selected>Ongoing data</option>
-      <option value="historical">Historical data</option>
+      {% for role in c.file_delivery.roles %}
+      <option value="{{ role }}" {% if loop.first %}selected{% endif %}>{{ role | capitalize }} data</option>
+      {% endfor %}
     </select>
   </label>
+  {% else %}
+  <input type="hidden" name="role" value="{{ c.file_delivery.roles[0] }}">
+  {% endif %}
   <label><input type="checkbox" name="import_now" value="true" checked> Import after upload</label>
   <button>Upload</button>
 </form>

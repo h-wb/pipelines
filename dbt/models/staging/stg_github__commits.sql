@@ -1,6 +1,26 @@
 -- One row per commit url. API rows (my repos, every branch, + mine elsewhere) win over
 -- the export's git log, which fills history before the nightly runs started.
-with unioned as (
+{% set api_columns = {
+    'html_url': 'text', 'sha': 'text',
+    'commit__author__name': 'text', 'commit__author__email': 'text',
+    'author__login': 'text', 'author__type': 'text',
+    'commit__author__date': 'timestamptz', 'commit__committer__date': 'timestamptz',
+    'commit__message': 'text', 'stats__additions': 'bigint', 'stats__deletions': 'bigint'
+} %}
+with commits as (
+    {{ optional_input('github', 'commits', api_columns, ['html_url']) }}
+),
+external_commits as (
+    {{ optional_input('github', 'external_commits', api_columns, ['html_url']) }}
+),
+export_commits as (
+    {{ optional_input('github', 'export_commits', {
+        'repository': 'text', 'sha': 'text', 'author_name': 'text', 'author_email': 'text',
+        'authored_at': 'timestamptz', 'committed_at': 'timestamptz', 'message': 'text',
+        'additions': 'bigint', 'deletions': 'bigint'
+    }, ['repository', 'sha']) }}
+),
+unioned as (
     select
         html_url as url,
         split_part(html_url, '/', 4) || '/' || split_part(html_url, '/', 5) as repository,
@@ -15,7 +35,7 @@ with unioned as (
         stats__additions as additions,
         stats__deletions as deletions,
         1 as priority
-    from {{ source('github', 'commits') }}
+    from commits
     union all
     select
         html_url, split_part(html_url, '/', 4) || '/' || split_part(html_url, '/', 5), sha,
@@ -23,7 +43,7 @@ with unioned as (
         commit__author__date, commit__committer__date, commit__message,
         stats__additions, stats__deletions,
         1
-    from {{ source('github', 'external_commits') }}
+    from external_commits
     union all
     select
         'https://github.com/' || repository || '/commit/' || sha, repository, sha,
@@ -31,7 +51,7 @@ with unioned as (
         authored_at::timestamptz, committed_at::timestamptz, message,
         additions, deletions,
         2
-    from {{ source('github', 'export_commits') }}
+    from export_commits
 )
 select distinct on (url) *
 from unioned
