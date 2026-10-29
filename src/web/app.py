@@ -1,6 +1,6 @@
-"""HTTP API and web interface over the shared workspace services.
+"""HTTP API and web interface over the shared mirroir services.
 
-Single-user and self-hosted: one bearer token (`WORKSPACE_API_TOKEN`). Browsers
+Single-user and self-hosted: one bearer token (`MIRROIR_API_TOKEN`). Browsers
 log in with it once and get a session cookie derived from it; the token itself
 is never stored in the cookie. API clients, such as a phone pushing exports,
 send `Authorization: Bearer <token>`.
@@ -22,10 +22,10 @@ from fastapi.templating import Jinja2Templates
 from src.core.config import ConfigurationConflict, ConfigurationError
 from src.core.operations import OperationError
 from src.core.secrets import SecretKeyError, SecretResolutionError
-from src.core.service import WorkspaceService
+from src.core.service import MirroirService
 from src.integrations.formats import InvalidArtifact
 
-SESSION_COOKIE = "workspace_session"
+SESSION_COOKIE = "mirroir_session"
 DEFAULT_MAX_UPLOAD = 512 * 1024 * 1024
 CHUNK = 1024 * 1024
 ROLES = ("historical", "ongoing")
@@ -56,12 +56,12 @@ class Unauthorized(Exception):
 
 
 def create_app(
-    service: WorkspaceService, token: str, max_upload_bytes: int = DEFAULT_MAX_UPLOAD
+    service: MirroirService, token: str, max_upload_bytes: int = DEFAULT_MAX_UPLOAD
 ) -> FastAPI:
     if len(token) < 16:
-        raise ValueError("WORKSPACE_API_TOKEN must be at least 16 characters")
-    session = hmac.new(token.encode(), b"workspace-session", hashlib.sha256).hexdigest()
-    app = FastAPI(title="Personal data workspace", docs_url=None, redoc_url=None)
+        raise ValueError("MIRROIR_API_TOKEN must be at least 16 characters")
+    session = hmac.new(token.encode(), b"mirroir-session", hashlib.sha256).hexdigest()
+    app = FastAPI(title="Mirroir", docs_url=None, redoc_url=None)
 
     def authorize(request: Request) -> None:
         header = request.headers.get("authorization", "")
@@ -264,8 +264,8 @@ def create_app(
                 "If-Match with the file_revision you edited is required"
             )
         text = (await request.body()).decode("utf-8")
-        workspace = service.save_configuration(text, expected)
-        return {"saved": True, "revision": workspace.revision}
+        mirroir = service.save_configuration(text, expected)
+        return {"saved": True, "revision": mirroir.revision}
 
     # ---- Web interface ---------------------------------------------------------
 

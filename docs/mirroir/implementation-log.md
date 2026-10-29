@@ -400,3 +400,24 @@ Validation: three new tests (direct URL wins, composition with quoting and the
 CNPG-convention defaults, unconfigured is None); lint, format, and mypy clean on
 the workspace slice; 73 tests pass on Python 3.14.7. The job template renders
 Jobs with all fifteen environment entries resolved from the two Secrets.
+
+## 2026-10-29 — Renamed to Mirroir; the metadata store moves to its own Postgres
+
+Naming (decision 014): a full rename, done before the first cutover while every
+name was still cheap to change — Python identifiers, the `pipelines-mirroir`
+CLI, `mirroir.json` and `.mirroir/`, all `MIRROIR_*` environment variables, the
+`mirroir_meta` schema, the `mirroir` secrets-provider value, the web interface
+title, the Prefect pool `mirroir-k8s`, and the docs directory. Roughly 700
+occurrences across code and tests.
+
+Storage (decision 015): the metadata store leaves postgres-metabase for its own
+CloudNativePG cluster `postgres-mirroir` (home-ops `automation/mirroir`, the
+repo's standard cnpg/initdb component, Barman backups), so the BI database and
+the pipeline control plane no longer share a lifecycle. Warehouse data stays on
+postgres-metabase; only the `MIRROIR_METADATA__*` parts re-point, taken from the
+generated `postgres-mirroir-app` secret by the job template.
+
+Validation: 73 tests pass on Python 3.14.7 (`-W error::ResourceWarning`);
+lint, format, and mypy clean on the renamed slice; no "workspace" remains in
+code, configuration, or the living docs (older decisions and log entries keep
+their original wording as history).

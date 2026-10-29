@@ -19,7 +19,7 @@
   {% for cred in c.credentials %}
   <tr>
     <td>{{ cred.label }}<div class="muted">{{ cred.help }}</div></td>
-    {% if cred.provider == "workspace" %}
+    {% if cred.provider == "mirroir" %}
     <td>{% if cred.set %}set · updated {{ when(cred.updated_at) }}{% else %}<span class="failed">not set</span>{% endif %}</td>
     <td>
       <form method="post" action="/connections/{{ c.id }}/credentials/{{ cred.name }}" autocomplete="off">
@@ -28,7 +28,7 @@
       </form>
     </td>
     {% else %}
-    <td colspan="2">from {{ cred.provider }} <code>{{ cred.external_key }}</code> <span class="muted">(managed outside the workspace)</span></td>
+    <td colspan="2">from {{ cred.provider }} <code>{{ cred.external_key }}</code> <span class="muted">(managed outside the mirroir)</span></td>
     {% endif %}
   </tr>
   {% endfor %}

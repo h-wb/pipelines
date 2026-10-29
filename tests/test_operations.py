@@ -21,7 +21,7 @@ import sqlalchemy as sa
 from sqlalchemy.exc import OperationalError
 
 from src.cli.main import main
-from src.core.config import metadata_url, parse_workspace
+from src.core.config import metadata_url, parse_mirroir
 from src.core.operations import (
     ConnectionBusy,
     MetadataStore,
@@ -30,7 +30,7 @@ from src.core.operations import (
 )
 from src.core.runner import IngestionFailed, run_connection
 from src.core.secrets import SecretResolutionError, resolve_credentials
-from tests.test_workspace import example
+from tests.test_mirroir import example
 
 TOKEN = "token-SENSITIVE"
 
@@ -79,7 +79,7 @@ class OperationTests(unittest.TestCase):
         self.addCleanup(store.engine.dispose)
         return store
 
-    def workspace(self, legacy_binding=False, second_account=False):
+    def mirroir(self, legacy_binding=False, second_account=False):
         config = example()
         config["connections"] = config["connections"][:1]
         if legacy_binding:
@@ -91,13 +91,13 @@ class OperationTests(unittest.TestCase):
             other = copy.deepcopy(config["connections"][0])
             other["id"] = "other_music"
             config["connections"].append(other)
-        return parse_workspace(json.dumps(config))
+        return parse_mirroir(json.dumps(config))
 
-    def run_music(self, workspace, send=listens_response, store=None, **kwargs):
+    def run_music(self, mirroir, send=listens_response, store=None, **kwargs):
         kwargs.setdefault("origin", "local")
         with patch.object(requests.Session, "send", send):
             return run_connection(
-                workspace,
+                mirroir,
                 kwargs.pop("connection_id", "music"),
                 store=store or self.store,
                 destination=dlt.destinations.duckdb(credentials=str(self.database)),
@@ -110,22 +110,22 @@ class OperationTests(unittest.TestCase):
         with duckdb.connect(str(self.database)) as db:
             return db.execute(f'SELECT count(*) FROM "{dataset}".listens').fetchone()[0]
 
-    def status(self, workspace, connection="music"):
-        return self.store.connection_status(workspace.id, connection)
+    def status(self, mirroir, connection="music"):
+        return self.store.connection_status(mirroir.id, connection)
 
     def test_sync_records_load_and_skips_models_for_generated_dataset(self):
-        workspace = self.workspace()
-        outcome = self.run_music(workspace)
+        mirroir = self.mirroir()
+        outcome = self.run_music(mirroir)
         self.assertEqual(
             (outcome.ingestion, outcome.transformation), ("succeeded", "skipped")
         )
         self.assertTrue(outcome.load_ids)
         operation = self.store.get_operation(outcome.operation_id)
-        self.assertEqual(operation.config_revision, workspace.connections[0].revision)
+        self.assertEqual(operation.config_revision, mirroir.connections[0].revision)
         self.assertEqual(
-            operation.dataset_name, workspace.connections[0].binding.dataset_name
+            operation.dataset_name, mirroir.connections[0].binding.dataset_name
         )
-        status = self.status(workspace)
+        status = self.status(mirroir)
         self.assertEqual(status["last_attempt"]["load_ids"], list(outcome.load_ids))
         self.assertIn(
             "models read listenbrainz_data",
@@ -135,29 +135,29 @@ class OperationTests(unittest.TestCase):
         self.assertEqual(status["analysis"], "stale")
 
     def test_model_failure_keeps_load_and_marks_analysis_stale(self):
-        workspace = self.workspace(legacy_binding=True)
+        mirroir = self.mirroir(legacy_binding=True)
         selectors = []
-        self.run_music(workspace, transform=selectors.append)
+        self.run_music(mirroir, transform=selectors.append)
         self.assertEqual(selectors, ["source:listenbrainz+"])
-        self.assertEqual(self.status(workspace)["analysis"], "current")
+        self.assertEqual(self.status(mirroir)["analysis"], "current")
 
         def failing(selector):
             raise RuntimeError(f"dbt failed near {TOKEN}")
 
-        outcome = self.run_music(workspace, transform=failing)
+        outcome = self.run_music(mirroir, transform=failing)
         self.assertEqual(
             (outcome.ingestion, outcome.transformation), ("succeeded", "failed")
         )
-        status = self.status(workspace)
+        status = self.status(mirroir)
         self.assertEqual(status["analysis"], "stale")
         self.assertNotIn(TOKEN, json.dumps(status))
         self.assertEqual(self.rows("listenbrainz_data"), 1)
 
     def test_ingestion_failure_is_recorded_and_redacted(self):
-        workspace = self.workspace()
+        mirroir = self.mirroir()
         with self.assertRaises(IngestionFailed) as raised:
-            self.run_music(workspace, send=leaking_failure)
-        status = self.status(workspace)
+            self.run_music(mirroir, send=leaking_failure)
+        status = self.status(mirroir)
         self.assertEqual(status["last_attempt"]["ingestion"], "failed")
         self.assertEqual(status["last_attempt"]["transformation"], "not_run")
         self.assertEqual(status["analysis"], "no_data")
@@ -165,65 +165,65 @@ class OperationTests(unittest.TestCase):
         self.assertIn("***", status["last_attempt"]["error_message"])
 
     def test_backend_retry_is_a_new_attempt_of_the_same_operation(self):
-        workspace = self.workspace()
+        mirroir = self.mirroir()
         with self.assertRaises(IngestionFailed):
             self.run_music(
-                workspace,
+                mirroir,
                 send=leaking_failure,
                 origin="prefect",
                 backend_run_id="run-1",
             )
-        outcome = self.run_music(workspace, origin="prefect", backend_run_id="run-1")
+        outcome = self.run_music(mirroir, origin="prefect", backend_run_id="run-1")
         self.assertEqual(outcome.attempt, 2)
         attempts = self.store.attempts(outcome.operation_id)
         self.assertEqual([a["ingestion"] for a in attempts], ["failed", "succeeded"])
-        self.assertEqual(self.rows(workspace.connections[0].binding.dataset_name), 1)
+        self.assertEqual(self.rows(mirroir.connections[0].binding.dataset_name), 1)
 
     def test_requested_operation_is_adopted_by_its_backend_run(self):
-        workspace = self.workspace(second_account=True)
+        mirroir = self.mirroir(second_account=True)
         requested = self.store.create_operation(
-            workspace_id=workspace.id,
+            mirroir_id=mirroir.id,
             connection_id="music",
             integration="listenbrainz",
             kind="sync",
             origin="request",
             pipeline_name="p",
             dataset_name="d",
-            config_revision=workspace.connections[0].revision,
+            config_revision=mirroir.connections[0].revision,
             code_revision="test",
             backend_run_id=None,
         )
-        self.assertEqual(self.status(workspace)["requested_not_started"], 1)
+        self.assertEqual(self.status(mirroir)["requested_not_started"], 1)
         with self.assertRaises(OperationError):
             self.run_music(
-                workspace, connection_id="other_music", operation_id=requested.id
+                mirroir, connection_id="other_music", operation_id=requested.id
             )
         outcome = self.run_music(
-            workspace,
+            mirroir,
             origin="request",
             operation_id=requested.id,
             backend_run_id="run-a",
         )
         self.assertEqual(outcome.operation_id, requested.id)
-        self.assertEqual(self.status(workspace)["requested_not_started"], 0)
+        self.assertEqual(self.status(mirroir)["requested_not_started"], 0)
         with self.assertRaises(OperationError):
-            self.run_music(workspace, operation_id=requested.id, backend_run_id="run-b")
+            self.run_music(mirroir, operation_id=requested.id, backend_run_id="run-b")
 
     def test_same_connection_is_serialized_and_others_are_not(self):
-        workspace = self.workspace(second_account=True)
-        pipeline = workspace.connections[0].binding.pipeline_name
+        mirroir = self.mirroir(second_account=True)
+        pipeline = mirroir.connections[0].binding.pipeline_name
         with self.store.connection_lock(pipeline):
             with self.assertRaises(ConnectionBusy):
-                self.run_music(workspace)
-            self.run_music(workspace, connection_id="other_music")
-        self.assertEqual(self.status(workspace)["last_attempt"]["ingestion"], "blocked")
-        self.assertEqual(self.run_music(workspace).ingestion, "succeeded")
+                self.run_music(mirroir)
+            self.run_music(mirroir, connection_id="other_music")
+        self.assertEqual(self.status(mirroir)["last_attempt"]["ingestion"], "blocked")
+        self.assertEqual(self.run_music(mirroir).ingestion, "succeeded")
 
     def test_waiting_run_starts_when_the_running_one_finishes(self):
         import threading
 
-        workspace = self.workspace()
-        pipeline = workspace.connections[0].binding.pipeline_name
+        mirroir = self.mirroir()
+        pipeline = mirroir.connections[0].binding.pipeline_name
         held, release = threading.Event(), threading.Event()
 
         def hold():
@@ -236,13 +236,13 @@ class OperationTests(unittest.TestCase):
         held.wait(10)
         threading.Timer(1.5, release.set).start()
         with patch("src.core.operations.LOCK_POLL_SECONDS", 0.1):
-            outcome = self.run_music(workspace, lock_wait=10)
+            outcome = self.run_music(mirroir, lock_wait=10)
         holder.join()
         self.assertEqual(outcome.ingestion, "succeeded")
         self.assertEqual(outcome.attempt, 1)  # no blocked attempt first
 
     def test_metadata_outage_after_load_does_not_fail_the_load(self):
-        workspace = self.workspace()
+        mirroir = self.mirroir()
         store = self.open_store("meta.sqlite")
         original = store.update_attempt
 
@@ -253,20 +253,20 @@ class OperationTests(unittest.TestCase):
 
         store.update_attempt = flaky
         with self.assertLogs("src.core.runner", "ERROR"):
-            outcome = self.run_music(workspace, store=store)
+            outcome = self.run_music(mirroir, store=store)
         self.assertFalse(outcome.recorded)
         self.assertEqual(outcome.ingestion, "succeeded")
 
     def test_nothing_loads_without_registration(self):
-        workspace = self.workspace()
+        mirroir = self.mirroir()
         store = self.open_store("unmigrated.sqlite")
         with self.assertRaises(sa.exc.OperationalError):
-            self.run_music(workspace, store=store)
+            self.run_music(mirroir, store=store)
         self.assertFalse(self.database.exists())
 
     def test_records_survive_restart_and_schema_version_is_checked(self):
-        workspace = self.workspace()
-        outcome = self.run_music(workspace)
+        mirroir = self.mirroir()
+        outcome = self.run_music(mirroir)
         reopened = self.open_store("meta.sqlite")
         reopened.migrate()
         self.assertEqual(
@@ -280,7 +280,7 @@ class OperationTests(unittest.TestCase):
 
 class SecretTests(unittest.TestCase):
     def test_resolves_only_declared_references(self):
-        connection = parse_workspace(json.dumps(example())).connections[0]
+        connection = parse_mirroir(json.dumps(example())).connections[0]
         calls = []
 
         def provider(key):
@@ -302,8 +302,7 @@ class MetadataUrlTests(unittest.TestCase):
         self.env = {
             name: value
             for name, value in os.environ.items()
-            if name == "WORKSPACE_METADATA_URL"
-            or name.startswith("WORKSPACE_METADATA__")
+            if name == "MIRROIR_METADATA_URL" or name.startswith("MIRROIR_METADATA__")
         }
         for name in self.env:
             os.environ.pop(name)
@@ -314,15 +313,15 @@ class MetadataUrlTests(unittest.TestCase):
         )
 
     def test_a_direct_url_wins(self):
-        os.environ["WORKSPACE_METADATA_URL"] = "sqlite:///direct.sqlite"
-        os.environ["WORKSPACE_METADATA__HOST"] = "h"
+        os.environ["MIRROIR_METADATA_URL"] = "sqlite:///direct.sqlite"
+        os.environ["MIRROIR_METADATA__HOST"] = "h"
         self.assertEqual(metadata_url(), "sqlite:///direct.sqlite")
 
     def test_composes_from_individual_parts(self):
         parts = {
-            "WORKSPACE_METADATA__HOST": "postgres-rw.automation.svc",
-            "WORKSPACE_METADATA__USERNAME": "metabase",
-            "WORKSPACE_METADATA__PASSWORD": "p@ss word/2",
+            "MIRROIR_METADATA__HOST": "postgres-rw.automation.svc",
+            "MIRROIR_METADATA__USERNAME": "metabase",
+            "MIRROIR_METADATA__PASSWORD": "p@ss word/2",
         }
         os.environ.update(parts)
         # Port and database default to the CNPG convention: 5432, db = username.
@@ -332,8 +331,8 @@ class MetadataUrlTests(unittest.TestCase):
         )
         os.environ.update(
             {
-                "WORKSPACE_METADATA__PORT": "5433",
-                "WORKSPACE_METADATA__DATABASE": "other",
+                "MIRROIR_METADATA__PORT": "5433",
+                "MIRROIR_METADATA__DATABASE": "other",
             }
         )
         self.assertEqual(
@@ -342,7 +341,7 @@ class MetadataUrlTests(unittest.TestCase):
         )
 
     def test_unconfigured_is_none(self):
-        os.environ["WORKSPACE_METADATA__HOST"] = "h"
+        os.environ["MIRROIR_METADATA__HOST"] = "h"
         self.assertIsNone(metadata_url())  # username and password missing
 
 
@@ -370,7 +369,7 @@ class CliOperationTests(unittest.TestCase):
             )
             config = example()
             config["connections"][1]["settings"]["data_dir"] = str(root / "health")
-            path = root / "workspace.json"
+            path = root / "mirroir.json"
             path.write_text(json.dumps(config))
             common = ["--config", str(path)]
             metadata = ["--metadata", f"sqlite:///{root / 'meta.sqlite'}"]

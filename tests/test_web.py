@@ -16,14 +16,14 @@ import dlt
 import requests
 from fastapi.testclient import TestClient
 
-from src.core.config import load_workspace
+from src.core.config import load_mirroir
 from src.core.operations import MetadataStore, OperationError
 from src.core.runner import execute_operation
-from src.core.service import InlineExecutor, SubprocessExecutor, WorkspaceService
+from src.core.service import InlineExecutor, MirroirService, SubprocessExecutor
 from src.web.app import SESSION_COOKIE, create_app
 from tests.test_artifacts import export
+from tests.test_mirroir import example
 from tests.test_operations import listens_response
-from tests.test_workspace import example
 
 TOKEN = "test-token-0123456789"
 BEARER = {"Authorization": f"Bearer {TOKEN}"}
@@ -40,13 +40,13 @@ class WebTests(unittest.TestCase):
             "metabase": "https://metabase.example/",
         }
         config["connections"][1]["dashboards"] = {"Health": 24}
-        self.config_path = self.root / "workspace.json"
+        self.config_path = self.root / "mirroir.json"
         self.config_path.write_text(json.dumps(config, indent=2))
         self.store = MetadataStore(f"sqlite:///{self.root / 'meta.sqlite'}")
         self.addCleanup(self.store.engine.dispose)
         self.store.migrate()
         self.executed = []
-        self.service = WorkspaceService(
+        self.service = MirroirService(
             self.config_path,
             self.store,
             self.root / "artifacts",
@@ -63,7 +63,7 @@ class WebTests(unittest.TestCase):
     def execute(self, operation_id):
         self.executed.append(operation_id)
         return execute_operation(
-            load_workspace(self.config_path),
+            load_mirroir(self.config_path),
             operation_id,
             store=self.store,
             destination=dlt.destinations.duckdb(
@@ -243,9 +243,9 @@ class WebTests(unittest.TestCase):
     def test_prefect_run_links_use_the_backend_run(self):
         from src.core.runner import run_connection
 
-        workspace = load_workspace(self.config_path)
+        mirroir = load_mirroir(self.config_path)
         run_connection(
-            workspace,
+            mirroir,
             "music",
             store=self.store,
             origin="prefect",
@@ -273,7 +273,7 @@ class SubprocessExecutorTests(unittest.TestCase):
                 json.dumps(export(("2026-06-05", 1)))
             )
             config["connections"][1]["settings"]["data_dir"] = str(root / "health")
-            path = root / "workspace.json"
+            path = root / "mirroir.json"
             path.write_text(json.dumps(config))
             metadata = f"sqlite:///{root / 'meta.sqlite'}"
             store = MetadataStore(metadata)
@@ -290,7 +290,7 @@ class SubprocessExecutorTests(unittest.TestCase):
                     metadata,
                 ]
             )
-            service = WorkspaceService(path, store, root / "artifacts", executor)
+            service = MirroirService(path, store, root / "artifacts", executor)
             operation = service.request_sync("health")
             self.assertEqual(executor.children[0].wait(timeout=120), 0)
             attempts = store.attempts(operation)

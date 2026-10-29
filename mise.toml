@@ -27,12 +27,14 @@ DESTINATION__POSTGRES__CREDENTIALS__HOST = "postgres-metabase-rw.automation.svc"
 DESTINATION__POSTGRES__CREDENTIALS__PORT = "5432"
 DESTINATION__POSTGRES__CREDENTIALS__DATABASE = "metabase"
 DESTINATION__POSTGRES__CREDENTIALS__USERNAME = "metabase"
-# The workspace's own metadata store: schema workspace_meta in the same instance.
-# The password is a fnox secret; the composed URL is built from these parts.
-WORKSPACE_METADATA__HOST = "postgres-metabase-rw.automation.svc"
-WORKSPACE_METADATA__PORT = "5432"
-WORKSPACE_METADATA__DATABASE = "metabase"
-WORKSPACE_METADATA__USERNAME = "metabase"
+# Mirroir's own metadata store (decision 015): schema mirroir_meta in the
+# postgres-mirroir CNPG cluster. The password is a fnox secret (the app user's
+# password from the cluster's postgres-mirroir-app secret); the URL is composed
+# from these parts.
+MIRROIR_METADATA__HOST = "postgres-mirroir-rw.automation.svc"
+MIRROIR_METADATA__PORT = "5432"
+MIRROIR_METADATA__DATABASE = "mirroir"
+MIRROIR_METADATA__USERNAME = "mirroir"
 # Data mounts on the Prefect worker; override for local imports.
 BROWSER_HISTORY__DATA_DIR = "/root/.prefect/data/browser"
 APPLE_HEALTH__DATA_DIR = "/root/.prefect/data/health"
@@ -73,28 +75,28 @@ secrets = [
 ]
 run = "prefect deploy --all --prefect-file prefect.yaml"
 
-# Workspace reconciliation with the cluster's Prefect (decision 013). The local
-# workspace.json must match the copy on the NFS export; flow runs read the
-# cluster path (WORKSPACE_PREFECT_CONFIG_PATH), not this file.
-[tasks."workspace:deploy"]
-description = "Reconcile Prefect deployments with workspace.json (see plan first)"
+# Mirroir reconciliation with the cluster's Prefect (decision 013). The local
+# mirroir.json must match the copy on the NFS export; flow runs read the
+# cluster path (MIRROIR_PREFECT_CONFIG_PATH), not this file.
+[tasks."mirroir:deploy"]
+description = "Reconcile Prefect deployments with mirroir.json (see plan first)"
 secrets = [
   "PREFECT_API_URL",
   "PREFECT_API_AUTH_STRING",
-  "WORKSPACE_METADATA__PASSWORD",
+  "MIRROIR_METADATA__PASSWORD",
 ]
-env = { WORKSPACE_PREFECT_POOL = "workspace-k8s", WORKSPACE_PREFECT_CONFIG_PATH = "/workspace/data/workspace/workspace.json", WORKSPACE_IMAGE = "ghcr.io/h-wb/pipelines:latest", WORKSPACE_PREFECT_JOB_VARIABLES = '{"namespace":"automation"}' }
-run = "pipelines-workspace --config workspace.json deployments apply"
+env = { MIRROIR_PREFECT_POOL = "mirroir-k8s", MIRROIR_PREFECT_CONFIG_PATH = "/mirroir/data/mirroir/mirroir.json", MIRROIR_IMAGE = "ghcr.io/h-wb/pipelines:latest", MIRROIR_PREFECT_JOB_VARIABLES = '{"namespace":"automation"}' }
+run = "pipelines-mirroir --config mirroir.json deployments apply"
 
-[tasks."workspace:refresh"]
+[tasks."mirroir:refresh"]
 description = "Close unverified runs from Prefect's state (crash -> lost, cancel -> cancelled)"
 secrets = [
   "PREFECT_API_URL",
   "PREFECT_API_AUTH_STRING",
-  "WORKSPACE_METADATA__PASSWORD",
+  "MIRROIR_METADATA__PASSWORD",
 ]
-env = { WORKSPACE_PREFECT_POOL = "workspace-k8s" }
-run = "pipelines-workspace --config workspace.json refresh"
+env = { MIRROIR_PREFECT_POOL = "mirroir-k8s" }
+run = "pipelines-mirroir --config mirroir.json refresh"
 
 [tasks.prefect]
 description = "Run the prefect CLI with secrets (e.g. mise run prefect -- deployment ls)"

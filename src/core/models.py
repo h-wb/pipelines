@@ -1,4 +1,4 @@
-"""Common validation rules for persisted workspace configuration."""
+"""Common validation rules for persisted mirroir configuration."""
 
 from typing import Annotated
 

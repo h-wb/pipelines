@@ -22,7 +22,7 @@ from sqlalchemy.exc import OperationalError
 
 from src.cli.main import main
 from src.core.artifacts import receive_file, submit_artifact
-from src.core.config import parse_workspace
+from src.core.config import parse_mirroir
 from src.core.operations import (
     SCHEMA_VERSION,
     MetadataStore,
@@ -32,9 +32,9 @@ from src.core.operations import (
 from src.core.runner import AlreadyImported, IngestionFailed, import_artifact
 from src.integrations.formats import InvalidArtifact
 from src.integrations.sources import create_source
-from tests.test_workspace import example
+from tests.test_mirroir import example
 
-CUTOFF = "2026-06-04"  # from examples/workspace.json
+CUTOFF = "2026-06-04"  # from examples/mirroir.json
 
 
 def export(*points):
@@ -56,8 +56,8 @@ class ArtifactTests(unittest.TestCase):
         other = copy.deepcopy(config["connections"][0])
         other["id"] = "other_health"
         config["connections"].append(other)
-        self.workspace = parse_workspace(json.dumps(config))
-        self.health = self.workspace.connections[0]
+        self.mirroir = parse_mirroir(json.dumps(config))
+        self.health = self.mirroir.connections[0]
 
     def open_store(self):
         store = MetadataStore(f"sqlite:///{self.root / 'meta.sqlite'}")
@@ -74,7 +74,7 @@ class ArtifactTests(unittest.TestCase):
 
     def submit(self, path, role="ongoing", connection=None, store=None):
         return submit_artifact(
-            self.workspace,
+            self.mirroir,
             connection or self.health,
             path,
             role,
@@ -84,7 +84,7 @@ class ArtifactTests(unittest.TestCase):
 
     def load(self, artifact, store=None, **kwargs):
         return import_artifact(
-            self.workspace,
+            self.mirroir,
             artifact["connection_id"],
             artifact["id"],
             store=store or self.store,
@@ -122,7 +122,7 @@ class ArtifactTests(unittest.TestCase):
             with self.subTest(content=content), self.assertRaises(InvalidArtifact):
                 self.submit(self.write("bad.json", content))
         self.assertFalse((self.root / "artifacts").exists())
-        self.assertEqual(self.store.list_artifacts(self.workspace.id, "health"), [])
+        self.assertEqual(self.store.list_artifacts(self.mirroir.id, "health"), [])
 
     def test_identity_is_per_connection_and_role_conflicts_are_refused(self):
         path = self.write("a.json", export(("2026-06-05", 1)))
@@ -133,7 +133,7 @@ class ArtifactTests(unittest.TestCase):
         self.assertEqual(first["id"], again["id"])
         with self.assertRaises(OperationError):
             self.submit(path, role="historical")
-        other, _ = self.submit(path, connection=self.workspace.connections[1])
+        other, _ = self.submit(path, connection=self.mirroir.connections[1])
         self.assertNotEqual(other["id"], first["id"])
         self.assertEqual(oct(os.stat(first["storage_path"]).st_mode)[-3:], "440")
 
@@ -156,7 +156,7 @@ class ArtifactTests(unittest.TestCase):
         legacy = directory / "export.json"
         legacy.write_text(json.dumps(export(("2026-06-05", 1))))
         stamp = os.stat(legacy).st_mtime
-        connection = parse_workspace(
+        connection = parse_mirroir(
             json.dumps(
                 {
                     **example(),
@@ -284,7 +284,7 @@ class ArtifactCliTests(unittest.TestCase):
     def test_submit_import_list(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            path = root / "workspace.json"
+            path = root / "mirroir.json"
             path.write_text(json.dumps(example()))
             exported = root / "export.json"
             exported.write_text(json.dumps(export(("2026-06-05", 1))))

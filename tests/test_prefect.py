@@ -14,21 +14,21 @@ from pathlib import Path
 
 from src.adapters.prefect import PrefectOrchestrator
 from src.cli.main import main
-from src.core.config import ConfigurationError, parse_workspace
+from src.core.config import ConfigurationError, parse_mirroir
 from src.core.operations import MetadataStore
 from src.core.runner import request_sync
-from tests.test_workspace import example
+from tests.test_mirroir import example
 
 POOL = "test-pool"
 
 
-def workspace(schedule=None, drop_health=False):
+def mirroir(schedule=None, drop_health=False):
     config = example()
     if schedule:
         config["connections"][0]["schedule"] = schedule
     if drop_health:
         config["connections"] = config["connections"][:1]
-    return parse_workspace(json.dumps(config))
+    return parse_mirroir(json.dumps(config))
 
 
 class PrefectAdapterTests(unittest.TestCase):
@@ -57,7 +57,7 @@ class PrefectAdapterTests(unittest.TestCase):
         self.orchestrator = PrefectOrchestrator(
             self.store,
             POOL,
-            "/workspace/workspace.json",
+            "/mirroir/mirroir.json",
             image="ghcr.io/x/pipelines:abc",
         )
 
@@ -67,7 +67,7 @@ class PrefectAdapterTests(unittest.TestCase):
 
     def test_plan_apply_converges_and_reports_drift(self):
         daily = {"cron": "0 3 * * *", "timezone": "Europe/Paris"}
-        ws = workspace(schedule=daily)
+        ws = mirroir(schedule=daily)
         plan = self.orchestrator.plan(ws)
         self.assertEqual(
             sorted((c["action"], c["deployment"]) for c in plan),
@@ -83,8 +83,8 @@ class PrefectAdapterTests(unittest.TestCase):
             actual["personal-music"]["comparable"]["image"], "ghcr.io/x/pipelines:abc"
         )
 
-        # A schedule change in the workspace is an update...
-        hourly = workspace(schedule={"cron": "0 * * * *", "timezone": "Europe/Paris"})
+        # A schedule change in the mirroir is an update...
+        hourly = mirroir(schedule={"cron": "0 * * * *", "timezone": "Europe/Paris"})
         [change] = self.orchestrator.plan(hourly)
         self.assertEqual(
             (change["action"], list(change["changes"])), ("update", ["schedule"])
@@ -110,7 +110,7 @@ class PrefectAdapterTests(unittest.TestCase):
         self.converge(hourly)
 
         # ...and a removed connection is a delete.
-        removed = workspace(
+        removed = mirroir(
             schedule={"cron": "0 * * * *", "timezone": "Europe/Paris"}, drop_health=True
         )
         [delete] = self.orchestrator.plan(removed)
@@ -123,7 +123,7 @@ class PrefectAdapterTests(unittest.TestCase):
         from prefect import get_client
         from prefect.states import Cancelled, Crashed
 
-        ws = workspace()
+        ws = mirroir()
         self.converge(ws)
         crashed = request_sync(ws, "music", store=self.store, origin="request")
         self.orchestrator.submit(crashed.id)
@@ -168,7 +168,7 @@ class PrefectAdapterTests(unittest.TestCase):
             {"cron": "0 3 * * *", "timezone": "Mars/Base"},
         ):
             with self.subTest(bad=bad), self.assertRaises(ConfigurationError):
-                workspace(schedule=bad)
+                mirroir(schedule=bad)
 
 
 class OrchestrationCliTests(unittest.TestCase):
@@ -176,9 +176,9 @@ class OrchestrationCliTests(unittest.TestCase):
 
     def setUp(self):
         # A machine without Prefect configured must still get a clear refusal.
-        saved = os.environ.pop("WORKSPACE_PREFECT_POOL", None)
+        saved = os.environ.pop("MIRROIR_PREFECT_POOL", None)
         if saved is not None:
-            self.addCleanup(os.environ.__setitem__, "WORKSPACE_PREFECT_POOL", saved)
+            self.addCleanup(os.environ.__setitem__, "MIRROIR_PREFECT_POOL", saved)
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         root = Path(self.tmp.name)
@@ -186,7 +186,7 @@ class OrchestrationCliTests(unittest.TestCase):
         for connection in config["connections"]:
             if connection["integration"] == "apple_health":
                 connection["settings"]["data_dir"] = str(root)  # readable
-        self.config = root / "workspace.json"
+        self.config = root / "mirroir.json"
         self.config.write_text(json.dumps(config))
         self.base = ["--config", str(self.config)]
         self.metadata = ["--metadata", f"sqlite:///{root / 'meta.sqlite'}"]
@@ -196,7 +196,7 @@ class OrchestrationCliTests(unittest.TestCase):
             with self.subTest(command=command):
                 with redirect_stderr(io.StringIO()) as err:
                     self.assertEqual(main([*self.base, *command, *self.metadata]), 2)
-                self.assertIn("WORKSPACE_PREFECT_POOL", err.getvalue())
+                self.assertIn("MIRROIR_PREFECT_POOL", err.getvalue())
 
     def test_credential_commands_work_without_the_orchestrator(self):
         # Regression: the orchestrator wiring once moved `check`'s import away.

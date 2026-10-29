@@ -54,9 +54,9 @@ Thumbs.db
 .coverage
 htmlcov/
 
-# Machine-local workspace configuration and retained inputs
-/workspace.json
-.workspace/
+# Machine-local mirroir configuration and retained inputs
+/mirroir.json
+.mirroir/
 
 # mise
 mise.local.toml

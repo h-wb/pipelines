@@ -29,9 +29,11 @@ GITHUB__AUTHOR_EMAILS          = { provider = "protonpass", value = "pass://env-
 DESTINATION__POSTGRES__CREDENTIALS__PASSWORD = { provider = "protonpass", value = "pass://env-dlt/postgres-metabase/password" }
 PREFECT_API_URL                              = { provider = "protonpass", value = "pass://env-dlt/prefect/api-url" }
 PREFECT_API_AUTH_STRING                      = { provider = "protonpass", value = "pass://env-dlt/prefect/api-auth-string" }
-# Workspace metadata database (schema workspace_meta in postgres-metabase). The
-# URL is composed from WORKSPACE_METADATA__* parts; the password is the same
-# ProtonPass item the warehouse destination uses. The workspace master key is
-# granted only to tasks that decrypt built-in secrets.
-WORKSPACE_METADATA__PASSWORD                   = { provider = "protonpass", value = "pass://env-dlt/postgres-metabase/password" }
-WORKSPACE_SECRET_KEY                          = { provider = "protonpass", value = "pass://env-dlt/workspace/secret-key" }
+# Mirroir metadata database (schema mirroir_meta in the postgres-mirroir CNPG
+# cluster, decision 015). In the cluster, flow-run Jobs read the password from
+# the CNPG-generated postgres-mirroir-app secret; this ProtonPass item holds the
+# same app-user password for the operator's laptop (create it from the cluster
+# secret after bootstrap). The mirroir master key is granted only to tasks that
+# decrypt built-in secrets.
+MIRROIR_METADATA__PASSWORD                     = { provider = "protonpass", value = "pass://env-dlt/mirroir/metadata-password" }
+MIRROIR_SECRET_KEY                            = { provider = "protonpass", value = "pass://env-dlt/mirroir/secret-key" }

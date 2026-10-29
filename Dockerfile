@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # One image for the whole runtime side (decision 012): flow runs in Kubernetes
-# Jobs, the Kubernetes worker, and (later) the workspace server. Nothing is
+# Jobs, the Kubernetes worker, and (later) the mirroir server. Nothing is
 # installed at run time; uv.lock is the source of truth for every dependency,
 # and the image digest identifies the exact code a flow run executed.
 
@@ -30,7 +30,7 @@ WORKDIR /app
 COPY --from=build /app /app
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
-    WORKSPACE_PREFECT_CONFIG_PATH=/workspace/data/workspace/workspace.json
+    MIRROIR_PREFECT_CONFIG_PATH=/mirroir/data/mirroir/mirroir.json
 # Set by CI to the commit the image was built from; recorded on every attempt.
 ARG PIPELINES_CODE_REVISION=unknown
 ENV PIPELINES_CODE_REVISION=${PIPELINES_CODE_REVISION}

@@ -1,1 +1,1 @@
-"""Workspace application contracts; independent of execution backends."""
+"""Mirroir application contracts; independent of execution backends."""

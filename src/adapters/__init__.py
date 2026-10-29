@@ -1,1 +1,1 @@
-"""Adapters from workspace concepts to external systems."""
+"""Adapters from mirroir concepts to external systems."""
