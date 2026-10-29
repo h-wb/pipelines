@@ -815,3 +815,14 @@ finished in a follow-up session after Codex hit its usage limit mid-test-update.
 - Web resource selection UI and analysis-parameter forms are not built; both are
   configuration-only for now.
 - Cross-source packages (crossovers, `int_rides`) remain on the legacy path.
+
+### Live release
+
+Released `ghcr.io/h-wb/pipelines:sha-d040ebd0d2f625726228c618b2954b3645dbdded`
+(image workflow 40946203307). The live configuration's `deployment.image` was
+updated and applied through the interface; both Prefect deployments report the new
+image. Home-ops commit `f2055b791` pins server and miroir worker; Flux reconciled,
+both rollouts ready, server started cleanly with the live configuration. A
+model-only operation (`38ed6214-6bbe-47a2-8ef7-78f20e00a9d5`) completed in Job
+`hairy-alligator-76phw` on the release image. No metadata migration. No new
+connections were created; legacy GitHub/Bike Share/browser deployments are unchanged.
