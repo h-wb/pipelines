@@ -36,6 +36,18 @@ from tests.test_operations import listens_response
 
 
 class AnalysisPlanTests(unittest.TestCase):
+    def test_analysis_edits_do_not_invalidate_source_requests(self):
+        config = example()
+        before = parse_miroir(json.dumps(config))
+        config["connections"][0]["analysis"] = {"timezone": "America/Toronto"}
+        after = parse_miroir(json.dumps(config))
+        self.assertEqual(before.connections[0].revision, after.connections[0].revision)
+        self.assertNotEqual(before.revision, after.revision)
+        self.assertNotEqual(
+            analysis_plan(before.connections[0]).receipt,
+            analysis_plan(after.connections[0]).receipt,
+        )
+
     def test_bindings_accounts_and_timezone_are_part_of_the_plan(self):
         config = example()
         first = parse_miroir(json.dumps(config)).connections[0]

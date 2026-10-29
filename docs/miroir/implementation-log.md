@@ -686,7 +686,7 @@ Validation:
 
 - Ruff lint/format and mypy passed for the whole maintained slice including
   `src/pipelines/transform.py`.
-- The full unittest suite passed 99 tests, including the four real Prefect API
+- The full unittest suite passed 100 tests, including the four real Prefect API
   scenarios and three disposable Postgres/dbt scenarios. The latter exercise
   automatic load/build with real Postgres metadata, two health accounts, explicit
   raw binding, metrics-only exports, new sleep/workout columns, numeric variants,
@@ -701,3 +701,8 @@ Validation:
   before uploads/files, shows current freshness and its dashboard/rebuild actions,
   and keeps relation names collapsed. Added logical SQL dashboard examples under
   `examples/analysis-dashboards.json`; they are seeds, not reconciled managed assets.
+- Release review separated source revisions from analysis receipts: timezone edits
+  preserve queued ingestion and existing source revision identities; queued
+  rebuilds refuse changed analysis plans. A model-only operation does not claim
+  changed source settings were applied. Failed/interrupted rebuilds mark analysis
+  stale even without another load, since dbt may have partially replaced outputs.

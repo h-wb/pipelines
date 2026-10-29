@@ -386,6 +386,18 @@ class MetadataStore:
                 .order_by(attempts.c.transformed_at.desc(), attempts.c.id.desc())
                 .limit(1)
             ).first()
+            model_outcome = db.execute(
+                sa.select(attempts.c.transformation)
+                .select_from(joined)
+                .where(
+                    scope,
+                    attempts.c.transformation.in_(
+                        ("succeeded", "failed", "lost", "cancelled")
+                    ),
+                )
+                .order_by(attempts.c.id.desc())
+                .limit(1)
+            ).scalar()
             pending = db.execute(
                 sa.select(sa.func.count())
                 .select_from(operations.outerjoin(attempts))
@@ -394,7 +406,11 @@ class MetadataStore:
         ingested, transformed = _aware(ingested), _aware(transformed)
         if ingested is None:
             analysis = "no_data"
-        elif transformed is not None and transformed >= ingested:
+        elif (
+            transformed is not None
+            and transformed >= ingested
+            and model_outcome == "succeeded"
+        ):
             analysis = "current"
         else:
             analysis = "stale"
@@ -425,6 +441,7 @@ class MetadataStore:
                 .where(
                     operations.c.miroir_id == miroir_id,
                     operations.c.connection_id == connection_id,
+                    operations.c.kind != "models",
                     attempts.c.ingestion != "blocked",
                 )
                 .order_by(attempts.c.id.desc())

@@ -37,7 +37,7 @@ Miroir (decision 014); history keeps its own words.
   sources. Integrations declare settings schemas and credential fields.
 - `dbt/` — models (staging + reporting), profiles read
   `DESTINATION__POSTGRES__CREDENTIALS__*` env.
-- `tests/` — unittest; no pytest. 99 tests, ~95s, include four against a real
+- `tests/` — unittest; no pytest. 100 tests, ~95s, include four against a real
   temporary Prefect API (`prefect_test_harness`), CLI subprocess tests, and three
   disposable Postgres/dbt scenarios (set `MIROIR_TEST_POSTGRES_BIN` to the bin
   directory of an installed Postgres, or put `initdb`/`pg_ctl` on PATH).

@@ -125,6 +125,7 @@ class WebTests(WebFixture):
         self.assertEqual(
             self.service.connection("health")["status"]["analysis"], "stale"
         )
+        self.assertEqual(self.service.connection("health")["configuration"], "applied")
         self.assertEqual(
             self.client.put(
                 "/api/connections/health/analysis",

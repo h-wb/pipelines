@@ -183,8 +183,8 @@ class ResolvedConnection:
     integration: IntegrationDefinition
     settings: StrictModel
     binding: Binding
-    # Hash of this connection's normalized configuration (with the miroir ID).
-    # Operations record it, so editing one connection does not block another's.
+    # Hash of this connection's source execution configuration (with miroir ID).
+    # Analysis has its own plan receipt; timezone edits don't invalidate ingestion.
     revision: str = ""
     miroir_id: str = ""
 
@@ -297,7 +297,14 @@ def parse_miroir(text: str) -> ResolvedMiroir:
     connections = [
         replace(
             c,
-            revision=_hash({"miroir": config.id, **entries[c.config.id]}),
+            revision=_hash(
+                {
+                    "miroir": config.id,
+                    **{
+                        k: v for k, v in entries[c.config.id].items() if k != "analysis"
+                    },
+                }
+            ),
             miroir_id=config.id,
         )
         for c in connections

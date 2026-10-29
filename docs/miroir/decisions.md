@@ -561,3 +561,11 @@ Ingestion success survives model failure. Activity presents build status, output
 relations, rebuild, and configured Metabase links. Analysis settings stay separate
 from source settings. Dashboard packaging/reconciliation and explicit cross-source
 input selection remain subsequent work (product-plan milestone 6).
+
+Source execution revisions exclude analysis settings, preserving existing source
+operation identities. The analysis receipt captures timezone/plan changes instead.
+Queued rebuilds pin that receipt and refuse changed analysis settings; source
+loads build the analysis plan resolved when they execute. Model-only operations
+never mark changed source settings as applied. A failed/interrupted build makes
+analysis stale even without a newer load, because dbt may have replaced only some
+relations before failing.

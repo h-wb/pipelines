@@ -194,6 +194,55 @@ class OperationTests(unittest.TestCase):
             status["last_build"]["transformation_detail"], plans[0].receipt
         )
 
+        def failing(plan):
+            raise RuntimeError("model test failed")
+
+        operation = request_models(miroir, "music", store=self.store, origin="local")
+        outcome = execute_operation(
+            miroir,
+            operation.id,
+            store=self.store,
+            destination="unused",
+            resolve_credentials=lambda c: self.fail("source credentials requested"),
+            transform=failing,
+        )
+        self.assertEqual(
+            (outcome.ingestion, outcome.transformation), ("not_run", "failed")
+        )
+        # dbt may have replaced some relations before a model/test failed.
+        self.assertEqual(self.status(miroir)["analysis"], "stale")
+        self.assertEqual(self.status(miroir)["last_ingestion_success"], ingested)
+        operation = request_models(miroir, "music", store=self.store, origin="local")
+        execute_operation(
+            miroir,
+            operation.id,
+            store=self.store,
+            destination="unused",
+            resolve_credentials=lambda c: self.fail("source credentials requested"),
+            transform=plans.append,
+        )
+        self.assertEqual(self.status(miroir)["analysis"], "current")
+
+        requested = request_models(miroir, "music", store=self.store, origin="local")
+        config = example()
+        config["connections"] = config["connections"][:1]
+        config["connections"][0]["analysis"] = {"timezone": "America/Toronto"}
+        changed = parse_miroir(json.dumps(config))
+        self.assertEqual(
+            changed.connections[0].revision, miroir.connections[0].revision
+        )
+        with self.assertRaisesRegex(
+            OperationError, "Analysis settings or models changed"
+        ):
+            execute_operation(
+                changed,
+                requested.id,
+                store=self.store,
+                destination="unused",
+                resolve_credentials=lambda c: self.fail("source credentials requested"),
+                transform=plans.append,
+            )
+
     def test_crashed_model_build_preserves_successful_ingestion(self):
         miroir = self.miroir()
         operation = self.run_music(miroir)

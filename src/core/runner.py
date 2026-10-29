@@ -114,14 +114,22 @@ def request_models(
     origin: Origin,
 ) -> Operation:
     connection = _connection(miroir, connection_id)
-    if analysis_plan(connection) is None:
+    plan = analysis_plan(connection)
+    if plan is None:
         raise OperationError("This integration has no analysis models")
     if (
         store.connection_status(miroir.id, connection_id)["last_ingestion_success"]
         is None
     ):
         raise OperationError("Import or sync data before rebuilding analysis")
-    return _new_operation(store, miroir, connection, origin, kind="models")
+    return _new_operation(
+        store,
+        miroir,
+        connection,
+        origin,
+        kind="models",
+        options=json.dumps({"analysis_receipt": plan.receipt}),
+    )
 
 
 def _new_operation(
@@ -250,8 +258,16 @@ def execute_operation(
     elif operation.kind == "sync":
         make_source = lambda credentials: create_source(connection, credentials)
     elif operation.kind == "models":
-        if analysis_plan(connection) is None:
+        plan = analysis_plan(connection)
+        if plan is None:
             reason = "This integration has no analysis models"
+        elif (
+            json.loads(operation.options or "{}").get("analysis_receipt")
+            != plan.receipt
+        ):
+            reason = (
+                "Analysis settings or models changed since this rebuild was requested"
+            )
     else:
         artifact = store.get_artifact(miroir.id, str(operation.artifact_id))
         options = json.loads(operation.options or "{}")
