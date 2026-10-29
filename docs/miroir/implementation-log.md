@@ -439,3 +439,23 @@ MIROIR_API_TOKEN, placed by hand until the Bitwarden `miroir` item exists) —
 the pod starts the moment it lands. Validation: helm template against
 app-template 5.3.0 renders the expected deployment, service, and HTTPRoute;
 repo lint clean; CLI lint/format/mypy clean and 73 tests still pass.
+
+## 2026-10-29 — First end-to-end sync on the cluster
+
+A ListenBrainz connection added through the interface (credential stored
+encrypted in postgres-miroir, check passing), deployments applied from the
+interface, and Sync now: a miroir-k8s flow run, its own Kubernetes Job (20s,
+image sha-e9a908c), dlt load into the generated dataset in postgres-metabase,
+dbt models rebuilt, attempt recorded. The whole decision-007 runtime is live.
+
+Shipping the server surfaced four fixes: the ExternalSecret still fetched the
+old Bitwarden item name (rename missed dataFrom.extract.key); commands invoke
+the absolute venv interpreter instead of PATH-resolved console scripts; serve
+bootstraps the config parent directory on a fresh NFS export; and the composed
+metadata URL pins the psycopg2 dialect (current SQLAlchemy resolves bare
+postgresql:// to psycopg 3, which is not installed). The server also now sends
+the Prefect API auth string (it submits flow runs like the worker does), the
+interface gained Apply deployments (the plan exposed drift but only the CLI
+could apply), and the Prefect adapter raises OperationError with instructions
+instead of raw HTTP exceptions — a missing deployment or a refused request is a
+readable error page, not a 500.
