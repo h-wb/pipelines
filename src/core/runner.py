@@ -148,9 +148,7 @@ def request_sync(
 ) -> Operation:
     """Record a sync request. It shows as requested until an executor runs it."""
     connection = _connection(miroir, connection_id)
-    if "directory_import" in connection.integration.capabilities and not getattr(
-        connection.settings, "data_dir", None
-    ):
+    if not connection.integration.can_sync(connection.settings):
         raise OperationError("Upload an export or configure a server folder to scan")
     if not {"incremental_sync", "directory_import"} & set(
         connection.integration.capabilities

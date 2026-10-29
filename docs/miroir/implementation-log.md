@@ -572,3 +572,59 @@ token, apply its deployment, and verify a real JSON export before the explicit
 n8n/legacy cutover. Existing n8n workflows and legacy schedules remain active.
 An application-only rollback to schema 3 is unsupported; retain schema-4-capable
 runtimes or restore the pre-migration database with a coordinated rollback.
+
+## 2026-10-29 — Guided connection setup and separate settings (decision 018)
+
+The webhook existed, but users had to add a connection, discover token management
+on its activity page, and apply deployments separately. Adding a connection now
+leads through delivery selection, the relevant settings/credentials, and a first-data
+step. Apple Health offers Upload files and Health Auto Export, with server folders
+under advanced methods. ListenBrainz asks for source credentials and then offers
+the first sync. Existing connections can revisit setup from Settings.
+
+Implemented:
+
+- `src/integrations/delivery.py` describes delivery methods and file presentation;
+  integrations declare these in the registry. Forms separate method-specific
+  settings from account/parser settings. Upload accept types, sender instructions,
+  and role explanations come from metadata. CLI/API integration metadata exposes
+  methods too. Sync readiness uses the same declarations as onboarding.
+- `src/web/connections.py` owns setup/settings routes, with shared form components.
+  Activity keeps status, uploads, files, and history. Settings holds non-secret
+  configuration, source credentials, delivery methods/tokens, and removal. Settings
+  writes are revision-checked patches that preserve other connections, bindings,
+  schedules, dashboard links, credentials, and installation settings. Form snapshots
+  hash the same bytes they read so concurrent edits cannot receive a fresh revision
+  attached to stale field values.
+- Enabling automatic delivery prepares execution before issuing a one-time token.
+  Viewing/retrying setup never replaces an existing token. A waiting page follows
+  automatic receipt and import independently of manual uploads; one-time secret
+  pages are uncacheable and never auto-refresh. Failed preparation keeps the saved
+  connection and lets setup retry without re-entering settings or credentials.
+- `MiroirService.prepare_connection` scopes plan/apply to create/update changes for
+  its connection. Plan entries carry the connection identity; unrelated drift and
+  deletions are never applied. Sync/import requests also prepare their own execution,
+  so first use no longer requires a global Apply deployments action. The Prefect
+  adapter translates preparation HTTP/not-found failures into readable product errors.
+- Administrator API additions: revision-checked settings patches and connection
+  preparation. The selected onboarding method is navigation only: file uploads,
+  receive tokens, and an optional folder can coexist. No config or metadata schema
+  migration, binding change, or automatic token rotation is introduced.
+
+Validation:
+
+- Ruff check/format and mypy pass on the Miroir slice. All 91 unittest tests pass
+  (76 seconds), including four against the real ephemeral Prefect API. Added tests
+  cover delivery-specific fields, no writes for invalid methods/settings, complete
+  webhook onboarding/import, idempotent token setup, no false sender verification
+  from a manual upload, failed preparation/retry, scoped application against real
+  deployment drift/deletions, settings conflicts/preservation, and the same UI for
+  another file integration declared only through registry metadata.
+- Browser preview against temporary state: selected Apple Health delivery, continued
+  through creation and token setup, inspected the waiting page and Settings, and
+  confirmed token responses have no-store headers and no automatic refresh. The
+  activity page keeps uploads available alongside automatic delivery.
+
+Release follows these checks. Real phone delivery and the n8n/legacy cutover remain
+separate; no live connection credentials, schedules, or dataset bindings were edited
+while building the setup flow.

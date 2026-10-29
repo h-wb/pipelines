@@ -243,24 +243,43 @@ The JSON API takes `Authorization: Bearer $MIROIR_API_TOKEN`:
 | `GET /api/config`, `PUT /api/config` with `If-Match: <file_revision>` | Read or replace the configuration |
 | `GET /api/integrations` | Integrations with settings schemas and credential fields |
 | `POST /api/connections` | Add a connection: `{"integration", "id", "settings", "credentials"}`; returns the check result |
+| `PUT /api/connections/{id}/settings` with `If-Match: <file_revision>` | Patch non-secret settings; keeps other connection configuration |
+| `POST /api/connections/{id}/prepare` | Prepare execution for this connection only |
 | `PUT /api/connections/{id}/credentials/{name}` | Replace a credential: `{"value": "..."}` (204) |
 | `POST /api/connections/{id}/check`, `DELETE /api/connections/{id}` | Test or remove a connection |
 | `POST /api/refresh`, `GET /api/deployments/plan` | Reconcile with Prefect (needs `MIROIR_PREFECT_POOL`) |
 
 ### Uploading and automatically receiving Apple Health exports
 
-Add an **Apple Health (Health Auto Export)** connection with a connection ID and
-cutoff date. No server folder or source credentials are required. The optional
-folder field is under **Advanced: server folder scanning**; configuring it retains
-the existing Scan folder action. Without a folder, the connection check reports
-readiness to receive files; it does not claim a phone has connected.
+Add an **Apple Health (Health Auto Export)** connection, then choose how data
+arrives: **Upload files** or **Health Auto Export**. **Advanced delivery methods**
+offers **Scan a server folder**. Enter a connection ID and cutoff date; only the
+folder method asks for a server path. Source credentials are not required.
+
+Continue into first-data setup. Upload setup offers a file picker immediately.
+Automatic setup offers **Enable automatic delivery**, which prepares execution
+for this connection and generates its receiving token. Follow the sender steps,
+then choose **I've configured my sender — check delivery** to wait for the first
+automatic export and its import result. Viewing or retrying setup never replaces
+an active token. Manual uploads do not count as proof that a sender has connected.
+ListenBrainz follows the same journey with account settings, source credentials,
+and a first-sync action. Execution actions prepare only their connection, so there
+is no separate global Apply deployments step for first use.
+
+On an existing connection, **Activity** contains receipts, uploads, imports, and
+history. **Settings** contains account/parser settings, source credentials,
+**Data delivery**, and removal. Non-secret edits use the same conflict checks as
+the configuration editor. Uploads remain available alongside automatic delivery;
+server folder scanning can be added or removed independently. A receiving-only
+check describes readiness, never proof of phone connectivity.
 
 On the connection page, **Upload an export** accepts a Health Auto Export JSON
 file and defaults to importing it immediately. Historical files contribute dates
 before the cutoff; ongoing files contribute dates from the cutoff onwards.
 
-For automatic delivery, choose **Create delivery token** and copy the URL and
-Authorization header shown on the setup page. In Health Auto Export, create a
+For automatic delivery, copy the URL and Authorization header shown during setup.
+For an existing connection, open **Settings → Data delivery → Set up automatic
+delivery**. In Health Auto Export, create a
 REST API automation with JSON format and these settings:
 
 ```http
@@ -282,7 +301,7 @@ import is not repeated.
 Delivery tokens only authorize their own connection's receive endpoint. They
 cannot read history, edit configuration, import historical files, or replay data.
 Tokens are shown once, stored only as hashes, and can be replaced or revoked on
-the connection page. Replacing a token immediately invalidates the previous one;
+the connection's **Settings → Data delivery**. Replacing a token immediately invalidates the previous one;
 removing a connection revokes its token. The installation-wide API token remains
 for administration and the older artifact API. Receiving files does not require
 `MIROIR_SECRET_KEY` when no source credentials need decrypting.

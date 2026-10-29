@@ -13,7 +13,7 @@ import secrets as random_secrets
 import subprocess
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -147,18 +147,16 @@ class MiroirService:
             else "applied"
             if applied == connection.revision
             else "saved_not_applied",
-            "can_sync": bool(
-                "incremental_sync" in connection.integration.capabilities
-                or (
-                    "directory_import" in connection.integration.capabilities
-                    and getattr(connection.settings, "data_dir", None)
-                )
-            ),
+            "can_sync": connection.integration.can_sync(connection.settings),
             "sync_label": "Sync now"
             if "incremental_sync" in connection.integration.capabilities
             else "Scan folder",
             "accepts_files": "artifact_import" in connection.integration.capabilities,
             "delivery": self.delivery_status(connection.config.id, miroir),
+            "file_delivery": asdict(connection.integration.file_delivery)
+            if connection.integration.file_delivery
+            else None,
+            "title": connection.integration.title,
             "credentials": self._credentials(miroir, connection),
             "credential_status": self.store.credential_status(
                 miroir.id, connection.config.id
@@ -218,6 +216,7 @@ class MiroirService:
     def request_sync(self, connection_id: str, origin: Any = "request") -> str:
         from src.core.runner import request_sync
 
+        self.prepare_connection(connection_id)
         operation = request_sync(
             self.miroir(), connection_id, store=self.store, origin=origin
         )
@@ -281,6 +280,7 @@ class MiroirService:
         connection = self._connection(miroir, connection_id)
         if "artifact_import" not in connection.integration.capabilities:
             raise OperationError("Integration does not accept files")
+        self.prepare_connection(connection_id)
         token = random_secrets.token_urlsafe(32)
         self.store.set_delivery_token(
             miroir.id, connection_id, hashlib.sha256(token.encode()).hexdigest()
@@ -316,6 +316,7 @@ class MiroirService:
     ) -> str:
         from src.core.runner import request_import
 
+        self.prepare_connection(connection_id)
         operation = request_import(
             self.miroir(),
             connection_id,
@@ -358,20 +359,108 @@ class MiroirService:
                 "name": definition.name,
                 "title": definition.title,
                 "settings_schema": definition.settings_model.model_json_schema(),
+                "connection_fields": [
+                    name
+                    for name in definition.settings_model.model_fields
+                    if not any(
+                        name in method.settings_fields
+                        for method in definition.delivery_methods
+                    )
+                ],
                 "credentials": [
                     {"name": f.name, "label": f.label, "help": f.help}
                     for f in definition.credentials
                 ],
                 "capabilities": list(definition.capabilities),
+                "delivery_methods": [
+                    asdict(method) for method in definition.delivery_methods
+                ],
+                "file_delivery": asdict(definition.file_delivery)
+                if definition.file_delivery
+                else None,
             }
             for definition in INTEGRATIONS.values()
         ]
 
+    def connection_settings(self, connection_id: str) -> dict[str, Any]:
+        import json
+
+        from src.core.config import parse_miroir
+
+        raw, revision = self._raw_config()
+        miroir = parse_miroir(json.dumps(raw))
+        connection = self._connection(miroir, connection_id)
+        definition = next(
+            i for i in self.integrations() if i["name"] == connection.integration.name
+        )
+        return {
+            "connection": self.connection(connection_id),
+            "integration": definition,
+            "values": connection.settings.model_dump(mode="json"),
+            "file_revision": revision,
+        }
+
+    def setup_method(self, integration: str, method: str = "") -> dict[str, Any]:
+        definition = next(
+            (i for i in self.integrations() if i["name"] == integration), None
+        )
+        if definition is None:
+            raise OperationError("Unknown integration")
+        methods = definition["delivery_methods"]
+        selected = (
+            next((m for m in methods if m["id"] == (method or methods[0]["id"])), None)
+            if methods
+            else None
+        )
+        if selected is None:
+            raise OperationError(
+                "This integration does not support that delivery method"
+            )
+        return dict(selected)
+
+    def update_connection_settings(
+        self, connection_id: str, settings: dict[str, Any], expected_revision: str
+    ) -> None:
+        from src.core.config import ConfigurationConflict
+
+        if not expected_revision:
+            raise OperationError("Reload settings before saving")
+        raw, revision = self._raw_config()
+        if revision != expected_revision:
+            raise ConfigurationConflict(
+                "Configuration changed since you loaded it; reload settings before saving"
+            )
+        self._connection(self.miroir(), connection_id)
+        target = next(c for c in raw["connections"] if c["id"] == connection_id)
+        updated = {**target["settings"], **settings}
+        target["settings"] = {
+            key: value for key, value in updated.items() if value is not None
+        }
+        self._write_config(raw, expected_revision)
+
+    def prepare_connection(self, connection_id: str) -> None:
+        """Make this connection executable without applying other connections' drift."""
+        miroir = self.miroir()
+        self._connection(miroir, connection_id)
+        if self.orchestrator is None:
+            return  # The local executor needs no deployment.
+        try:
+            changes = [
+                change
+                for change in self.orchestrator.plan(miroir)
+                if change.get("connection_id") == connection_id
+                and change["action"] in ("create", "update")
+            ]
+            if changes:
+                self.orchestrator.apply(miroir, changes)
+        except OperationError as error:
+            raise OperationError(f"Your connection is saved. {error}") from error
+
     def _raw_config(self) -> tuple[dict[str, Any], str]:
         import json
 
-        revision = file_revision(self.config_path)
-        return json.loads(self.config_path.read_text(encoding="utf-8")), revision
+        data = self.config_path.read_bytes()
+        return json.loads(data), hashlib.sha256(data).hexdigest()
 
     def _write_config(self, raw: dict[str, Any], revision: str) -> ResolvedMiroir:
         import json
@@ -384,6 +473,8 @@ class MiroirService:
         connection_id: str,
         settings: dict[str, Any],
         credentials: dict[str, str],
+        *,
+        delivery_method: str | None = None,
     ) -> str:
         """Add a connection whose credentials are stored by the miroir.
 
@@ -398,6 +489,19 @@ class MiroirService:
         definition = INTEGRATIONS.get(integration)
         if definition is None:
             raise OperationError("Unknown integration")
+        if delivery_method is not None:
+            method = self.setup_method(integration, delivery_method)
+            all_delivery_fields = {
+                name for m in definition.delivery_methods for name in m.settings_fields
+            }
+            if set(settings) & (all_delivery_fields - set(method["settings_fields"])):
+                raise OperationError(
+                    "Settings do not match the selected delivery method"
+                )
+            if any(not settings.get(name) for name in method["settings_fields"]):
+                raise OperationError(
+                    "Provide the settings required for this delivery method"
+                )
         if set(credentials) != set(definition.credential_names):
             raise OperationError("Provide every credential the integration needs")
         secrets = self.secrets

@@ -14,6 +14,7 @@ from pydantic import Field, field_validator
 
 from src.core.models import StrictModel
 from src.integrations import checks
+from src.integrations.delivery import DeliveryMethod, FileDelivery
 
 
 class ListenBrainzSettings(StrictModel):
@@ -48,10 +49,8 @@ class AppleHealthSettings(StrictModel):
     data_dir: str | None = Field(
         default=None,
         min_length=1,
-        title="Watch a server folder (optional)",
-        description="Advanced: folder the scanner reads on the server. "
-        "Leave empty to upload files or receive automatic exports.",
-        json_schema_extra={"advanced": True},
+        title="Server folder",
+        description="A folder readable by the server and the jobs running this connection.",
     )
     cutoff: str = Field(
         title="Cutoff date",
@@ -105,6 +104,8 @@ class IntegrationDefinition:
     input_modes: tuple[str, ...]
     capabilities: tuple[str, ...]
     resources: tuple[ResourceDefinition, ...]
+    delivery_methods: tuple[DeliveryMethod, ...] = ()
+    file_delivery: FileDelivery | None = None
     input_format: str | None = None
     models: ModelBinding | None = None
     # Confirms settings and credentials without loading data; see checks.py.
@@ -113,6 +114,9 @@ class IntegrationDefinition:
     @property
     def credential_names(self) -> tuple[str, ...]:
         return tuple(field.name for field in self.credentials)
+
+    def can_sync(self, settings: Any) -> bool:
+        return any(method.can_sync(settings) for method in self.delivery_methods)
 
 
 INTEGRATIONS = MappingProxyType(
@@ -132,6 +136,13 @@ INTEGRATIONS = MappingProxyType(
             check=checks.listenbrainz,
             input_modes=("api",),
             capabilities=("incremental_sync",),
+            delivery_methods=(
+                DeliveryMethod(
+                    "api",
+                    "Connect your account",
+                    "Miroir fetches your data using your account's access token.",
+                ),
+            ),
             resources=(
                 ResourceDefinition(
                     "listens", ("listened_at", "recording_msid"), "listened_at"
@@ -148,6 +159,32 @@ INTEGRATIONS = MappingProxyType(
             input_modes=("file",),
             capabilities=("directory_import", "artifact_import"),
             input_format="health_auto_export_json",
+            delivery_methods=(
+                DeliveryMethod(
+                    "upload",
+                    "Upload files",
+                    "Choose exports from your device whenever you want to import them.",
+                ),
+                DeliveryMethod(
+                    "webhook",
+                    "Health Auto Export",
+                    "Send exports automatically from your phone to a private receiving URL.",
+                ),
+                DeliveryMethod(
+                    "folder",
+                    "Scan a server folder",
+                    "Read exports from a folder on your server.",
+                    ("data_dir",),
+                    advanced=True,
+                ),
+            ),
+            file_delivery=FileDelivery(
+                label="Health Auto Export JSON",
+                accept=".json,application/json",
+                content_type="application/json",
+                sender_instructions="In Health Auto Export, create a REST API automation and choose JSON as the export format.",
+                role_help="Historical files contribute rows before the cutoff; ongoing files contribute rows from it onwards.",
+            ),
             resources=(
                 ResourceDefinition("metrics", ("metric_name", "date", "source"), None),
                 ResourceDefinition("workouts", ("id",), None),

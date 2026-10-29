@@ -23,6 +23,8 @@ Miroir (decision 014); history keeps its own words.
   (everything both transports call), `secrets.py` (Fernet built-in store,
   env/fnox backends), `artifacts.py` (content-addressed receipt).
 - `src/web/` — FastAPI app + templates. Token auth (`MIROIR_API_TOKEN`).
+  `connections.py` owns guided setup and connection settings; activity/ingestion
+  routes stay in `app.py`. Integration delivery metadata drives the forms.
 - `src/cli/` — `pipelines-mirroir`, one CLI over the same service.
 - `src/adapters/prefect.py` — **the orchestrator seam** (decision 013): three
   verbs — `plan`/`apply` (deployments from config, drift reporting), `submit`
@@ -35,7 +37,7 @@ Miroir (decision 014); history keeps its own words.
   sources. Integrations declare settings schemas and credential fields.
 - `dbt/` — models (staging + reporting), profiles read
   `DESTINATION__POSTGRES__CREDENTIALS__*` env.
-- `tests/` — unittest; no pytest. 84 tests, ~70s, include three against a real
+- `tests/` — unittest; no pytest. 91 tests, ~75s, include four against a real
   temporary Prefect API (`prefect_test_harness`) and CLI subprocess tests.
 
 ## Commands

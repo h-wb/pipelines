@@ -497,3 +497,34 @@ JSON webhooks, and automatic discovery of input formats remain separate work.
 Version 4 also preserves first and latest receipt times separately, so repeated
 identical exports update delivery health without changing artifact identity or
 re-importing successful data.
+
+## 018 — Delivery-aware onboarding; connection activity and settings have separate homes
+
+Status: accepted, 2026-10-29. Refines decision 017's presentation.
+
+Adding a connection selects an integration and a delivery method, collects the
+settings/credentials needed for that method, then guides the user to first data.
+API credentials grant Miroir access to a source; receive tokens grant a sender
+access to one connection. They remain different services and are explained in
+their respective setup steps. Uploads remain available alongside automatic delivery.
+
+Integrations declare delivery methods and supported file-format presentation in
+the registry. Method-specific settings (such as a server folder) are separate
+from interpretation/account settings in forms. The selected method is navigation,
+not an exclusive persisted connection mode: configured credentials, receive tokens,
+and optional folder settings determine which methods are active. Existing config
+files and execution revisions are preserved; no schema migration is needed.
+
+The connection's activity page contains current status, incoming files, imports,
+and run history. Settings contains account/parser settings, source credentials,
+data-delivery methods, token management, and removal. Settings edits validate and
+save through the existing revision-checked configuration service; unrelated
+connections, bindings, schedules, and credentials are preserved.
+
+Setup prepares execution for only its connection, using plan/apply with connection
+identities on create/update changes. It never applies another connection's drift
+or deletes deployments. Sender setup is retryable when execution is unavailable;
+existing tokens are not silently replaced by a retry or by viewing a page. First
+receipt and first successful import are separate evidence, and readiness to receive
+is never shown as proof that a phone is connected. One-time token responses stay
+uncacheable and never refresh automatically.

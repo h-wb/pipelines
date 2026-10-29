@@ -30,7 +30,7 @@ TOKEN = "test-token-0123456789"
 BEARER = {"Authorization": f"Bearer {TOKEN}"}
 
 
-class WebTests(unittest.TestCase):
+class WebFixture(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -83,6 +83,8 @@ class WebTests(unittest.TestCase):
         self.assertEqual(response.status_code, 303)
         return response
 
+
+class WebTests(WebFixture):
     def test_everything_but_login_requires_the_token(self):
         self.assertEqual(self.client.get("/healthz").status_code, 200)
         self.assertEqual(self.client.get("/api/overview").status_code, 401)
@@ -155,14 +157,14 @@ class WebTests(unittest.TestCase):
         self.assertIn("Ready to receive", created.json()["check"]["message"])
         self.login()
         page = self.client.get("/connections/new?integration=apple_health")
-        self.assertIn("<details>", page.text)
+        self.assertIn("Advanced delivery methods", page.text)
         self.assertNotIn('name="setting.data_dir" required', page.text)
         page = self.client.get("/connections/new?integration=listenbrainz")
         self.assertIn('name="setting.username" required', page.text)
         page = self.client.get("/connections/new_health")
         self.assertNotIn("Scan folder", page.text)
         self.assertIn("Waiting for the first export", page.text)
-        self.assertIn("http://testserver/api/connections/new_health/receive", page.text)
+        self.assertIn("/connections/new_health/settings#delivery", page.text)
         response = self.client.post(
             "/connections/new_health/upload",
             files={"file": ("export.json", json.dumps(export(("2026-06-05", 1))))},
@@ -348,7 +350,7 @@ class WebTests(unittest.TestCase):
         self.assertEqual(response.headers["cache-control"], "no-store")
         token = unescape(re.search(r'value="Bearer ([^"]+)"', response.text)[1])
         self.assertTrue(self.service.verify_delivery_token("health", token))
-        page = self.client.get("/connections/health")
+        page = self.client.get("/connections/health/settings")
         self.assertNotIn(token, page.text)
         self.assertIn("Delivery token active", page.text)
         response = self.client.post(url + "/revoke")

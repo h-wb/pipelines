@@ -1,0 +1,55 @@
+{% macro settings_fields(integration, names, values, required_extra=[]) %}
+{% for name in names %}
+{% set prop = integration.settings_schema.properties[name] %}
+<label>{{ prop.title or name }}
+  <input name="setting.{{ name }}" {% if name in integration.settings_schema.get("required", []) or name in required_extra %}required{% endif %} value="{{ values.get(name) or '' }}">
+  {% if prop.description %}<span class="muted">{{ prop.description }}</span>{% endif %}
+</label>
+{% endfor %}
+{% endmacro %}
+
+{% macro upload(c) %}
+<p>Choose a {{ c.file_delivery.label }} file from your device. Miroir keeps the original and records each import.</p>
+<form method="post" action="/connections/{{ c.id }}/upload" enctype="multipart/form-data" class="upload-form">
+  <label>Export file <input type="file" name="file" accept="{{ c.file_delivery.accept }}" required></label>
+  <label>Dates to import
+    <select name="role" required>
+      <option value="ongoing" selected>Ongoing data</option>
+      <option value="historical">Historical data</option>
+    </select>
+  </label>
+  <label><input type="checkbox" name="import_now" value="true" checked> Import after upload</label>
+  <button>Upload</button>
+</form>
+<p class="muted">{{ c.file_delivery.role_help }}</p>
+{% endmacro %}
+
+{% macro endpoint(c, request) %}
+<label>Receiving URL
+  <input class="copy-value" aria-label="Automatic delivery URL" readonly value="{{ request.base_url | string | trim('/') }}/api/connections/{{ c.id }}/receive">
+  <button type="button" onclick="navigator.clipboard.writeText(this.previousElementSibling.value).then(() => this.textContent = 'Copied')">Copy URL</button>
+</label>
+{% endmacro %}
+
+{% macro credential_fields(c) %}
+{% if c.credentials %}
+<p>Miroir uses these credentials to fetch data from your account.</p>
+{% for cred in c.credentials %}
+<div class="setting-block">
+  <strong>{{ cred.label }}</strong>
+  <p class="muted">{{ cred.help }}</p>
+  {% if cred.provider == "miroir" %}
+  <p>{% if cred.set %}Stored{% else %}Not set{% endif %}</p>
+  <form method="post" action="/connections/{{ c.id }}/credentials/{{ cred.name }}" autocomplete="off" class="stack">
+    <label>Replace {{ cred.label }}
+      <input type="password" name="value" required autocomplete="new-password">
+    </label>
+    <button>Save credential</button>
+  </form>
+  {% else %}
+  <p>Managed by {{ cred.provider }}: <code>{{ cred.external_key }}</code></p>
+  {% endif %}
+</div>
+{% endfor %}
+{% endif %}
+{% endmacro %}

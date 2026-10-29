@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge, when %}
+{% from "_connection_forms.html" import settings_fields, credential_fields, endpoint %}
+{% set c = connection %}
+{% block title %}{{ c.id }} settings{% endblock %}
+{% block body %}
+<h1>{{ c.id }} <span class="muted">Settings</span></h1>
+<nav class="tabs"><a href="/connections/{{ c.id }}">Activity</a><strong>Settings</strong></nav>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<h2>Connection settings</h2>
+<p class="muted">{{ integration.title }} · ID {{ c.id }}</p>
+<form class="stack" method="post" action="/connections/{{ c.id }}/settings">
+  <input type="hidden" name="file_revision" value="{{ file_revision }}">
+  {{ settings_fields(integration, integration.connection_fields, values) }}
+  <button>Save settings</button>
+</form>
+
+{% if c.credentials %}<h2>Account credentials</h2>{{ credential_fields(c) }}{% endif %}
+<p>Connection check {{ badge(c.credential_status.state) }} · {{ c.credential_status.message or 'Not checked yet' }}</p>
+<form method="post" action="/connections/{{ c.id }}/check"><button>Test connection</button></form>
+
+<h2 id="delivery">Data delivery</h2>
+{% for method in integration.delivery_methods %}
+{% if method.advanced %}<details class="setting-block"{% if values.get(method.settings_fields[0]) %} open{% endif %}><summary>{{ method.label }}</summary>{% else %}<section class="setting-block"><h3>{{ method.label }}</h3>{% endif %}
+<p>{{ method.description }}</p>
+{% if method.id == 'webhook' %}
+  {% if c.delivery.enabled %}
+  {{ endpoint(c, request) }}
+  <p>Delivery token active · updated {{ when(c.delivery.updated_at) }}. Its value is shown only when created.</p>
+  <p><a href="/connections/{{ c.id }}/setup?method=webhook">Sender instructions and delivery check</a></p>
+  <form class="inline" method="post" action="/connections/{{ c.id }}/delivery-token"><button>Replace delivery token</button></form>
+  <form class="inline" method="post" action="/connections/{{ c.id }}/delivery-token/revoke"><button>Revoke delivery token</button></form>
+  <p class="muted">Replacing or revoking stops clients using the previous token.</p>
+  {% else %}<p>Not enabled. <a href="/connections/{{ c.id }}/setup?method=webhook">Set up automatic delivery</a></p>{% endif %}
+{% elif method.id == 'upload' %}
+  <p>Always available. <a href="/connections/{{ c.id }}#upload">Upload an export</a></p>
+{% elif method.settings_fields %}
+  <form class="stack" method="post" action="/connections/{{ c.id }}/settings">
+    <input type="hidden" name="file_revision" value="{{ file_revision }}">
+    {{ settings_fields(integration, method.settings_fields, values) }}
+    <button>Save folder settings</button>
+    <p class="muted">Clear the folder to stop offering folder scans. Uploads and automatic delivery stay available.</p>
+  </form>
+{% else %}<p><a href="/connections/{{ c.id }}/setup?method={{ method.id }}">Check setup and sync</a></p>{% endif %}
+{% if method.advanced %}</details>{% else %}</section>{% endif %}
+{% endfor %}
+
+<details class="setting-block"><summary>Remove connection</summary>
+<form method="post" action="/connections/{{ c.id }}/remove" class="stack">
+  <p>Deletes configuration, source credentials, and the delivery token. Loaded data, files, and history are kept.</p>
+  <label>Type {{ c.id }} to confirm <input name="confirm" required></label>
+  <button>Remove connection</button>
+</form>
+</details>
+{% endblock %}

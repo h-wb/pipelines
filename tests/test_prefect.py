@@ -17,6 +17,7 @@ from src.cli.main import main
 from src.core.config import ConfigurationError, parse_miroir
 from src.core.operations import MetadataStore, OperationError
 from src.core.runner import request_sync
+from src.core.service import MiroirService
 from tests.test_miroir import example
 
 POOL = "test-pool"
@@ -120,6 +121,43 @@ class PrefectAdapterTests(unittest.TestCase):
             (delete["action"], delete["deployment"]), ("delete", "personal-health")
         )
         self.converge(removed)
+
+    def test_setup_applies_only_its_connection_and_does_not_prune_other_deployments(
+        self,
+    ):
+        raw = example()
+        raw["id"] = "setup_scope"
+        orphan = json.loads(json.dumps(raw["connections"][1]))
+        orphan["id"] = "orphan"
+        raw["connections"].append(orphan)
+        self.converge(parse_miroir(json.dumps(raw)))
+        raw["connections"].pop()
+        raw["deployment"] = {"work_pool": POOL, "image": "ghcr.io/x/pipelines:new"}
+        path = Path(self.tmp.name) / "miroir.json"
+        path.write_text(json.dumps(raw))
+        service = MiroirService(
+            path,
+            self.store,
+            Path(self.tmp.name) / "artifacts",
+            self.orchestrator,
+            orchestrator=self.orchestrator,
+        )
+        service.prepare_connection("health")
+        actual = self.orchestrator.actual(service.miroir())
+        self.assertEqual(
+            actual["setup_scope-health"]["comparable"]["image"],
+            "ghcr.io/x/pipelines:new",
+        )
+        self.assertEqual(
+            actual["setup_scope-music"]["comparable"]["image"],
+            "ghcr.io/x/pipelines:abc",
+        )
+        self.assertIn("setup_scope-orphan", actual)
+        remaining = self.orchestrator.plan(service.miroir())
+        self.assertEqual(
+            {(c["action"], c["deployment"]) for c in remaining},
+            {("update", "setup_scope-music"), ("delete", "setup_scope-orphan")},
+        )
 
     def test_submit_is_idempotent_and_observe_reconciles(self):
         from prefect import get_client

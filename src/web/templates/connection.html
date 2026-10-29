@@ -1,8 +1,10 @@
 {% extends "base.html" %}
 {% from "_macros.html" import badge, when, attempt_cells %}
+{% from "_connection_forms.html" import upload %}
 {% block title %}{{ c.id }}{% endblock %}
 {% block body %}
-<h1>{{ c.id }} <span class="muted">{{ c.integration }}</span></h1>
+<h1>{{ c.id }} <span class="muted">{{ c.title }}</span></h1>
+<nav class="tabs"><strong>Activity</strong><a href="/connections/{{ c.id }}/settings">Settings</a></nav>
 <p>
   Data loaded {{ when(c.status.last_ingestion_success) }} ·
   analysis {{ badge(c.status.analysis) }}{% if c.status.analysis_detail %} <span class="muted">({{ c.status.analysis_detail }})</span>{% endif %} ·
@@ -11,65 +13,20 @@
 </p>
 <p class="muted">Dataset <code>{{ c.binding.dataset_name }}</code> · resources {{ c.resources | join(", ") }}</p>
 
-<h2>{{ "Credentials" if c.credentials else "Connection check" }} {{ badge(c.credential_status.state) }}</h2>
-{% if c.credential_status.message %}<p class="muted">{{ c.credential_status.message }} · {{ when(c.credential_status.at) }}</p>{% endif %}
-{% if c.credentials %}
-<table>
-  <tr><th>Credential</th><th>Stored</th><th>Replace</th></tr>
-  {% for cred in c.credentials %}
-  <tr>
-    <td>{{ cred.label }}<div class="muted">{{ cred.help }}</div></td>
-    {% if cred.provider == "miroir" %}
-    <td>{% if cred.set %}set · updated {{ when(cred.updated_at) }}{% else %}<span class="failed">not set</span>{% endif %}</td>
-    <td>
-      <form method="post" action="/connections/{{ c.id }}/credentials/{{ cred.name }}" autocomplete="off">
-        <input type="password" name="value" required autocomplete="new-password" aria-label="New {{ cred.label }}">
-        <button>Save</button>
-      </form>
-    </td>
-    {% else %}
-    <td colspan="2">from {{ cred.provider }} <code>{{ cred.external_key }}</code> <span class="muted">(managed outside the miroir)</span></td>
-    {% endif %}
-  </tr>
-  {% endfor %}
-</table>
-{% else %}<p class="muted">This integration needs no credentials.</p>{% endif %}
-<form class="inline" method="post" action="/connections/{{ c.id }}/check"><button>Test connection</button></form>
-
+{% if c.credential_status.state in ['rejected', 'check_failed'] %}
+<p class="error">{{ c.credential_status.message }} · <a href="/connections/{{ c.id }}/settings">Review settings</a></p>
+{% endif %}
 {% if c.can_sync %}
 <form class="inline" method="post" action="/connections/{{ c.id }}/sync"><button>{{ c.sync_label }}</button></form>
 {% endif %}
 
 {% if c.accepts_files %}
-<h2>Upload an export</h2>
-<p>Choose a Health Auto Export JSON file from your device. Miroir keeps the original and records each import.</p>
-<form method="post" action="/connections/{{ c.id }}/upload" enctype="multipart/form-data">
-  <input type="file" name="file" accept=".json,application/json" required>
-  <select name="role" required>
-    {% for r in roles %}<option value="{{ r }}"{% if r == "ongoing" %} selected{% endif %}>{{ r }}</option>{% endfor %}
-  </select>
-  <label><input type="checkbox" name="import_now" value="true" checked> import now</label>
-  <button>Upload</button>
-</form>
-<p class="muted">Historical files contribute rows before the connection’s cutoff; ongoing files contribute rows from it on.</p>
-
-<h2>Automatic delivery</h2>
 {% if c.delivery.last_received_at %}
-<p>Last export received {{ when(c.delivery.last_received_at) }} (uploads and automatic delivery).</p>
+<p>Last export received {{ when(c.delivery.last_received_at) }}.</p>
 {% else %}<p>Waiting for the first export.</p>{% endif %}
-<p>In Health Auto Export, add a REST API automation, select JSON, and use this URL:</p>
-<input class="copy-value" aria-label="Automatic delivery URL" readonly value="{{ request.base_url | string | trim('/') }}{{ receive_path }}">
-<button type="button" onclick="navigator.clipboard.writeText(this.previousElementSibling.value).then(() => this.textContent = 'Copied')">Copy URL</button>
-<p>Add <code>Content-Type: application/json</code> and an <code>Authorization</code> header using a delivery token below. Automatic exports are imported as ongoing data, from this connection’s cutoff onwards.</p>
-<p class="muted">Your phone must be able to reach this address, through your home network or VPN for an internal installation. A successful delivery means the file was received and its import requested; check History for the import result.</p>
-{% if c.delivery.enabled %}
-<p>Delivery token active · updated {{ when(c.delivery.updated_at) }}. Its value is shown only when created.</p>
-<form class="inline" method="post" action="/connections/{{ c.id }}/delivery-token"><button>Replace delivery token</button></form>
-<form class="inline" method="post" action="/connections/{{ c.id }}/delivery-token/revoke"><button>Revoke delivery token</button></form>
-<p class="muted">Replacing or revoking the token stops clients using the previous token.</p>
-{% else %}
-<form method="post" action="/connections/{{ c.id }}/delivery-token"><button>Create delivery token</button></form>
-{% endif %}
+<p>Automatic delivery {% if c.delivery.enabled %}enabled{% else %}not enabled{% endif %} · <a href="/connections/{{ c.id }}/settings#delivery">Manage data delivery</a></p>
+<h2 id="upload">Upload an export</h2>
+{{ upload(c) }}
 
 <h2>Files</h2>
 <table>
@@ -109,10 +66,4 @@
   <tr><td colspan="6" class="muted">Nothing has run yet.</td></tr>
   {% endfor %}
 </table>
-<h2>Remove</h2>
-<form method="post" action="/connections/{{ c.id }}/remove">
-  <p class="muted">Deletes this connection’s configuration and stored credentials. Loaded data, files, and history are kept.</p>
-  <input name="confirm" placeholder="type {{ c.id }} to confirm" aria-label="Confirm connection ID">
-  <button>Remove connection</button>
-</form>
 {% endblock %}

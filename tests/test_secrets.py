@@ -291,9 +291,12 @@ class SecretWebAndCliTests(ConnectionSecretTests):
                 follow_redirects=False,
             )
         self.assertEqual(
-            created.headers["location"], "/connections/music?notice=created"
+            created.headers["location"], "/connections/music/setup?method=api"
         )
         page = client.get("/connections/music").text
+        self.assertNotIn(TOKEN, page)
+        self.assertNotIn('name="value"', page)
+        page = client.get("/connections/music/settings").text
         self.assertNotIn(TOKEN, page)
         self.assertIn("Token valid for me", page)
         removed = client.post(

@@ -1,45 +1,61 @@
 {% extends "base.html" %}
+{% from "_connection_forms.html" import settings_fields %}
 {% block title %}Add a connection{% endblock %}
 {% block body %}
 <h1>Add a connection</h1>
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
-{% if not selected %}
-<table>
-  <tr><th>Integration</th><th>Needs</th><th></th></tr>
-  {% for i in integrations %}
-  <tr>
-    <td><strong>{{ i.title }}</strong><div class="muted">{{ i.name }}</div></td>
-    <td>{% for c in i.credentials %}{{ c.label }}{% if not loop.last %}, {% endif %}{% else %}<span class="muted">no credentials</span>{% endfor %}</td>
-    <td><a href="/connections/new?integration={{ i.name }}">Set up</a></td>
-  </tr>
-  {% endfor %}
-</table>
+{% if not integration %}
+<p>Choose where your data comes from.</p>
+<div class="cards">
+{% for i in integrations %}
+  <a class="choice" href="/connections/new?integration={{ i.name }}">
+    <strong>{{ i.title }}</strong>
+    <span class="muted">{% if i.credentials %}Connect your account{% else %}Import exports or receive data{% endif %}</span>
+  </a>
+{% endfor %}
+</div>
+{% elif not selected_method %}
+<p class="muted"><a href="/connections/new">Sources</a> / {{ integration.title }}</p>
+<h2>How do you want to send data?</h2>
+<p>You can add another delivery method later. File uploads stay available alongside automatic delivery.</p>
+<div class="cards">
+{% for method in integration.delivery_methods if not method.advanced %}
+  <a class="choice" href="/connections/new?integration={{ integration.name }}&method={{ method.id }}">
+    <strong>{{ method.label }}</strong><span>{{ method.description }}</span>
+  </a>
+{% endfor %}
+</div>
+{% if integration.delivery_methods | selectattr("advanced") | list %}
+<details class="setting-block"><summary>Advanced delivery methods</summary>
+{% for method in integration.delivery_methods if method.advanced %}
+  <p><a href="/connections/new?integration={{ integration.name }}&method={{ method.id }}">{{ method.label }}</a> — {{ method.description }}</p>
+{% endfor %}
+</details>
+{% endif %}
 {% else %}
-{% set i = integrations | selectattr("name", "equalto", selected) | first %}
-{% if not i %}<p class="error">Unknown integration.</p>{% else %}
-<h2>{{ i.title }}</h2>
+<p class="muted"><a href="/connections/new">Sources</a> / <a href="/connections/new?integration={{ integration.name }}">{{ integration.title }}</a> / {{ selected_method.label }}</p>
+<h2>{{ integration.title }}</h2>
+<p>{{ selected_method.description }}</p>
 <form method="post" action="/connections/new" autocomplete="off" class="stack">
-  <input type="hidden" name="integration" value="{{ i.name }}">
+  <input type="hidden" name="integration" value="{{ integration.name }}">
+  <input type="hidden" name="method" value="{{ selected_method.id }}">
   <label>Connection ID
     <input name="id" required pattern="[a-z][a-z0-9_]{0,23}" value="{{ values.get('id', '') }}">
-    <span class="muted">Lowercase letters, digits, underscores. Names this account’s data; it cannot change later.</span>
+    <span class="muted">A stable name for this account or source. Use lowercase letters, digits, and underscores.</span>
   </label>
-  {% for name, prop in i.settings_schema.properties.items() %}
-  {% if prop.get("advanced") %}<details><summary>Advanced: server folder scanning</summary>{% endif %}
-  <label>{{ prop.title or name }}
-    <input name="setting.{{ name }}" {% if name in i.settings_schema.get("required", []) %}required{% endif %} value="{{ values.get(name, '') }}">
-    {% if prop.description %}<span class="muted">{{ prop.description }}</span>{% endif %}
-  </label>
-  {% if prop.get("advanced") %}</details>{% endif %}
-  {% endfor %}
-  {% for c in i.credentials %}
+  {{ settings_fields(integration, integration.connection_fields, values) }}
+  {{ settings_fields(integration, selected_method.settings_fields, values, selected_method.settings_fields) }}
+  {% if integration.credentials %}
+  <h3>Account credentials</h3>
+  <p class="muted">These let Miroir fetch your data. Values are stored encrypted and never shown again.</p>
+  {% for c in integration.credentials %}
   <label>{{ c.label }}
     <input type="password" name="credential.{{ c.name }}" required autocomplete="new-password">
-    <span class="muted">{{ c.help }}. Stored encrypted; it will not be shown again.</span>
+    <span class="muted">{{ c.help }}</span>
   </label>
   {% endfor %}
-  <p><button>Add and test</button> <a href="/connections/new">Back</a></p>
+  {% endif %}
+  <p><button>Continue</button> <a href="/connections/new?integration={{ integration.name }}">Back</a></p>
 </form>
-{% endif %}
 {% endif %}
 {% endblock %}

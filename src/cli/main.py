@@ -149,6 +149,12 @@ def main(argv: list[str] | None = None) -> int:
                 "credential_names": definition.credential_names,
                 "resources": [asdict(resource) for resource in definition.resources],
                 "settings_schema": definition.settings_model.model_json_schema(),
+                "delivery_methods": [
+                    asdict(method) for method in definition.delivery_methods
+                ],
+                "file_delivery": asdict(definition.file_delivery)
+                if definition.file_delivery
+                else None,
             }
             for definition in INTEGRATIONS.values()
         ]

@@ -266,8 +266,26 @@ def create_app(
             str(body.get("id", "")),
             body.get("settings") or {},
             body.get("credentials") or {},
+            delivery_method=body.get("delivery_method"),
         )
         return {"id": connection_id, "check": service.check_connection(connection_id)}
+
+    @app.put("/api/connections/{connection_id}/settings")
+    async def api_save_connection_settings(
+        request: Request, connection_id: str
+    ) -> dict:
+        settings = await request.json()
+        if not isinstance(settings, dict):
+            raise OperationError("Expected a settings object")
+        service.update_connection_settings(
+            connection_id, settings, request.headers.get("if-match", "").strip('"')
+        )
+        return {"saved": True, "check": service.check_connection(connection_id)}
+
+    @app.post("/api/connections/{connection_id}/prepare")
+    def api_prepare_connection(connection_id: str) -> dict:
+        service.prepare_connection(connection_id)
+        return {"ready": True}
 
     @app.put("/api/connections/{connection_id}/credentials/{name}", status_code=204)
     async def api_set_credential(
@@ -354,68 +372,9 @@ def create_app(
         response.delete_cookie(SESSION_COOKIE)
         return response
 
-    @app.get("/connections/new", response_class=HTMLResponse)
-    def new_connection(request: Request, integration: str = "") -> HTMLResponse:
-        return page(
-            request,
-            "new_connection.html",
-            integrations=service.integrations(),
-            selected=integration,
-            values={},
-            error=None,
-        )
+    from src.web.connections import connection_pages
 
-    @app.post("/connections/new", response_model=None)
-    async def create_connection(request: Request) -> Response:
-        form = await request.form()
-        integration = str(form.get("integration", ""))
-        connection_id = str(form.get("id", ""))
-        settings = {
-            key.removeprefix("setting."): str(value)
-            for key, value in form.items()
-            if key.startswith("setting.") and str(value) != ""
-        }
-        credentials = {
-            key.removeprefix("credential."): str(value)
-            for key, value in form.items()
-            if key.startswith("credential.")
-        }
-        try:
-            service.create_connection(integration, connection_id, settings, credentials)
-        except (ConfigurationError, OperationError, SecretResolutionError) as error:
-            # Re-render with the non-secret values; secrets are never echoed back.
-            return templates.TemplateResponse(
-                request,
-                "new_connection.html",
-                {
-                    "integrations": service.integrations(),
-                    "selected": integration,
-                    "values": {"id": connection_id, **settings},
-                    "error": str(error),
-                    "notice": None,
-                },
-                status_code=400,
-            )
-        service.check_connection(connection_id)
-        return back(connection_id, "created")
-
-    @app.post("/connections/{connection_id}/credentials/{name}")
-    def set_credential(connection_id: str, name: str, value: str = Form()) -> Response:
-        service.set_credential(connection_id, name, value)
-        service.check_connection(connection_id)
-        return back(connection_id, "credential_saved")
-
-    @app.post("/connections/{connection_id}/check")
-    def check(connection_id: str) -> Response:
-        service.check_connection(connection_id)
-        return back(connection_id, "checked")
-
-    @app.post("/connections/{connection_id}/remove")
-    def remove(connection_id: str, confirm: str = Form("")) -> Response:
-        if confirm != connection_id:
-            raise OperationError("Type the connection ID to confirm removal")
-        service.remove_connection(connection_id)
-        return RedirectResponse("/?notice=removed", status_code=303)
+    app.include_router(connection_pages(service, page))
 
     @app.get("/", response_class=HTMLResponse)
     def overview(request: Request) -> HTMLResponse:
@@ -434,25 +393,6 @@ def create_app(
             receive_path=f"/api/connections/{connection_id}/receive",
             refresh=_in_flight(data["status"]),
         )
-
-    @app.post("/connections/{connection_id}/delivery-token")
-    def delivery_token_page(request: Request, connection_id: str) -> HTMLResponse:
-        new_token = service.create_delivery_token(connection_id)
-        response = page(
-            request,
-            "delivery_token.html",
-            connection_id=connection_id,
-            delivery_token=new_token,
-            receive_path=f"/api/connections/{connection_id}/receive",
-        )
-        response.headers["Cache-Control"] = "no-store"
-        response.headers["Referrer-Policy"] = "no-referrer"
-        return response
-
-    @app.post("/connections/{connection_id}/delivery-token/revoke")
-    def revoke_delivery_token_form(connection_id: str) -> Response:
-        service.revoke_delivery_token(connection_id)
-        return back(connection_id, "delivery_revoked")
 
     def back(connection_id: str, notice: str) -> RedirectResponse:
         return RedirectResponse(

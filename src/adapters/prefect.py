@@ -7,13 +7,35 @@ requests into flow runs (submit), and flow run states back into attempts (observ
 
 import inspect
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import wraps
 from typing import Any
 
 from src.core.config import ResolvedConnection, ResolvedMiroir
 from src.core.operations import MetadataStore, OperationError
 
 FLOW_NAME = "sync-connection"
+
+
+def _readable_errors(function: Callable[..., Any]) -> Callable[..., Any]:
+    @wraps(function)
+    def call(*args: Any, **kwargs: Any) -> Any:
+        import httpx
+        from prefect.exceptions import ObjectNotFound
+
+        try:
+            return function(*args, **kwargs)
+        except ObjectNotFound as error:
+            raise OperationError(
+                "Execution work pool is unavailable; check the runtime configuration and try again."
+            ) from error
+        except httpx.HTTPError as error:
+            raise OperationError(
+                "Execution is unavailable; check the Prefect service and credentials, then try again."
+            ) from error
+
+    return call
 
 
 def _sync(value: Any) -> Any:
@@ -152,6 +174,7 @@ class PrefectOrchestrator:
             }
         return result
 
+    @_readable_errors
     def plan(self, miroir: ResolvedMiroir) -> list[dict[str, Any]]:
         """Changes needed for Prefect to match the miroir. Read-only."""
         desired, actual = self.desired(miroir), self.actual(miroir)
@@ -159,7 +182,14 @@ class PrefectOrchestrator:
         for name, spec in sorted(desired.items()):
             want = spec.comparable()
             if name not in actual:
-                changes.append({"action": "create", "deployment": name, "set": want})
+                changes.append(
+                    {
+                        "action": "create",
+                        "deployment": name,
+                        "connection_id": spec.connection_id,
+                        "set": want,
+                    }
+                )
                 continue
             have = actual[name]["comparable"]
             diff = {
@@ -169,7 +199,12 @@ class PrefectOrchestrator:
             }
             if diff:
                 changes.append(
-                    {"action": "update", "deployment": name, "changes": diff}
+                    {
+                        "action": "update",
+                        "deployment": name,
+                        "connection_id": spec.connection_id,
+                        "changes": diff,
+                    }
                 )
         for name in sorted(set(actual) - set(desired)):
             changes.append(
@@ -177,6 +212,7 @@ class PrefectOrchestrator:
             )
         return changes
 
+    @_readable_errors
     def apply(self, miroir: ResolvedMiroir, changes: list[dict[str, Any]]) -> None:
         """Perform a plan. Create and update are the same upsert in Prefect."""
         from prefect import get_client
