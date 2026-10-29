@@ -13,7 +13,7 @@ import secrets as random_secrets
 import subprocess
 import sys
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -24,7 +24,7 @@ from src.core.config import (
     load_miroir,
     save_miroir,
 )
-from src.core.operations import MetadataStore, OperationError, Role
+from src.core.operations import ArtifactOrigin, MetadataStore, OperationError
 from src.core.secrets import SecretResolutionError, SecretStore, make_resolver
 
 REPO = Path(__file__).resolve().parents[2]
@@ -158,15 +158,14 @@ class MiroirService:
             else "applied"
             if applied == connection.revision
             else "saved_not_applied",
-            "can_sync": connection.integration.can_sync(connection.settings),
+            "can_sync": connection.can_sync,
             "sync_label": "Sync now"
-            if "incremental_sync" in connection.integration.capabilities
+            if connection.integration.fetch is not None
             else "Scan folder",
-            "accepts_files": "artifact_import" in connection.integration.capabilities,
+            "accepts_files": connection.integration.accepts_files,
             "delivery": self.delivery_status(connection.config.id, miroir),
-            "file_delivery": asdict(connection.integration.file_delivery)
-            if connection.integration.file_delivery
-            else None,
+            # The connector's formats; uploads and the receiving URL use the first.
+            "formats": connection.integration.describe()["formats"],
             "title": connection.integration.title,
             "credentials": self._credentials(miroir, connection),
             "credential_status": self.store.credential_status(
@@ -238,28 +237,39 @@ class MiroirService:
         self,
         connection_id: str,
         path: Path,
-        role: Role,
+        options: dict[str, Any] | None = None,
         *,
         import_now: bool = False,
         original_name: str | None = None,
         origin: Any = "request",
+        input_format: str | None = None,
     ) -> dict[str, Any]:
+        """Register one uploaded or received file, and optionally import it.
+
+        `options` are the format's import options; received files take its
+        defaults. `origin` is the operation origin ("webhook" for the URL).
+        """
         from src.core.artifacts import submit_artifact
         from src.core.runner import AlreadyImported
 
         miroir = self.miroir()
         connection = self._connection(miroir, connection_id)
-        delivery = connection.integration.file_delivery
-        if original_name is None and delivery is not None:
-            original_name = delivery.automatic_filename
+        try:
+            file_format = connection.integration.format(input_format)
+        except KeyError:
+            raise OperationError("This integration does not accept that file") from None
+        received: ArtifactOrigin = "webhook" if origin == "webhook" else "upload"
         artifact, created = submit_artifact(
             miroir,
             connection,
             path,
-            role,
+            options,
             store=self.store,
             root=self.artifact_root,
-            original_name=original_name,
+            original_name=original_name
+            or (file_format.received_name if received == "webhook" else None),
+            origin=received,
+            input_format=file_format.id,
         )
         result: dict[str, Any] = {"artifact": artifact, "new": created}
         if import_now:
@@ -276,7 +286,7 @@ class MiroirService:
     ) -> dict[str, Any]:
         miroir = miroir or self.miroir()
         connection = self._connection(miroir, connection_id)
-        enabled = "artifact_import" in connection.integration.capabilities
+        enabled = connection.integration.accepts_files
         stored = (
             self.store.delivery_token(miroir.id, connection_id) if enabled else None
         )
@@ -293,7 +303,7 @@ class MiroirService:
     def create_delivery_token(self, connection_id: str) -> str:
         miroir = self.miroir()
         connection = self._connection(miroir, connection_id)
-        if "artifact_import" not in connection.integration.capabilities:
+        if not connection.integration.accepts_files:
             raise OperationError("Integration does not accept files")
         self.prepare_connection(connection_id)
         token = random_secrets.token_urlsafe(32)
@@ -315,7 +325,7 @@ class MiroirService:
             connection = self._connection(miroir, connection_id)
         except OperationError:
             return False
-        if "artifact_import" not in connection.integration.capabilities:
+        if not connection.integration.accepts_files:
             return False
         stored = self.store.delivery_token(miroir.id, connection_id)
         return stored is not None and hmac.compare_digest(
@@ -382,28 +392,9 @@ class MiroirService:
 
         return [
             {
-                "name": definition.name,
-                "title": definition.title,
-                "settings_schema": definition.settings_model.model_json_schema(),
-                "connection_fields": [
-                    name
-                    for name in definition.settings_model.model_fields
-                    if not any(
-                        name in method.settings_fields
-                        for method in definition.delivery_methods
-                    )
-                ],
-                "credentials": [
-                    {"name": f.name, "label": f.label, "help": f.help}
-                    for f in definition.credentials
-                ],
-                "capabilities": list(definition.capabilities),
-                "delivery_methods": [
-                    asdict(method) for method in definition.delivery_methods
-                ],
-                "file_delivery": asdict(definition.file_delivery)
-                if definition.file_delivery
-                else None,
+                **definition.describe(),
+                # Every setting describes the source; delivery lives elsewhere.
+                "connection_fields": list(definition.settings_model.model_fields),
             }
             for definition in INTEGRATIONS.values()
         ]
@@ -424,6 +415,9 @@ class MiroirService:
             "integration": definition,
             "values": connection.settings.model_dump(mode="json"),
             "analysis_values": connection.config.analysis.model_dump(mode="json"),
+            "folder_values": connection.config.folder.model_dump(mode="json")
+            if connection.config.folder
+            else None,
             "file_revision": revision,
         }
 
@@ -463,6 +457,30 @@ class MiroirService:
         target["settings"] = {
             key: value for key, value in updated.items() if value is not None
         }
+        self._write_config(raw, expected_revision)
+
+    def update_folder(
+        self, connection_id: str, path: str | None, expected_revision: str
+    ) -> None:
+        """Set or clear the watched folder; other folder choices are kept."""
+        from src.core.config import ConfigurationConflict
+
+        if not expected_revision:
+            raise OperationError("Reload settings before saving")
+        raw, revision = self._raw_config()
+        if revision != expected_revision:
+            raise ConfigurationConflict(
+                "Configuration changed; reload settings before saving"
+            )
+        connection = self._connection(self.miroir(), connection_id)
+        if path and not connection.integration.accepts_files:
+            raise OperationError("This integration reads no files")
+        target = next(c for c in raw["connections"] if c["id"] == connection_id)
+        target.get("settings", {}).pop("data_dir", None)
+        if path:
+            target["folder"] = {**target.get("folder", {}), "path": path}
+        else:
+            target.pop("folder", None)
         self._write_config(raw, expected_revision)
 
     def update_analysis_settings(
@@ -519,6 +537,7 @@ class MiroirService:
         credentials: dict[str, str],
         *,
         delivery_method: str | None = None,
+        folder_path: str | None = None,
     ) -> str:
         """Add a connection whose credentials are stored by the miroir.
 
@@ -533,19 +552,15 @@ class MiroirService:
         definition = INTEGRATIONS.get(integration)
         if definition is None:
             raise OperationError("Unknown integration")
-        if delivery_method is not None:
-            method = self.setup_method(integration, delivery_method)
-            all_delivery_fields = {
-                name for m in definition.delivery_methods for name in m.settings_fields
-            }
-            if set(settings) & (all_delivery_fields - set(method["settings_fields"])):
-                raise OperationError(
-                    "Settings do not match the selected delivery method"
-                )
-            if any(not settings.get(name) for name in method["settings_fields"]):
-                raise OperationError(
-                    "Provide the settings required for this delivery method"
-                )
+        method = (
+            self.setup_method(integration, delivery_method)
+            if delivery_method is not None
+            else None
+        )
+        if method is not None and method["id"] == "folder" and not folder_path:
+            raise OperationError("Provide the server folder to watch")
+        if folder_path and (method is None or method["id"] != "folder"):
+            raise OperationError("A server folder belongs to the folder method")
         if set(credentials) != set(definition.credential_names):
             raise OperationError("Provide every credential the integration needs")
         secrets = self.secrets
@@ -560,6 +575,7 @@ class MiroirService:
                 "integration": integration,
                 "settings": settings,
                 "credentials": {name: {"provider": "miroir"} for name in credentials},
+                **({"folder": {"path": folder_path}} if folder_path else {}),
             }
         )
         miroir = parse_miroir(json.dumps(raw))  # validate before storing anything
@@ -605,11 +621,12 @@ class MiroirService:
         credentials: dict[str, str] = {}
         try:
             credentials = self.resolver()(connection)
-            message = (
-                check(connection.settings, credentials)
-                if check
-                else "No check available"
-            )
+            messages = [check(connection.settings, credentials)] if check else []
+            if connection.config.folder is not None:
+                messages.append(_check_folder(connection))
+            elif not check and connection.integration.accepts_files:
+                messages.append("Ready to receive files; upload one to verify it")
+            message = "; ".join(messages) or "No check available"
             ok = True
         except (SecretResolutionError, SecretKeyError) as error:
             message = str(error)
@@ -658,3 +675,20 @@ class MiroirService:
     def refresh(self) -> list[dict[str, Any]]:
         """Reconcile unverified runs with the orchestrator."""
         return list(self._orchestrator().observe(self.miroir()))
+
+
+def _check_folder(connection: ResolvedConnection) -> str:
+    """A watched folder must be readable; matching files are counted, not read."""
+    import os
+
+    from src.integrations.checks import CheckFailed
+
+    folder = connection.config.folder
+    assert folder is not None and folder.pattern is not None
+    root = Path(folder.path)
+    if not root.is_dir():
+        raise CheckFailed("The watched folder does not exist on this machine")
+    if not os.access(root, os.R_OK | os.X_OK):
+        raise CheckFailed("The watched folder is not readable")
+    count = sum(1 for path in root.glob(folder.pattern) if path.is_file())
+    return f"Watched folder is readable; {count} file(s) match {folder.pattern}"

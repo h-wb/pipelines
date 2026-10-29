@@ -28,16 +28,35 @@ that root-level local file is gitignored. Pass `--config` before the subcommand.
 services, start a pipeline, or write configuration. The Python module entry point
 is `python -m src.cli`.
 
-`integrations` lists connector metadata and settings schemas. Apple Health accepts
-Health Auto Export JSON through file uploads and automatic delivery. An optional
-server folder enables the compatibility scanner. Native Apple Health XML is not
-supported. GitHub (personal access token for the configured login; the token's
-account is checked), Bike Share Toronto (mobile-app member ID and authorization
-token), and browser history (Firefox/Zen Places snapshots, plain or gzip, by upload,
-automatic delivery, or an optional server folder) are also available. Each
-connector package under `src/integrations/<name>/` owns its settings, credentials,
-check, resources, delivery metadata, file format, and dlt source; the registry only
-lists them. `src/sources/` and the old flow entry points are the legacy path.
+`integrations` lists connector metadata: settings schemas, credentials, resources,
+and **inputs** (decision 021). An input is either a **fetch** (an API pull with the
+connection's credentials) or a **file format** (with its own import options).
+ListenBrainz, GitHub (personal access token for the configured login; the token's
+account is checked), and Bike Share Toronto (mobile-app member ID and authorization
+token) fetch. Apple Health reads Health Auto Export JSON (option `role`:
+`ongoing`/`historical`); browser history reads Firefox/Zen Places snapshots, plain or
+gzip. Native Apple Health XML is not supported. Each connector package under
+`src/integrations/<name>/` owns its settings, credentials, check, resources, inputs,
+and dlt sources; the registry only lists them. `src/sources/` and the old flow entry
+points are the legacy path.
+
+Files arrive through three core transports, all of which register an artifact and
+then import it: upload, the connection's receiving URL, and a **watched folder**. A
+folder is connection configuration, not a source setting:
+
+```json
+"folder": {"path": "/miroir/data/browser", "pattern": "*.sqlite.gz",
+           "options": {}, "keep_last": 5}
+```
+
+`pattern` defaults to the format's, `options` to its defaults, and `format` to the
+connector's first. Each sync scans the folder, registers new content (identical
+bytes map to their existing artifact), imports each pending file as its own import
+operation linked to the sync, and builds the analysis once. A scan that finds
+nothing new loads and builds nothing. Folder files keep the latest `keep_last`
+stored copies (`null` keeps all); older imported copies are removed, their receipts
+and history kept, and replaying them is refused until the file arrives again. A
+pre-021 `settings.data_dir` is read as a folder.
 
 ### Running a connection and reading its status
 
@@ -65,7 +84,7 @@ to `$MIROIR_METADATA_URL` or `sqlite:///.miroir/metadata.sqlite` (gitignored).
 ### Importing an export file
 
 ```bash
-uv run --locked pipelines-miroir submit health ~/Downloads/export.json --role historical
+uv run --locked pipelines-miroir submit health ~/Downloads/export.json --option role=historical
 uv run --locked pipelines-miroir import health <artifact-id> --duckdb /tmp/mirror.duckdb
 uv run --locked pipelines-miroir artifacts health
 ```
@@ -74,11 +93,13 @@ uv run --locked pipelines-miroir artifacts health
 (`--artifacts`, default `$MIROIR_ARTIFACT_DIR` or `.miroir/artifacts`, named
 by SHA-256 and read-only), and registers it. It does not load anything. Invalid
 files are rejected before anything is stored. Submitting identical bytes again
-returns the existing artifact; submitting them with a different role is refused.
+returns the existing artifact; submitting them with different import options is
+refused.
 
-`--role` replaces the legacy `manual/` folder convention for Apple Health:
-`historical` contributes rows dated before the connection's `cutoff`, `ongoing`
-contributes rows from the cutoff onwards.
+`--option NAME=VALUE` sets the format's import options (`--format` picks a format
+when a connector has several). For Apple Health, `role=historical` contributes rows
+dated before the connection's `cutoff`, `role=ongoing` (the default) rows from the
+cutoff onwards.
 
 `import` parses exactly that artifact, with no modification-time cursor, under the
 connection lock, into a local DuckDB file. An artifact already imported with the
@@ -286,7 +307,7 @@ The JSON API takes `Authorization: Bearer $MIROIR_API_TOKEN`:
 | `POST /api/connections/{id}/sync` | Request a sync (202, operation ID) |
 | `POST /api/connections/{id}/models` | Request analysis rebuild without ingestion (202, operation ID); requires previously loaded data |
 | `PUT /api/connections/{id}/analysis` with `If-Match: <file_revision>` | Update analysis settings, e.g. `{"timezone": "America/Toronto"}` |
-| `POST /api/connections/{id}/artifacts?role=ongoing&import=true&name=…` | Store the raw request body as a file, optionally import it |
+| `POST /api/connections/{id}/artifacts?import=true&name=…&<option>=…` | Store the raw request body as a file, optionally import it |
 | `POST /api/connections/{id}/artifacts/{artifact}/import?replay=false` | Request an import |
 | `POST /api/connections/{id}/delivery-token`, `DELETE /api/connections/{id}/delivery-token` | Create/replace (value shown once) or revoke a receive-only token; requires administrator auth |
 | `POST /api/connections/{id}/receive` | Receive an ongoing export and request an import; requires that connection's delivery bearer token |
@@ -303,7 +324,7 @@ The JSON API takes `Authorization: Bearer $MIROIR_API_TOKEN`:
 
 Add an **Apple Health (Health Auto Export)** connection, then choose how data
 arrives: **Upload files** or **Health Auto Export**. **Advanced delivery methods**
-offers **Scan a server folder**. Enter a connection ID and cutoff date; only the
+offers **Watch a server folder**. Enter a connection ID and cutoff date; only the
 folder method asks for a server path. Source credentials are not required.
 
 Continue into first-data setup. Upload setup offers a file picker immediately.

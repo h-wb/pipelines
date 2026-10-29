@@ -31,10 +31,10 @@
 <p class="notice">Copy the authorization header now. Its token is shown only once. Any previous delivery token has stopped working.</p>
 {% endif %}
 <ol class="setup-steps">
-  <li><p>{{ c.file_delivery.sender_instructions }}</p></li>
+  <li><p>{{ c.formats[0].sender_instructions }}</p></li>
   <li><p>Paste this receiving URL:</p>{{ endpoint(c, request) }}</li>
   <li>
-    <p>Add <code>Content-Type: {{ c.file_delivery.content_type }}</code> and this Authorization header:</p>
+    <p>Add <code>Content-Type: {{ c.formats[0].content_type }}</code> and this Authorization header:</p>
     {% if delivery_token %}
     <input class="copy-value" aria-label="Authorization header" readonly value="Bearer {{ delivery_token }}">
     <button type="button" onclick="navigator.clipboard.writeText(this.previousElementSibling.value).then(() => this.textContent = 'Copied')">Copy header</button>
@@ -44,7 +44,7 @@
   </li>
   <li><p>Save your sender's settings, then send a small export. Your device must be able to reach Miroir, through the home network or VPN for an internal installation.</p></li>
 </ol>
-<p class="muted">Automatic exports use ongoing dates. {{ c.file_delivery.role_help }} Receipt and successful import are tracked separately.</p>
+<p class="muted">{{ c.formats[0].help }} Receipt and successful import are tracked separately.</p>
 {% if delivery_token %}<p><a class="button-link" href="/connections/{{ c.id }}/setup?method=webhook">I've configured my sender — check delivery</a></p>{% endif %}
 {% endif %}
 {% else %}

@@ -19,13 +19,14 @@ from typing import Any, Literal
 
 import sqlalchemy as sa
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 POSTGRES_SCHEMA = "miroir_meta"
 LOCK_POLL_SECONDS = 1.0
 
 
 Origin = Literal["local", "request", "prefect", "webhook"]
-Role = Literal["historical", "ongoing"]
+# How an artifact's bytes arrived (decision 021); every transport registers one.
+ArtifactOrigin = Literal["upload", "webhook", "folder", "local"]
 # `lost` (the run crashed) and `cancelled` come from reconciling with the
 # orchestrator; they are kept apart from `failed`, which the runner recorded itself.
 Ingestion = Literal[
@@ -70,6 +71,8 @@ operations = sa.Table(
     sa.Column("artifact_id", sa.String(36)),
     sa.Column("parser_version", sa.Integer),
     sa.Column("options", sa.Text),
+    # Version 5: imports a sync started for its watched folder's new files.
+    sa.Column("parent_operation_id", sa.String(36)),
 )
 
 # Columns added to `operations` by version 2, as portable DDL fragments.
@@ -88,10 +91,14 @@ artifacts = sa.Table(
     sa.Column("sha256", sa.String(64), nullable=False),
     sa.Column("size", sa.BigInteger, nullable=False),
     sa.Column("input_format", sa.String(64), nullable=False),
-    sa.Column("role", sa.String(16), nullable=False),
+    # Version 5: the format's import options (JSON), replacing the built-in role.
+    sa.Column("options", sa.Text, nullable=False),
     sa.Column("original_name", sa.String(255), nullable=False),
     sa.Column("storage_path", sa.Text, nullable=False),
     sa.Column("retention", sa.String(16), nullable=False),
+    sa.Column("origin", sa.String(16)),
+    # Set when retention removed the stored copy; the receipt and history stay.
+    sa.Column("removed_at", sa.DateTime(timezone=True)),
     sa.Column("received_at", sa.DateTime(timezone=True), nullable=False),
     # Keep first receipt for provenance, and latest receipt for delivery health.
     sa.Column("last_received_at", sa.DateTime(timezone=True), nullable=False),
@@ -178,6 +185,7 @@ class Operation:
     artifact_id: str | None = None
     parser_version: int | None = None
     options: str | None = None
+    parent_operation_id: str | None = None
 
 
 def _now() -> datetime:
@@ -256,6 +264,51 @@ class MetadataStore:
                     db.execute(
                         artifacts.update().values(
                             last_received_at=artifacts.c.received_at
+                        )
+                    )
+            if version < 5:
+                timestamp = "TIMESTAMP WITH TIME ZONE" if postgres else "TIMESTAMP"
+                columns = {
+                    column["name"]
+                    for column in sa.inspect(db).get_columns(
+                        "artifacts", schema=POSTGRES_SCHEMA if postgres else None
+                    )
+                }
+                if "role" in columns:
+                    # Health's role becomes its declared import option, in the
+                    # same JSON form imports record, so receipts keep matching.
+                    db.execute(
+                        sa.text(
+                            f"ALTER TABLE {prefix}artifacts ADD COLUMN options TEXT"
+                        )
+                    )
+                    db.execute(
+                        sa.text(
+                            f"UPDATE {prefix}artifacts SET options = "
+                            "'{\"role\": \"' || role || '\"}'"
+                        )
+                    )
+                    db.execute(
+                        sa.text(f"ALTER TABLE {prefix}artifacts DROP COLUMN role")
+                    )
+                for column in ("origin VARCHAR(16)", f"removed_at {timestamp}"):
+                    if column.split()[0] not in columns:
+                        db.execute(
+                            sa.text(
+                                f"ALTER TABLE {prefix}artifacts ADD COLUMN {column}"
+                            )
+                        )
+                operation_columns = {
+                    column["name"]
+                    for column in sa.inspect(db).get_columns(
+                        "operations", schema=POSTGRES_SCHEMA if postgres else None
+                    )
+                }
+                if "parent_operation_id" not in operation_columns:
+                    db.execute(
+                        sa.text(
+                            f"ALTER TABLE {prefix}operations "
+                            "ADD COLUMN parent_operation_id VARCHAR(36)"
                         )
                     )
             db.execute(schema_info.update().values(version=SCHEMA_VERSION))
@@ -777,8 +830,9 @@ class MetadataStore:
         """Record received bytes; returns (artifact, newly_registered).
 
         Resubmitting identical bytes to the same connection returns the existing
-        artifact. Resubmitting them with a different role is refused: the role
-        decides which rows the file contributes.
+        artifact (restoring a stored copy retention had removed). Resubmitting
+        them with different import options is refused: options decide which
+        rows the file contributes.
         """
         scope = sa.and_(
             artifacts.c.miroir_id == values["miroir_id"],
@@ -799,11 +853,16 @@ class MetadataStore:
                 row = db.execute(artifacts.select().where(scope)).one()
                 created = True
             else:
-                if row.role != values["role"]:
+                if row.options != values["options"]:
                     raise OperationError(
-                        f"Identical file was already submitted as {row.role}"
+                        "Identical file was already submitted with other import "
+                        f"options ({row.options})"
                     )
-                db.execute(artifacts.update().where(scope).values(last_received_at=now))
+                db.execute(
+                    artifacts.update()
+                    .where(scope)
+                    .values(last_received_at=now, removed_at=None)
+                )
                 row = db.execute(artifacts.select().where(scope)).one()
                 created = False
         artifact = _artifact(row)
@@ -853,6 +912,17 @@ class MetadataStore:
                 .order_by(artifacts.c.received_at)
             ).all()
         return [_artifact(row) for row in rows]
+
+    def mark_artifact_removed(self, miroir_id: str, artifact_id: str) -> None:
+        with self.engine.begin() as db:
+            db.execute(
+                artifacts.update()
+                .where(
+                    artifacts.c.miroir_id == miroir_id,
+                    artifacts.c.id == artifact_id,
+                )
+                .values(removed_at=_now())
+            )
 
     @contextmanager
     def connection_lock(self, pipeline_name: str, wait: float = 0) -> Iterator[None]:
@@ -933,4 +1003,6 @@ def _artifact(row: Any) -> dict[str, Any]:
     data: dict[str, Any] = row._asdict()
     data["received_at"] = _iso(_aware(data["received_at"]))
     data["last_received_at"] = _iso(_aware(data["last_received_at"]))
+    data["removed_at"] = _iso(_aware(data["removed_at"]))
+    data["options"] = json.loads(data["options"])
     return data

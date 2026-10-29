@@ -226,7 +226,7 @@ class DbtPostgresTests(unittest.TestCase):
             miroir,
             connection,
             path,
-            "ongoing",
+            {"role": "ongoing"},
             store=self.store,
             root=self.root / "artifacts",
         )
@@ -492,7 +492,6 @@ class DbtPostgresTests(unittest.TestCase):
             miroir,
             connection,
             snapshot,
-            "ongoing",
             store=self.store,
             root=self.root / "artifacts",
         )

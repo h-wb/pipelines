@@ -1,4 +1,4 @@
-"""Open declared source hooks with scoped credentials and explicit cleanup."""
+"""Open a connector's declared inputs with scoped credentials and explicit cleanup."""
 
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -16,35 +16,30 @@ def _credentials(connection: ResolvedConnection, credentials: dict[str, str]) ->
 
 
 @contextmanager
-def open_source(
+def open_fetch(
     connection: ResolvedConnection, credentials: dict[str, str]
 ) -> Iterator[Any]:
+    """The connector's API fetch, limited to the connection's selected resources."""
     _credentials(connection, credentials)
-    opener = connection.integration.open_sync
-    if opener is None:
-        raise OperationError("This integration has no sync method")
-    with opener(connection.settings, credentials) as source:
-        yield (
-            source.with_resources(*connection.config.resources)
-            if connection.config.resources
-            else source
-        )
+    fetch = connection.integration.fetch
+    if fetch is None:
+        raise OperationError("This integration has nothing to fetch")
+    with fetch.open(connection.settings, credentials) as source:
+        resources = connection.config.resources
+        yield source.with_resources(*resources) if resources else source
 
 
 @contextmanager
-def open_artifact_source(
+def open_import(
     connection: ResolvedConnection,
-    credentials: dict[str, str],
+    input_format: str,
     path: str,
     options: dict[str, Any],
 ) -> Iterator[Any]:
-    _credentials(connection, credentials)
-    definition = connection.integration.file_input
-    if definition is None:
-        raise OperationError("This integration has no artifact parser")
-    with definition.open(connection.settings, credentials, path, options) as source:
-        yield (
-            source.with_resources(*connection.config.resources)
-            if connection.config.resources
-            else source
-        )
+    """One stored file, parsed by its format with its recorded import options."""
+    try:
+        definition = connection.integration.format(input_format)
+    except KeyError:
+        raise OperationError("This integration cannot read that file format") from None
+    with definition.open(connection.settings, path, options) as source:
+        yield source

@@ -611,3 +611,55 @@ Validation uses isolated destinations and actual source/model executions. Produc
 cutover remains separate: inventory mappings, drain writers, preserve state/backups,
 compare existing history, then change schedules/triggers. Adding a definition or
 binding alone never adopts a legacy deployment, resets its cursor, or disables it.
+
+## 021 — Connectors declare inputs; core owns file delivery
+
+Status: accepted, 2026-10-29. Refines 017, 018, 020. Requires metadata schema 5.
+
+A connector declares what it can read, a connection chooses how data arrives, and
+core owns every transport. A connector definition has identity settings (facts
+about the account or source: a username, a cutoff; never paths), credentials,
+resource declarations, an optional analysis recommendation, a check, and a list of
+**inputs**:
+
+- a **fetch**: pulls from an API with the connection's credentials, incremental
+  through dlt state, selectable by resource, schedulable;
+- zero or more **file formats**: an ID, parser version, validator, typed
+  **import options** (per-file choices declared by the format), a parser over one
+  stored artifact, and the descriptive metadata senders need. Connection settings
+  that change how every file is read (Health's cutoff) are recorded with each
+  import, as before.
+
+Capabilities, delivery choices, and setup methods are derived from the inputs;
+connectors no longer declare `input_modes`, capability strings, or delivery
+methods. A connector may have both a fetch and formats (GitHub's API plus its
+account-export archive, planned).
+
+Files reach Miroir through three core transports, all of which register an
+artifact first (validated, content-addressed, deduplicated) and then import it:
+upload, the connection's receiving URL, and a **watched folder**. A folder is
+connection configuration (`folder: {path, pattern, format, options, keep_last}`),
+not a source setting. A sync scans it, registers new content, and imports each
+pending artifact as its own import operation (linked to the sync as its parent),
+then builds the analysis once. A scan that finds nothing new loads nothing and
+does not mark the analysis stale. The per-connector folder readers, Health's
+`manual/` layout convention, and the incremental-folder vs full-artifact split
+for browser snapshots are removed: a file is read the same way however it
+arrived. Browser snapshots are therefore always read in full and merged.
+
+The built-in historical/ongoing **role** is replaced by format-declared import
+options, stored with the artifact. Health keeps `role` as its option, so existing
+import receipts still match. Identical bytes resubmitted with different options
+are still refused. Folder files take the folder's configured options; received
+files take the format's defaults.
+
+Folder-delivered artifacts are retained per connection, by default the latest
+five; older ones that were imported have their stored copy removed (the receipt
+and import history stay, replay is refused). Uploaded and received files are
+kept. A legacy `settings.data_dir` is read as a folder with the format's default
+pattern, so existing configurations keep working.
+
+Cutover of the legacy GitHub, Bike Share, and browser loads binds each connection
+to the legacy pipeline/dataset (history, `export_*` tables, and dlt cursors carry
+over), pauses the legacy schedule before the first Miroir run, compares counts
+and cursors, and only then removes the legacy deployment.

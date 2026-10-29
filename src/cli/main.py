@@ -40,7 +40,14 @@ def main(argv: list[str] | None = None) -> int:
     submit = commands.add_parser("submit", help="Store and register an export file")
     submit.add_argument("connection")
     submit.add_argument("file", type=Path)
-    submit.add_argument("--role", choices=("historical", "ongoing"), required=True)
+    submit.add_argument(
+        "--option",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="An import option of the file's format (e.g. role=historical)",
+    )
+    submit.add_argument("--format", help="File format ID; the integration's first")
     submit.add_argument(
         "--artifacts",
         type=Path,
@@ -62,6 +69,12 @@ def main(argv: list[str] | None = None) -> int:
         "execute", help="Run one requested operation (used by the server's executor)"
     )
     execute.add_argument("--duckdb", type=Path, required=True)
+    execute.add_argument(
+        "--artifacts",
+        type=Path,
+        default=Path(os.environ.get("MIROIR_ARTIFACT_DIR", DEFAULT_ARTIFACTS)),
+        help="Directory where watched folders register their files",
+    )
     execute.add_argument("operation")
     serve = commands.add_parser(
         "serve", help="Web interface and HTTP API (needs MIROIR_API_TOKEN)"
@@ -145,24 +158,7 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
     if args.command == "integrations":
-        result = [
-            {
-                "name": definition.name,
-                "input_modes": definition.input_modes,
-                "input_format": definition.input_format,
-                "capabilities": definition.capabilities,
-                "credential_names": definition.credential_names,
-                "resources": [asdict(resource) for resource in definition.resources],
-                "settings_schema": definition.settings_model.model_json_schema(),
-                "delivery_methods": [
-                    asdict(method) for method in definition.delivery_methods
-                ],
-                "file_delivery": asdict(definition.file_delivery)
-                if definition.file_delivery
-                else None,
-            }
-            for definition in INTEGRATIONS.values()
-        ]
+        result = [definition.describe() for definition in INTEGRATIONS.values()]
     else:
         try:
             miroir = load_miroir(args.config)
@@ -327,21 +323,24 @@ def _with_store(
         return _print(result)
     if args.command == "submit":
         from src.core.artifacts import submit_artifact
-        from src.integrations.formats import InvalidArtifact
+        from src.integrations.validation import InvalidArtifact
 
         connection = next(
             c for c in miroir.connections if c.config.id == args.connection
         )
         try:
+            options = dict(option.split("=", 1) for option in args.option)
             artifact, created = submit_artifact(
                 miroir,
                 connection,
                 args.file,
-                args.role,
+                options,
                 store=store,
                 root=args.artifacts,
+                origin="local",
+                input_format=args.format,
             )
-        except (InvalidArtifact, OperationError, OSError) as error:
+        except (InvalidArtifact, OperationError, OSError, ValueError) as error:
             print(f"Submit failed: {error}", file=sys.stderr)
             return 1
         return _print({"artifact": artifact, "new": created})
@@ -362,6 +361,9 @@ def _with_store(
         "destination": dlt.destinations.duckdb(credentials=str(args.duckdb)),
         "resolve_credentials": make_resolver(secrets),
         "pipelines_dir": str(args.duckdb.parent / f"{args.duckdb.stem}.dlt"),
+        # Watched folders register their files here, like the server does.
+        "artifact_root": getattr(args, "artifacts", None)
+        or Path(os.environ.get("MIROIR_ARTIFACT_DIR", DEFAULT_ARTIFACTS)),
     }
     try:
         if args.command == "execute":
@@ -419,6 +421,8 @@ def _serve(args: argparse.Namespace, miroir: Any, store: Any, secrets: Any) -> i
             "execute",
             "--duckdb",
             str(args.duckdb.resolve()),
+            "--artifacts",
+            str(args.artifacts.resolve()),
             "--metadata",
             args.metadata,
         ]

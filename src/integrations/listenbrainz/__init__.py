@@ -11,10 +11,10 @@ from src.core.models import StrictModel
 from src.integrations import checks
 from src.integrations.contracts import (
     CredentialField,
+    Fetch,
     IntegrationDefinition,
     ResourceDefinition,
 )
-from src.integrations.delivery import DeliveryMethod
 
 
 class ListenBrainzSettings(StrictModel):
@@ -46,7 +46,7 @@ class ListenBrainzSettings(StrictModel):
 
 
 @contextmanager
-def open_sync(settings: Any, credentials: dict[str, str]) -> Iterator[Any]:
+def open_fetch(settings: Any, credentials: dict[str, str]) -> Iterator[Any]:
     import requests
 
     from src.integrations.listenbrainz.source import listenbrainz_source
@@ -62,7 +62,6 @@ def open_sync(settings: Any, credentials: dict[str, str]) -> Iterator[Any]:
 
 DEFINITION = IntegrationDefinition(
     name="listenbrainz",
-    open_sync=open_sync,
     title="ListenBrainz",
     settings_model=ListenBrainzSettings,
     credentials=(
@@ -72,18 +71,14 @@ DEFINITION = IntegrationDefinition(
             "ListenBrainz → Settings → User token (https://listenbrainz.org/settings/)",
         ),
     ),
-    check=checks.listenbrainz,
-    input_modes=("api",),
-    capabilities=("incremental_sync",),
-    delivery_methods=(
-        DeliveryMethod(
-            "api",
-            "Connect your account",
-            "Miroir fetches your data using your account's access token.",
-        ),
-    ),
     resources=(
         ResourceDefinition("listens", ("listened_at", "recording_msid"), "listened_at"),
     ),
+    fetch=Fetch(
+        "Connect your account",
+        "Miroir fetches your data using your account's access token.",
+        open_fetch,
+    ),
     analysis="music",
+    check=checks.listenbrainz,
 )

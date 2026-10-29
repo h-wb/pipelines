@@ -46,11 +46,11 @@ class OnboardingTests(WebFixture):
         folder = self.client.get(
             "/connections/new?integration=apple_health&method=folder"
         )
-        self.assertIn('name="setting.data_dir" required', folder.text)
+        self.assertIn('name="folder.path" value="" required', folder.text)
         original = self.config_path.read_text()
         for method, extra in (
             ("folder", {}),
-            ("webhook", {"setting.data_dir": "/unwanted"}),
+            ("webhook", {"folder.path": "/unwanted"}),
             ("wrong", {}),
         ):
             response = self.add_form(method, extra=extra)
@@ -113,7 +113,7 @@ class OnboardingTests(WebFixture):
         response = self.client.post(
             "/connections/new_health/upload",
             files={"file": ("export.json", json.dumps(export(("2026-06-05", 1))))},
-            data={"role": "ongoing", "import_now": "true"},
+            data={"option.role": "ongoing", "import_now": "true"},
         )
         self.assertEqual(response.status_code, 200)
         self.client.post("/connections/new_health/setup", data={"method": "webhook"})
@@ -212,14 +212,14 @@ class OnboardingTests(WebFixture):
             health,
             name="other_files",
             title="Other files",
-            delivery_methods=tuple(
-                replace(m, label="Automatic delivery") if m.id == "webhook" else m
-                for m in health.delivery_methods
-            ),
-            file_delivery=replace(
-                health.file_delivery,
-                label="Example JSON",
-                sender_instructions="Send JSON from your preferred client.",
+            formats=(
+                replace(
+                    health.formats[0],
+                    id="example_json",
+                    label="Example JSON",
+                    sender="Automatic delivery",
+                    sender_instructions="Send JSON from your preferred client.",
+                ),
             ),
         )
         registry = {**INTEGRATIONS, "other_files": definition}
@@ -246,3 +246,35 @@ class OnboardingTests(WebFixture):
             self.assertEqual(
                 self.client.get("/connections/other/settings").status_code, 200
             )
+
+
+class FolderSettingsTests(WebFixture):
+    def setUp(self):
+        super().setUp()
+        self.login()
+
+    def save_folder(self, path):
+        revision = self.service.connection_settings("health")["file_revision"]
+        return self.client.post(
+            "/connections/health/folder",
+            data={"file_revision": revision, "folder.path": path},
+            follow_redirects=False,
+        )
+
+    def test_folder_is_delivery_configuration_not_a_source_setting(self):
+        page = self.client.get("/connections/health")
+        # Format options render as choices on the upload form.
+        self.assertIn('name="option.role"', page.text)
+        self.assertEqual(self.save_folder(str(self.root)).status_code, 303)
+        raw = json.loads(self.config_path.read_text())
+        health = next(c for c in raw["connections"] if c["id"] == "health")
+        self.assertEqual(health["folder"], {"path": str(self.root)})
+        self.assertNotIn("data_dir", health["settings"])
+        view = self.service.connection_settings("health")
+        self.assertEqual(view["folder_values"]["pattern"], "*.json")
+        self.assertTrue(self.service.connection("health")["can_sync"])
+        self.assertEqual(self.save_folder("relative").status_code, 400)
+        self.assertEqual(self.save_folder("").status_code, 303)
+        raw = json.loads(self.config_path.read_text())
+        health = next(c for c in raw["connections"] if c["id"] == "health")
+        self.assertNotIn("folder", health)

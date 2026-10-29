@@ -18,7 +18,7 @@ import duckdb
 import requests
 
 from src.core.config import parse_miroir
-from src.integrations.sources import open_source
+from src.integrations.sources import open_fetch, open_import
 from tests.test_miroir import example
 
 
@@ -85,13 +85,13 @@ class ReferenceSourceTests(unittest.TestCase):
         with patch.object(requests.Session, "send", respond):
             for connection in connections:
                 credentials = {"access_token": f"token-{connection.settings.username}"}
-                with open_source(connection, credentials) as source:
+                with open_fetch(connection, credentials) as source:
                     self.pipeline(connection).run(source)
                 self.assertEqual(self.count(connection, "listens"), 1)
             # A fresh local working directory must restore the committed cursor from
             # the destination, then replay the boundary record without duplicating it.
             connection = connections[0]
-            with open_source(
+            with open_fetch(
                 connection, {"access_token": "token-example_user"}
             ) as source:
                 self.pipeline(connection, "restarted-state").run(source)
@@ -104,9 +104,7 @@ class ReferenceSourceTests(unittest.TestCase):
                 ).fetchone()[0]
             self.assertEqual(name, connection.settings.username)
 
-    def test_health_preserves_legacy_cutoff_and_missing_source_semantics(self):
-        directory = self.root / "health"
-        (directory / "manual").mkdir(parents=True)
+    def test_health_missing_source_is_unknown_and_reimport_merges(self):
         payload = {
             "data": {
                 "metrics": [
@@ -121,16 +119,20 @@ class ReferenceSourceTests(unittest.TestCase):
                 ]
             }
         }
-        for path in (directory / "manual" / "bulk.json", directory / "ongoing.json"):
-            path.write_text(json.dumps(payload))
+        path = self.root / "export.json"
+        path.write_text(json.dumps(payload))
         config = example()
         config["connections"] = config["connections"][1:]
-        config["connections"][0]["settings"]["data_dir"] = str(directory)
         connection = parse_miroir(json.dumps(config)).connections[0]
-        for _ in range(2):
-            with open_source(connection, {}) as source:
+        cutoff = connection.settings.cutoff
+        for role in ("historical", "ongoing", "ongoing"):
+            options = {"role": role, "cutoff": cutoff}
+            with open_import(
+                connection, "health_auto_export_json", str(path), options
+            ) as source:
                 self.pipeline(connection).run(source)
-            self.assertEqual(self.count(connection, "metrics"), 2)
+        # One row each side of the cutoff; the repeated import merged.
+        self.assertEqual(self.count(connection, "metrics"), 2)
         with duckdb.connect(str(self.database)) as db:
             sources = db.execute(
                 f'SELECT DISTINCT source FROM "{connection.binding.dataset_name}".metrics'
@@ -139,11 +141,11 @@ class ReferenceSourceTests(unittest.TestCase):
 
     def test_source_requires_explicit_credentials(self):
         connection = parse_miroir(json.dumps(example())).connections[0]
-        with self.assertRaises(ValueError), open_source(connection, {}):
+        with self.assertRaises(ValueError), open_fetch(connection, {}):
             pass
         with (
             self.assertRaises(ValueError),
-            open_source(connection, {"access_token": ""}),
+            open_fetch(connection, {"access_token": ""}),
         ):
             pass
 

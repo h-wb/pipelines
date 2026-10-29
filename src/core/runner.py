@@ -2,6 +2,10 @@
 
 Every execution path calls `run_connection`, so local runs, CLI requests, Prefect
 schedules, and external (n8n) triggers all leave the same operation record.
+
+A sync fetches from the connector's API and/or collects its watched folder: new
+files become artifacts and are imported as child operations, then the analysis
+is built once (decision 021).
 """
 
 import json
@@ -18,6 +22,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from src.core.analysis import AnalysisPlan, analysis_plan
 from src.core.config import ResolvedConnection, ResolvedMiroir
 from src.core.operations import (
+    ArtifactOrigin,
     ConnectionBusy,
     MetadataStore,
     Operation,
@@ -164,12 +169,10 @@ def request_sync(
 ) -> Operation:
     """Record a sync request. It shows as requested until an executor runs it."""
     connection = _connection(miroir, connection_id)
-    if not connection.integration.can_sync(connection.settings):
-        raise OperationError("Upload an export or configure a server folder to scan")
-    if not {"incremental_sync", "directory_import"} & set(
-        connection.integration.capabilities
-    ):
-        raise OperationError("Integration has nothing to sync")
+    if not connection.can_sync:
+        raise OperationError(
+            "Nothing to sync: send or upload files, or configure a watched folder"
+        )
     return _new_operation(store, miroir, connection, origin)
 
 
@@ -181,6 +184,7 @@ def request_import(
     store: MetadataStore,
     origin: Origin,
     replay: bool = False,
+    parent_operation_id: str | None = None,
 ) -> Operation:
     """Record an import of one artifact, or raise AlreadyImported.
 
@@ -188,14 +192,12 @@ def request_import(
     imported again unless `replay` is set; replays are merge-safe because records
     keep their source keys. A failed attempt never marks the artifact imported.
     """
-    from src.integrations.formats import PARSER_VERSIONS
-
     connection = _connection(miroir, connection_id)
     artifact = store.get_artifact(miroir.id, artifact_id)
     if artifact["connection_id"] != connection.config.id:
         raise OperationError("Artifact belongs to a different connection")
-    parser_version = PARSER_VERSIONS[artifact["input_format"]]
-    options = {"role": artifact["role"], **artifact_options(connection)}
+    parser_version = _format(connection, artifact).version
+    options = import_options(connection, artifact)
     if not replay:
         for previous in store.artifact_imports(artifact_id):
             if (
@@ -213,6 +215,7 @@ def request_import(
         artifact_id=artifact_id,
         parser_version=parser_version,
         options=json.dumps(options, sort_keys=True),
+        parent_operation_id=parent_operation_id,
     )
 
 
@@ -227,6 +230,7 @@ def execute_operation(
     transform: Callable[[AnalysisPlan], None] | None = None,
     pipelines_dir: str | None = None,
     lock_wait: float = 0,
+    artifact_root: Path | None = None,
 ) -> RunOutcome:
     """Run one recorded operation as a new attempt and record each stage.
 
@@ -241,8 +245,7 @@ def execute_operation(
     with: an edit saved in between blocks it instead of silently changing it.
     """
     from src.core.artifacts import stored_copy_is_intact
-    from src.integrations.formats import PARSER_VERSIONS
-    from src.integrations.sources import open_artifact_source, open_source
+    from src.integrations.sources import open_fetch, open_import
 
     operation = store.get_operation(operation_id)
     if operation.miroir_id != miroir.id:
@@ -256,7 +259,10 @@ def execute_operation(
     if operation.config_revision != connection.revision:
         reason = "Connection configuration changed since this operation was requested"
     elif operation.kind == "sync":
-        make_source = lambda credentials: open_source(connection, credentials)
+        if connection.config.folder is not None and artifact_root is None:
+            reason = "No artifact storage configured for collecting the folder"
+        elif connection.integration.fetch is not None:
+            make_source = lambda credentials: open_fetch(connection, credentials)
     elif operation.kind == "models":
         plan = analysis_plan(connection)
         if plan is None:
@@ -271,18 +277,37 @@ def execute_operation(
     else:
         artifact = store.get_artifact(miroir.id, str(operation.artifact_id))
         options = json.loads(operation.options or "{}")
-        if operation.parser_version != PARSER_VERSIONS[artifact["input_format"]]:
+        if operation.parser_version != _format(connection, artifact).version:
             reason = "Parser version changed since this import was requested"
+        elif artifact["removed_at"] is not None:
+            reason = (
+                "Retention removed the stored copy; send the file again to import it"
+            )
         elif not stored_copy_is_intact(artifact):
             reason = "Stored artifact is missing or does not match its checksum"
-        path = artifact["storage_path"]
-        make_source = lambda credentials: open_artifact_source(
-            connection, credentials, path, options
+        path, input_format = artifact["storage_path"], artifact["input_format"]
+        make_source = lambda credentials: open_import(
+            connection, input_format, path, options
         )
     if reason is not None:
         attempt, _ = store.start_attempt(operation.id, "blocked")
         store.update_attempt(attempt, error_type="Blocked", error_message=reason)
         raise OperationError(reason)
+    if operation.kind == "sync" and connection.config.folder is not None:
+        assert artifact_root is not None  # checked above
+        return _sync_with_folder(
+            miroir,
+            operation,
+            connection,
+            make_source,
+            store=store,
+            destination=destination,
+            resolve_credentials=resolve_credentials,
+            transform=transform,
+            pipelines_dir=pipelines_dir,
+            lock_wait=lock_wait,
+            artifact_root=artifact_root,
+        )
     return _run_locked(
         store,
         operation.id,
@@ -348,10 +373,220 @@ def import_artifact(
     return execute_operation(miroir, operation.id, store=store, **execution)
 
 
-def artifact_options(connection: ResolvedConnection) -> dict[str, Any]:
-    """Connection settings that change how an artifact is interpreted."""
-    definition = connection.integration.file_input
-    return definition.options(connection.settings) if definition else {}
+def import_options(
+    connection: ResolvedConnection, artifact: dict[str, Any]
+) -> dict[str, Any]:
+    """The file's own import options plus connection settings that change how
+    every file of its format is read (Health's cutoff). Recorded per import."""
+    file_format = _format(connection, artifact)
+    return {**artifact["options"], **file_format.interpretation(connection.settings)}
+
+
+def _format(connection: ResolvedConnection, artifact: dict[str, Any]) -> Any:
+    try:
+        return connection.integration.format(artifact["input_format"])
+    except KeyError:
+        raise OperationError(
+            "This integration no longer reads that file format"
+        ) from None
+
+
+def collect_folder(
+    miroir: ResolvedMiroir,
+    connection: ResolvedConnection,
+    *,
+    store: MetadataStore,
+    artifact_root: Path,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Register the watched folder's matching files as artifacts.
+
+    Returns (artifacts, rejected file names). Unchanged files map to their
+    existing artifact; invalid files are skipped and reported, never stored.
+    """
+    from src.core.artifacts import submit_artifact
+    from src.integrations.validation import InvalidArtifact
+
+    folder = connection.config.folder
+    assert folder is not None and folder.pattern is not None
+    root = Path(folder.path)
+    if not root.is_dir():
+        raise OperationError("The watched folder does not exist or is not a folder")
+    collected, rejected = [], []
+    for path in sorted(p for p in root.glob(folder.pattern) if p.is_file()):
+        origin: ArtifactOrigin = "folder"
+        try:
+            artifact, _ = submit_artifact(
+                miroir,
+                connection,
+                path,
+                folder.options,
+                store=store,
+                root=artifact_root,
+                origin=origin,
+                input_format=folder.format,
+            )
+        except (InvalidArtifact, OperationError):
+            rejected.append(path.name)
+            continue
+        collected.append(artifact)
+    return collected, rejected
+
+
+def prune_folder_artifacts(
+    miroir: ResolvedMiroir, connection: ResolvedConnection, *, store: MetadataStore
+) -> list[str]:
+    """Remove stored copies of older folder files beyond `keep_last`.
+
+    Only files that were imported successfully are removed; their receipts and
+    history stay. Returns the removed artifact IDs.
+    """
+    folder = connection.config.folder
+    if folder is None or folder.keep_last is None:
+        return []
+    candidates = sorted(
+        (
+            a
+            for a in store.list_artifacts(miroir.id, connection.config.id)
+            if a["origin"] == "folder" and a["removed_at"] is None
+        ),
+        key=lambda a: a["last_received_at"],
+        reverse=True,
+    )[folder.keep_last :]
+    removed = []
+    for artifact in candidates:
+        if not any(
+            i["ingestion"] == "succeeded"
+            for i in store.artifact_imports(artifact["id"])
+        ):
+            continue
+        Path(artifact["storage_path"]).unlink(missing_ok=True)
+        store.mark_artifact_removed(miroir.id, artifact["id"])
+        removed.append(artifact["id"])
+    return removed
+
+
+def _sync_with_folder(
+    miroir: ResolvedMiroir,
+    operation: Operation,
+    connection: ResolvedConnection,
+    make_source: Callable[[dict[str, str]], Any] | None,
+    *,
+    store: MetadataStore,
+    destination: Any,
+    resolve_credentials: Callable[[ResolvedConnection], dict[str, str]],
+    transform: Callable[[AnalysisPlan], None] | None,
+    pipelines_dir: str | None,
+    lock_wait: float,
+    artifact_root: Path,
+) -> RunOutcome:
+    """Fetch (if the connector can), import the folder's new files, build once.
+
+    Each new file is its own import operation, linked to this sync. Imports
+    take the connection lock themselves, so the fetch releases it first. A scan
+    that loads nothing records ingestion `not_run` and builds nothing.
+    """
+    execution: dict[str, Any] = {
+        "store": store,
+        "destination": destination,
+        "resolve_credentials": resolve_credentials,
+        "pipelines_dir": pipelines_dir,
+        "lock_wait": lock_wait,
+    }
+    load_ids: list[str] = []
+    try:
+        with store.connection_lock(connection.binding.pipeline_name, lock_wait):
+            attempt, number = store.start_attempt(operation.id, "running")
+            if make_source is not None:
+                # A failed fetch is recorded on this attempt and ends the sync.
+                fetched = _execute(
+                    store,
+                    operation.id,
+                    attempt,
+                    number,
+                    connection,
+                    make_source,
+                    destination,
+                    resolve_credentials,
+                    None,
+                    pipelines_dir,
+                )
+                load_ids += fetched.load_ids
+    except ConnectionBusy as error:
+        blocked, _ = store.start_attempt(operation.id, "blocked")
+        store.update_attempt(
+            blocked, error_type="ConnectionBusy", error_message=str(error)
+        )
+        raise
+    failures: list[str] = []
+    try:
+        collected, rejected = collect_folder(
+            miroir, connection, store=store, artifact_root=artifact_root
+        )
+    except (OSError, OperationError) as error:
+        store.update_attempt(
+            attempt,
+            ingestion="failed",
+            transformation="not_run",
+            error_type=type(error).__name__,
+            error_message=str(error)[:MAX_ERROR_LENGTH],
+        )
+        raise IngestionFailed(str(error)) from None
+    failures += [f"{name}: not a valid file" for name in rejected]
+    for artifact in collected:
+        try:
+            child = request_import(
+                miroir,
+                connection.config.id,
+                artifact["id"],
+                store=store,
+                origin=operation.origin,  # type: ignore[arg-type]
+                parent_operation_id=operation.id,
+            )
+        except AlreadyImported:
+            continue
+        try:
+            outcome = execute_operation(miroir, child.id, **execution)
+        except (IngestionFailed, OperationError) as error:
+            failures.append(f"{artifact['original_name']}: {error}")
+            continue
+        load_ids += outcome.load_ids
+    prune_folder_artifacts(miroir, connection, store=store)
+    message = "; ".join(failures)[:MAX_ERROR_LENGTH]
+    if failures:
+        # Files that did load are still modelled below.
+        store.update_attempt(
+            attempt,
+            ingestion="failed",
+            error_type="FolderImportFailed",
+            error_message=message,
+            load_ids=load_ids,
+            **({} if load_ids else {"transformation": "not_run"}),
+        )
+    elif not load_ids:
+        store.update_attempt(
+            attempt,
+            ingestion="not_run",
+            transformation="not_run",
+            transformation_detail="No new data",
+        )
+        return RunOutcome(operation.id, number, "not_run", "not_run", (), True)
+    else:
+        store.update_attempt(attempt, ingestion="succeeded", load_ids=load_ids)
+    transformation, recorded = (
+        _transform(store, attempt, connection, transform, [])
+        if load_ids
+        else ("not_run", True)
+    )
+    if failures:
+        raise IngestionFailed(f"FolderImportFailed: {message}")
+    return RunOutcome(
+        operation.id,
+        number,
+        "succeeded",
+        transformation,
+        tuple(load_ids),
+        recorded,
+    )
 
 
 def _connection(miroir: ResolvedMiroir, connection_id: str) -> ResolvedConnection:

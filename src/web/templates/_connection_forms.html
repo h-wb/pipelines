@@ -8,25 +8,42 @@
 {% endfor %}
 {% endmacro %}
 
-{% macro upload(c) %}
-<p>Choose a {{ c.file_delivery.label }} file from your device. Miroir keeps the original and records each import.</p>
-<form method="post" action="/connections/{{ c.id }}/upload" enctype="multipart/form-data" class="upload-form">
-  <label>Export file <input type="file" name="file" accept="{{ c.file_delivery.accept }}" required></label>
-  {% if c.file_delivery.roles | length > 1 %}
-  <label>Dates to import
-    <select name="role" required>
-      {% for role in c.file_delivery.roles %}
-      <option value="{{ role }}" {% if loop.first %}selected{% endif %}>{{ role | capitalize }} data</option>
-      {% endfor %}
-    </select>
-  </label>
+{% macro option_fields(schema, values={}) %}
+{# A format's import options, from its JSON schema: enums become choices. #}
+{% for name, prop in (schema.properties or {}).items() %}
+<label>{{ prop.title or name }}
+  {% if prop.enum %}
+  <select name="option.{{ name }}">
+    {% for choice in prop.enum %}
+    <option value="{{ choice }}" {% if choice == values.get(name, prop.default) %}selected{% endif %}>{{ choice | capitalize }}</option>
+    {% endfor %}
+  </select>
   {% else %}
-  <input type="hidden" name="role" value="{{ c.file_delivery.roles[0] }}">
+  <input name="option.{{ name }}" value="{{ values.get(name, prop.default) or '' }}">
   {% endif %}
+  {% if prop.description %}<span class="muted">{{ prop.description }}</span>{% endif %}
+</label>
+{% endfor %}
+{% endmacro %}
+
+{% macro folder_field(value='', required=False) %}
+<label>Server folder
+  <input name="folder.path" value="{{ value or '' }}" {% if required %}required{% endif %} placeholder="/miroir/data/…">
+  <span class="muted">An absolute path readable by the server and the jobs running this connection. Each sync imports new matching files.</span>
+</label>
+{% endmacro %}
+
+{% macro upload(c) %}
+{% set f = c.formats[0] %}
+<p>Choose a {{ f.label }} file from your device. Miroir keeps the original and records each import.</p>
+<form method="post" action="/connections/{{ c.id }}/upload" enctype="multipart/form-data" class="upload-form">
+  <label>File <input type="file" name="file" accept="{{ f.accept }}" required></label>
+  <input type="hidden" name="format" value="{{ f.id }}">
+  {{ option_fields(f.options_schema) }}
   <label><input type="checkbox" name="import_now" value="true" checked> Import after upload</label>
   <button>Upload</button>
 </form>
-<p class="muted">{{ c.file_delivery.role_help }}</p>
+<p class="muted">{{ f.help }}</p>
 {% endmacro %}
 
 {% macro endpoint(c, request) %}

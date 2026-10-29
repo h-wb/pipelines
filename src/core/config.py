@@ -130,6 +130,46 @@ class AnalysisSettings(StrictModel):
         return Schedule.known_timezone(value)
 
 
+class Folder(StrictModel):
+    """A watched folder (decision 021): new matching files become artifacts.
+
+    Delivery, not a source setting: the same files could be uploaded or sent.
+    """
+
+    path: str = Field(
+        min_length=1,
+        max_length=1000,
+        title="Server folder",
+        description="An absolute path readable by the server and the jobs running "
+        "this connection.",
+    )
+    # Glob relative to `path`; the format's default when omitted.
+    pattern: str | None = Field(default=None, min_length=1, max_length=200)
+    # One of the integration's formats; its first when omitted.
+    format: Identifier | None = None
+    # Import options for every file from this folder, validated by the format.
+    options: dict[str, Any] = Field(default_factory=dict)
+    # Stored copies kept for folder files; older imported ones are removed.
+    # None keeps every copy.
+    keep_last: int | None = Field(default=5, ge=1, le=1000)
+
+    @field_validator("path")
+    @classmethod
+    def absolute(cls, value: str) -> str:
+        if not value.startswith("/") or "\x00" in value:
+            raise ValueError("expected an absolute path")
+        return value
+
+    @field_validator("pattern")
+    @classmethod
+    def relative_glob(cls, value: str | None) -> str | None:
+        if value is not None and (
+            value.startswith("/") or ".." in Path(value).parts or "\x00" in value
+        ):
+            raise ValueError("expected a pattern inside the folder")
+        return value
+
+
 class ConnectionConfig(StrictModel):
     id: Identifier
     integration: Identifier
@@ -137,6 +177,7 @@ class ConnectionConfig(StrictModel):
     credentials: dict[str, SecretReference] = Field(default_factory=dict)
     binding: Binding | None = None
     resources: list[Identifier] | None = None
+    folder: Folder | None = None
     schedule: Schedule | None = None
     analysis: AnalysisSettings = Field(default_factory=AnalysisSettings)
     # Metabase dashboard name -> ID, shown as links next to the connection.
@@ -206,7 +247,14 @@ class ResolvedConnection:
                 for r in self.integration.resources
             ],
             "capabilities": list(self.integration.capabilities),
+            "fetch": self.integration.fetch is not None,
+            "folder": self.config.folder.model_dump() if self.config.folder else None,
         }
+
+    @property
+    def can_sync(self) -> bool:
+        """A sync fetches from the API and/or scans the watched folder."""
+        return self.integration.fetch is not None or self.config.folder is not None
 
 
 @dataclass(frozen=True)
@@ -251,6 +299,9 @@ def parse_miroir(text: str) -> ResolvedMiroir:
         raw = json.loads(text, object_pairs_hook=_unique_keys)
     except (ValueError, RecursionError) as error:
         raise ConfigurationError("Invalid JSON configuration") from error
+    if isinstance(raw, dict):
+        for connection in raw.get("connections") or []:
+            _upgrade_legacy_folder(connection)
     try:
         config = MiroirConfig.model_validate(raw)
     except ValidationError as error:
@@ -273,7 +324,17 @@ def parse_miroir(text: str) -> ResolvedMiroir:
             raise ConfigurationError(
                 f"{prefix}.credentials: incorrect credential names"
             )
+        if connection.folder is not None:
+            connection = connection.model_copy(
+                update={
+                    "folder": _resolve_folder(connection.folder, definition, prefix)
+                }
+            )
         if connection.resources is not None:
+            if definition.fetch is None:
+                raise ConfigurationError(
+                    f"{prefix}.resources: only fetched resources can be selected"
+                )
             available = {r.name for r in definition.resources}
             if (
                 not connection.resources
@@ -324,6 +385,12 @@ def parse_miroir(text: str) -> ResolvedMiroir:
                 if c.config.resources is not None
                 else {}
             ),
+            # Retention does not change what a sync loads.
+            **(
+                {"folder": c.config.folder.model_dump(exclude={"keep_last"})}
+                if c.config.folder is not None
+                else {}
+            ),
         }
         for c in connections
     }
@@ -353,6 +420,46 @@ def parse_miroir(text: str) -> ResolvedMiroir:
         tuple(connections),
         links=config.links,
         deployment=config.deployment,
+    )
+
+
+def _upgrade_legacy_folder(connection: Any) -> None:
+    """Read a pre-021 `settings.data_dir` as the connection's watched folder."""
+    if not isinstance(connection, dict):
+        return
+    settings = connection.get("settings")
+    definition = INTEGRATIONS.get(str(connection.get("integration")))
+    if not (isinstance(settings, dict) and "data_dir" in settings and definition):
+        return
+    if not definition.formats:
+        return
+    path = settings.pop("data_dir")
+    if path is not None and "folder" not in connection:
+        connection["folder"] = {"path": path}
+
+
+def _resolve_folder(
+    folder: Folder, definition: IntegrationDefinition, prefix: str
+) -> Folder:
+    """Fill the format, its default pattern, and validated import options."""
+    if not definition.formats:
+        raise ConfigurationError(f"{prefix}.folder: this integration reads no files")
+    try:
+        file_format = definition.format(folder.format)
+    except KeyError:
+        raise ConfigurationError(
+            f"{prefix}.folder.format: not a format of this integration"
+        ) from None
+    try:
+        options = file_format.options.model_validate(folder.options)
+    except ValidationError as error:
+        raise _validation_error(error, f"{prefix}.folder.options") from error
+    return folder.model_copy(
+        update={
+            "format": file_format.id,
+            "pattern": folder.pattern or file_format.default_pattern,
+            "options": options.model_dump(mode="json"),
+        }
     )
 
 

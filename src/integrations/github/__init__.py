@@ -1,4 +1,4 @@
-"""GitHub API account connection; export reseeding remains a legacy operation."""
+"""GitHub account: API fetch. The account-export archive format is planned (decision 021)."""
 
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -10,10 +10,10 @@ from src.core.models import StrictModel
 from src.integrations import checks
 from src.integrations.contracts import (
     CredentialField,
+    Fetch,
     IntegrationDefinition,
     ResourceDefinition,
 )
-from src.integrations.delivery import DeliveryMethod
 
 
 class GitHubSettings(StrictModel):
@@ -25,7 +25,7 @@ class GitHubSettings(StrictModel):
 
 
 @contextmanager
-def open_sync(settings: Any, credentials: dict[str, str]) -> Iterator[Any]:
+def open_fetch(settings: Any, credentials: dict[str, str]) -> Iterator[Any]:
     import requests
 
     from src.integrations.github.source import github_source
@@ -49,14 +49,10 @@ DEFINITION = IntegrationDefinition(
             "A token for this GitHub account, with access to the repositories and contribution data you want to import.",
         ),
     ),
-    input_modes=("api",),
-    capabilities=("incremental_sync", "resource_selection"),
-    delivery_methods=(
-        DeliveryMethod(
-            "api",
-            "Connect your account",
-            "Fetch repository activity and your contribution history from GitHub.",
-        ),
+    fetch=Fetch(
+        "Connect your account",
+        "Fetch repository activity and your contribution history from GitHub.",
+        open_fetch,
     ),
     resources=tuple(
         ResourceDefinition(name, key, cursor, kind)
@@ -86,5 +82,4 @@ DEFINITION = IntegrationDefinition(
     ),
     analysis="github",
     check=checks.github,
-    open_sync=open_sync,
 )

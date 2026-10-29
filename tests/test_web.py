@@ -233,7 +233,7 @@ class WebTests(WebFixture):
         response = self.client.post(
             "/connections/new_health/upload",
             files={"file": ("export.json", json.dumps(export(("2026-06-05", 1))))},
-            data={"role": "ongoing", "import_now": "true"},
+            data={"option.role": "ongoing", "import_now": "true"},
         )
         self.assertEqual(response.status_code, 200)
         self.assertIn("Last export received", response.text)
@@ -242,7 +242,7 @@ class WebTests(WebFixture):
         self.assertFalse(detail["can_sync"])
         response = self.client.post("/api/connections/new_health/sync", headers=BEARER)
         self.assertEqual(response.status_code, 400)
-        self.assertIn("Upload an export", response.json()["error"])
+        self.assertIn("Nothing to sync", response.json()["error"])
 
     def test_receive_token_is_scoped_and_imports_duplicate_once(self):
         headers = self.delivery_headers()
@@ -259,7 +259,9 @@ class WebTests(WebFixture):
         )
         self.assertEqual(again.status_code, 200)
         self.assertEqual(again.json()["already_imported"], first.json()["operation_id"])
-        self.assertEqual(self.service.artifacts("health")[0]["role"], "ongoing")
+        self.assertEqual(
+            self.service.artifacts("health")[0]["options"], {"role": "ongoing"}
+        )
         latest_receipt = self.service.artifacts("health")[0]
         self.assertEqual(initial_receipt["received_at"], latest_receipt["received_at"])
         self.assertLess(
@@ -359,7 +361,7 @@ class WebTests(WebFixture):
         self.assertIsNotNone(
             self.service.connection("health")["delivery"]["last_received_at"]
         )
-        # Existing folder connections retain their check and Scan folder action.
+        # A pre-021 data_dir setting is read as a watched folder.
         self.service.create_connection(
             "apple_health",
             "folder_health",
@@ -367,9 +369,9 @@ class WebTests(WebFixture):
             {},
         )
         self.assertTrue(self.service.connection("folder_health")["can_sync"])
-        self.assertEqual(
+        self.assertIn(
+            "Watched folder is readable",
             self.service.check_connection("folder_health")["message"],
-            "Export folder is readable",
         )
         response = self.client.post(
             "/api/connections/folder_health/sync", headers=BEARER
@@ -453,7 +455,7 @@ class WebTests(WebFixture):
                     json.dumps(export(("2026-06-05", 1))),
                 )
             },
-            data={"role": "ongoing", "import_now": "true"},
+            data={"option.role": "ongoing", "import_now": "true"},
             follow_redirects=False,
         )
         self.assertEqual(

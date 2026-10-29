@@ -46,13 +46,14 @@
 
 <h2>Files</h2>
 <table>
-  <tr><th>Received</th><th>File</th><th>Role</th><th>Last import</th><th></th></tr>
+  <tr><th>Received</th><th>File</th><th>Options</th><th>Last import</th><th></th></tr>
   {% for a in c.artifacts %}
   {% set last = a.imports[-1] if a.imports else None %}
   <tr>
     <td>{{ when(a.received_at) }}</td>
     <td>{{ a.original_name }}<div class="muted"><code>{{ a.sha256[:12] }}</code> · {{ a.size }} bytes</div></td>
-    <td>{{ a.role }}</td>
+    <td>{% for k, v in a.options.items() %}{{ k }}: {{ v }}{% if not loop.last %}, {% endif %}{% else %}<span class="muted">—</span>{% endfor %}
+      {% if a.origin == 'folder' %}<div class="muted">from folder{% if a.removed_at %} · copy removed{% endif %}</div>{% endif %}</td>
     <td>{% if last %}{{ badge(last.ingestion) }} <span class="muted">parser v{{ last.parser_version }}</span>
       {% if last.error_message %}<div class="muted">{{ last.error_message }}</div>{% endif %}{% else %}<span class="muted">not imported</span>{% endif %}</td>
     <td>

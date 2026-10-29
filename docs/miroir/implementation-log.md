@@ -826,3 +826,65 @@ both rollouts ready, server started cleanly with the live configuration. A
 model-only operation (`38ed6214-6bbe-47a2-8ef7-78f20e00a9d5`) completed in Job
 `hairy-alligator-76phw` on the release image. No metadata migration. No new
 connections were created; legacy GitHub/Bike Share/browser deployments are unchanged.
+
+## 2026-10-29 — Connector inputs and core-owned file delivery (decision 021)
+
+Before cutting over GitHub, Bike Share, and browser history, settled how connectors
+work across API pulls, manual imports, automatic delivery, and folders.
+
+### Inventory (read-only)
+
+- Legacy `local-pool` loads run nightly and succeed: `load_bikeshare` 00:00,
+  `load_github` 01:00, `load_browser_history` 02:00, plus `run_dbt` 03:00.
+- Raw datasets: `github_data` (1,229 API commits, 14,407 export commits, 4,014
+  export PRs, …; dlt state `github` v33), `bikeshare_data` (342 trips, no duplicate
+  rental IDs; state v33), `browser_history_data` (250,872 visits, 121,304 places;
+  state v23). The new sources use the same dlt source names, resources, and state
+  keys, so each connection can bind the legacy pipeline/dataset and keep history,
+  `export_*` tables, and cursors.
+- Miroir Jobs mount `Documents/data` at `/miroir/data`, so the browser snapshot is
+  at `/miroir/data/browser/zen-places.sqlite.gz`. The Bike Share API's certificate
+  now verifies; `verify_tls` stays on.
+
+### What changed
+
+- **Contracts.** `IntegrationDefinition` declares `fetch` (label, description,
+  opener) and `formats` (`FileFormat`: ID, version, validator, typed `options`
+  model, `interpretation` from settings, default folder pattern, sender metadata,
+  parser). Capabilities and setup methods are derived; `input_modes`,
+  capability strings, `delivery_methods`, `file_delivery`, `file_input`, and
+  `open_sync` are gone, as is the global format table (`formats.py`): formats
+  resolve through the connection's integration. `describe()` feeds the CLI, API,
+  and forms.
+- **Connectors.** Health and browser are format-only; their folder readers,
+  Health's `manual/` convention, and browser incremental reads are removed (a
+  snapshot is read in full and merged however it arrives). Health's per-file
+  choice is `HealthImportOptions.role`. `data_dir` left the source settings.
+- **Watched folders.** `folder: {path, pattern, format, options, keep_last}` on
+  the connection, validated against the integration and its format's options; a
+  legacy `settings.data_dir` is read as one. A sync fetches (under the lock), then
+  collects the folder through `submit_artifact` (origin `folder`, retention
+  `rolling`), imports each pending artifact as a child import operation
+  (`parent_operation_id`), prunes older imported copies beyond `keep_last`, and
+  builds once. Nothing new → ingestion `not_run`, no build. Invalid files are
+  reported on the sync and never stored; valid ones still load and build.
+  Retention excludes `keep_last` from the revision. Folder readiness is a core
+  check. Flow runs find artifact storage at `MIROIR_ARTIFACT_DIR` or `artifacts`
+  beside the configuration (the cluster's layout).
+- **Import options.** Metadata schema 5: artifacts store `options` (JSON),
+  `origin`, `removed_at`; `role` is migrated into `{"role": …}` in the same JSON
+  form imports record, so existing receipts still match. Operations gain
+  `parent_operation_id`. Upload forms render the format's options; the upload
+  API treats non-reserved query parameters as options (`?role=historical` keeps
+  working); the receiving URL always uses defaults; the CLI takes
+  `--option NAME=VALUE` and `--format`.
+
+### Validation
+
+- Lint, format, mypy clean on the slice; 119 tests pass (Postgres bin set). New:
+  `tests/test_folders.py` (child imports and a single build, unchanged folder
+  loads/builds nothing, invalid files reported while valid ones load, retention
+  removal, replay refusal and restoration on resend, missing folder, legacy
+  `data_dir`, folder validation, retention outside the revision), a v4→v5
+  upgrade test (role becomes options; the earlier import still counts), and a
+  web test for folder settings and option fields.

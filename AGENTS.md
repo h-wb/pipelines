@@ -34,14 +34,16 @@ Miroir (decision 014); history keeps its own words.
 - `src/pipelines/miroir.py` — the Prefect flow `sync_connection` (one
   deployment per connection), and `transform.py` (dbt build).
 - `src/integrations/<name>/` — one package per connector: settings, credentials,
-  check, resources, delivery/file format, and its dlt source (`source.py`);
-  `registry.py` only lists them. `src/sources/` + old `src/pipelines/*.py` flows
+  check, resources, and inputs — a `fetch` and/or file `formats` with typed
+  import options (decision 021) — plus its dlt source (`source.py`);
+  `registry.py` only lists them. Upload, receiving URL, and watched folder are
+  core transports that all register artifacts. `src/sources/` + old `src/pipelines/*.py` flows
   are the legacy path, kept only until each cutover (decision 020).
 - `dbt/` — models (staging + reporting), profiles read
   `DESTINATION__POSTGRES__CREDENTIALS__*` env.
 - `src/analyses/catalog.py` — analysis definitions (dbt selector, output
   relations, typed parameters, version); integrations recommend one by ID.
-- `tests/` — unittest; no pytest. 110 tests, ~105s, include four against a real
+- `tests/` — unittest; no pytest. 119 tests, ~110s, include four against a real
   temporary Prefect API (`prefect_test_harness`), CLI subprocess tests, and six
   disposable Postgres/dbt scenarios (set `MIROIR_TEST_POSTGRES_BIN` to the bin
   directory of an installed Postgres, or put `initdb`/`pg_ctl` on PATH; in this

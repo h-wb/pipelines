@@ -10,10 +10,10 @@ from src.core.models import StrictModel
 from src.integrations import checks
 from src.integrations.contracts import (
     CredentialField,
+    Fetch,
     IntegrationDefinition,
     ResourceDefinition,
 )
-from src.integrations.delivery import DeliveryMethod
 
 
 class BikeShareSettings(StrictModel):
@@ -25,7 +25,7 @@ class BikeShareSettings(StrictModel):
 
 
 @contextmanager
-def open_sync(settings: Any, credentials: dict[str, str]) -> Iterator[Any]:
+def open_fetch(settings: Any, credentials: dict[str, str]) -> Iterator[Any]:
     import requests
 
     from src.integrations.bikeshare.source import bikeshare
@@ -53,17 +53,12 @@ DEFINITION = IntegrationDefinition(
             "The Authorization value used by the mobile app. Replace it here when it expires.",
         ),
     ),
-    input_modes=("api",),
-    capabilities=("incremental_sync",),
-    delivery_methods=(
-        DeliveryMethod(
-            "api",
-            "Connect your account",
-            "Fetch your closed rentals using your mobile-app credentials.",
-        ),
+    fetch=Fetch(
+        "Connect your account",
+        "Fetch your closed rentals using your mobile-app credentials.",
+        open_fetch,
     ),
     resources=(ResourceDefinition("trips", ("rentalId",), "sd"),),
     analysis="biking",
     check=checks.bikeshare,
-    open_sync=open_sync,
 )

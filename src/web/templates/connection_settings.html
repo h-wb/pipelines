@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_macros.html" import badge, when %}
-{% from "_connection_forms.html" import settings_fields, credential_fields, endpoint %}
+{% from "_connection_forms.html" import settings_fields, credential_fields, endpoint, folder_field %}
 {% set c = connection %}
 {% block title %}{{ c.id }} settings{% endblock %}
 {% block body %}
@@ -21,7 +21,7 @@
 
 <h2 id="delivery">Data delivery</h2>
 {% for method in integration.delivery_methods %}
-{% if method.advanced %}<details class="setting-block"{% if values.get(method.settings_fields[0]) %} open{% endif %}><summary>{{ method.label }}</summary>{% else %}<section class="setting-block"><h3>{{ method.label }}</h3>{% endif %}
+{% if method.advanced %}<details class="setting-block"{% if method.id == 'folder' and folder_values %} open{% endif %}><summary>{{ method.label }}</summary>{% else %}<section class="setting-block"><h3>{{ method.label }}</h3>{% endif %}
 <p>{{ method.description }}</p>
 {% if method.id == 'webhook' %}
   {% if c.delivery.enabled %}
@@ -34,13 +34,15 @@
   {% else %}<p>Not enabled. <a href="/connections/{{ c.id }}/setup?method=webhook">Set up automatic delivery</a></p>{% endif %}
 {% elif method.id == 'upload' %}
   <p>Always available. <a href="/connections/{{ c.id }}#upload">Upload an export</a></p>
-{% elif method.settings_fields %}
-  <form class="stack" method="post" action="/connections/{{ c.id }}/settings">
+{% elif method.id == 'folder' %}
+  <form class="stack" method="post" action="/connections/{{ c.id }}/folder">
     <input type="hidden" name="file_revision" value="{{ file_revision }}">
-    {{ settings_fields(integration, method.settings_fields, values) }}
-    <button>Save folder settings</button>
-    <p class="muted">Clear the folder to stop offering folder scans. Uploads and automatic delivery stay available.</p>
+    {{ folder_field(folder_values.path if folder_values else '') }}
+    {% if folder_values %}<p class="muted">Files matching <code>{{ folder_values.pattern }}</code>{% if folder_values.keep_last %}; stored copies of the latest {{ folder_values.keep_last }} are kept{% endif %}.</p>{% endif %}
+    <button>Save folder</button>
+    <p class="muted">Clear the folder to stop watching it. Uploads and automatic delivery stay available.</p>
   </form>
+  {% if folder_values %}<p><a href="/connections/{{ c.id }}/setup?method=folder">Check setup and scan</a></p>{% endif %}
 {% else %}<p><a href="/connections/{{ c.id }}/setup?method={{ method.id }}">Check setup and sync</a></p>{% endif %}
 {% if method.advanced %}</details>{% else %}</section>{% endif %}
 {% endfor %}

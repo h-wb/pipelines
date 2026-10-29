@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_connection_forms.html" import settings_fields %}
+{% from "_connection_forms.html" import settings_fields, folder_field %}
 {% block title %}Add a connection{% endblock %}
 {% block body %}
 <h1>Add a connection</h1>
@@ -44,7 +44,7 @@
     <span class="muted">A stable name for this account or source. Use lowercase letters, digits, and underscores.</span>
   </label>
   {{ settings_fields(integration, integration.connection_fields, values) }}
-  {{ settings_fields(integration, selected_method.settings_fields, values, selected_method.settings_fields) }}
+  {% if selected_method.id == 'folder' %}{{ folder_field(values.get('folder.path'), True) }}{% endif %}
   {% if integration.credentials %}
   <h3>Account credentials</h3>
   <p class="muted">These let Miroir fetch your data. Values are stored encrypted and never shown again.</p>

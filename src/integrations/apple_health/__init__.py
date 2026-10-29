@@ -1,29 +1,22 @@
-"""apple_health connection definition and lazy execution hooks."""
+"""Apple Health through Health Auto Export JSON files."""
 
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import date
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, field_validator
 
 from src.core.models import StrictModel
-from src.integrations import checks
+from src.integrations.apple_health.formats import validate_export
 from src.integrations.contracts import (
-    FileInput,
+    FileFormat,
     IntegrationDefinition,
     ResourceDefinition,
 )
-from src.integrations.delivery import DeliveryMethod, FileDelivery
 
 
 class AppleHealthSettings(StrictModel):
-    data_dir: str | None = Field(
-        default=None,
-        min_length=1,
-        title="Server folder",
-        description="A folder readable by the server and the jobs running this connection.",
-    )
     cutoff: str = Field(
         title="Cutoff date",
         description="YYYY-MM-DD. Historical files contribute rows before it, "
@@ -39,23 +32,17 @@ class AppleHealthSettings(StrictModel):
         return value
 
 
-from src.integrations.validation import _health_auto_export_json
+class HealthImportOptions(StrictModel):
+    role: Literal["ongoing", "historical"] = Field(
+        default="ongoing",
+        title="Dates to import",
+        description="Historical files contribute rows before the cutoff; ongoing "
+        "files contribute rows from it onwards.",
+    )
 
 
 @contextmanager
-def open_sync(settings: Any, credentials: dict[str, str]) -> Iterator[Any]:
-    from src.core.operations import OperationError
-    from src.integrations.apple_health.source import apple_health
-
-    if settings.data_dir is None:
-        raise OperationError("Upload an export or configure a server folder to scan")
-    yield apple_health(data_dir=settings.data_dir, cutoff=settings.cutoff)
-
-
-@contextmanager
-def open_artifact(
-    settings: Any, credentials: dict[str, str], path: str, options: dict[str, Any]
-) -> Iterator[Any]:
+def open_export(settings: Any, path: str, options: dict[str, Any]) -> Iterator[Any]:
     from src.integrations.apple_health.source import apple_health_artifact
 
     yield apple_health_artifact(
@@ -65,51 +52,33 @@ def open_artifact(
 
 DEFINITION = IntegrationDefinition(
     name="apple_health",
-    open_sync=open_sync,
     title="Apple Health (Health Auto Export)",
     settings_model=AppleHealthSettings,
     credentials=(),
-    check=checks.apple_health,
-    input_modes=("file",),
-    capabilities=("directory_import", "artifact_import"),
-    delivery_methods=(
-        DeliveryMethod(
-            "upload",
-            "Upload files",
-            "Choose exports from your device whenever you want to import them.",
-        ),
-        DeliveryMethod(
-            "webhook",
-            "Health Auto Export",
-            "Send exports automatically from your phone to a private receiving URL.",
-        ),
-        DeliveryMethod(
-            "folder",
-            "Scan a server folder",
-            "Read exports from a folder on your server.",
-            ("data_dir",),
-            advanced=True,
-        ),
-    ),
-    file_input=FileInput(
-        "health_auto_export_json",
-        1,
-        _health_auto_export_json,
-        lambda settings: {"cutoff": settings.cutoff},
-        open_artifact,
-    ),
-    file_delivery=FileDelivery(
-        label="Health Auto Export JSON",
-        accept=".json,application/json",
-        content_type="application/json",
-        sender_instructions="In Health Auto Export, create a REST API automation and choose JSON as the export format.",
-        role_help="Historical files contribute rows before the cutoff; ongoing files contribute rows from it onwards.",
-    ),
     resources=(
         ResourceDefinition("metrics", ("metric_name", "date", "source"), None),
         ResourceDefinition("workouts", ("id",), None),
         ResourceDefinition("state_of_mind", ("id",), None),
         ResourceDefinition("medications", ("displayText", "start"), None),
+    ),
+    formats=(
+        FileFormat(
+            id="health_auto_export_json",
+            version=1,
+            label="Health Auto Export JSON",
+            accept=".json,application/json",
+            content_type="application/json",
+            sender_instructions="In Health Auto Export, create a REST API automation "
+            "and choose JSON as the export format.",
+            help="Automatic exports use ongoing dates.",
+            validate=validate_export,
+            open=open_export,
+            options=HealthImportOptions,
+            interpretation=lambda settings: {"cutoff": settings.cutoff},
+            default_pattern="*.json",
+            sender="Health Auto Export",
+            received_name="automatic-export.json",
+        ),
     ),
     analysis="health",
 )

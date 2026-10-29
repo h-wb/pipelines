@@ -17,9 +17,9 @@ from src.core.artifacts import submit_artifact
 from src.core.config import ConfigurationError, parse_miroir
 from src.core.operations import MetadataStore, OperationError
 from src.integrations.checks import CheckFailed
-from src.integrations.formats import VALIDATORS, InvalidArtifact
 from src.integrations.registry import INTEGRATIONS
-from src.integrations.sources import open_source
+from src.integrations.sources import open_fetch
+from src.integrations.validation import InvalidArtifact
 
 SECRET = {"provider": "env", "key": "UNUSED"}
 
@@ -64,7 +64,7 @@ class ConnectorContractTests(unittest.TestCase):
     def test_every_integration_recommends_a_cataloged_analysis(self):
         for definition in INTEGRATIONS.values():
             self.assertIn(definition.analysis, ANALYSES, definition.name)
-            self.assertIsNotNone(definition.open_sync or definition.file_input)
+            self.assertTrue(definition.fetch or definition.formats)
 
     def test_resource_selection_is_validated_and_applied(self):
         for bad in ([], ["repos", "repos"], ["not_a_resource"]):
@@ -74,14 +74,14 @@ class ConnectorContractTests(unittest.TestCase):
         self.assertEqual(connection.summary()["resources"], ["repos", "stars"])
         with (
             patch.object(requests.Session, "send", github_user),
-            open_source(connection, {"access_token": "t"}) as source,
+            open_fetch(connection, {"access_token": "t"}) as source,
         ):
             self.assertEqual(sorted(source.selected_resources), ["repos", "stars"])
         # Without a selection, every declared resource stays selected.
         connection = parse(github()).connections[0]
         with (
             patch.object(requests.Session, "send", github_user),
-            open_source(connection, {"access_token": "t"}) as source,
+            open_fetch(connection, {"access_token": "t"}) as source,
         ):
             self.assertEqual(
                 sorted(source.selected_resources),
@@ -137,7 +137,7 @@ class BrowserSnapshotTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
-        self.validate = VALIDATORS["firefox_places_snapshot"]
+        self.validate = INTEGRATIONS["browser_history"].format().validate
 
     def test_plain_and_gzip_places_snapshots_are_one_format(self):
         plain = places(self.root / "places.sqlite")
@@ -156,19 +156,19 @@ class BrowserSnapshotTests(unittest.TestCase):
             with self.assertRaises(InvalidArtifact):
                 self.validate(path)
 
-    def test_snapshots_have_no_historical_role(self):
+    def test_snapshots_take_no_import_options(self):
         miroir = parse(
             {"id": "browsing", "integration": "browser_history", "settings": {}}
         )
         store = MetadataStore(f"sqlite:///{self.root / 'meta.db'}")
         store.migrate()
         self.addCleanup(store.engine.dispose)
-        with self.assertRaisesRegex(OperationError, "only be imported as: ongoing"):
+        with self.assertRaisesRegex(OperationError, "Invalid import options: role"):
             submit_artifact(
                 miroir,
                 miroir.connections[0],
                 places(self.root / "places.sqlite"),
-                "historical",
+                {"role": "historical"},
                 store=store,
                 root=self.root / "artifacts",
             )

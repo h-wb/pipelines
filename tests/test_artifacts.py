@@ -12,6 +12,7 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -30,7 +31,8 @@ from src.core.operations import (
     schema_info,
 )
 from src.core.runner import AlreadyImported, IngestionFailed, import_artifact
-from src.integrations.formats import InvalidArtifact
+from src.integrations.registry import INTEGRATIONS
+from src.integrations.validation import InvalidArtifact
 from src.sources.apple_health import apple_health as legacy_health_source
 from tests.test_miroir import example
 
@@ -56,6 +58,7 @@ class ArtifactTests(unittest.TestCase):
         other = copy.deepcopy(config["connections"][0])
         other["id"] = "other_health"
         config["connections"].append(other)
+        self.config = config
         self.miroir = parse_miroir(json.dumps(config))
         self.health = self.miroir.connections[0]
 
@@ -77,7 +80,7 @@ class ArtifactTests(unittest.TestCase):
             self.miroir,
             connection or self.health,
             path,
-            role,
+            {"role": role},
             store=store or self.store,
             root=self.root / "artifacts",
         )
@@ -197,10 +200,12 @@ class ArtifactTests(unittest.TestCase):
     def test_new_parser_version_reimports(self):
         artifact, _ = self.submit(self.write("a.json", export(("2026-06-05", 1))))
         self.load(artifact)
-        with patch.dict(
-            "src.integrations.formats.PARSER_VERSIONS", {"health_auto_export_json": 2}
-        ):
-            outcome = self.load(artifact)
+        health = self.health.integration
+        newer = replace(health, formats=(replace(health.formats[0], version=2),))
+        registry = {**INTEGRATIONS, "apple_health": newer}
+        with patch("src.core.config.INTEGRATIONS", registry):
+            self.miroir = parse_miroir(json.dumps(self.config))
+        outcome = self.load(artifact)
         self.assertEqual(
             self.store.get_operation(outcome.operation_id).parser_version, 2
         )
@@ -254,7 +259,12 @@ class ArtifactTests(unittest.TestCase):
         with legacy.engine.begin() as db:
             for table in ("artifacts", "secrets", "connection_checks"):
                 db.execute(sa.text(f"DROP TABLE {table}"))
-            for column in ("artifact_id", "parser_version", "options"):
+            for column in (
+                "artifact_id",
+                "parser_version",
+                "options",
+                "parent_operation_id",
+            ):
                 db.execute(sa.text(f"ALTER TABLE operations DROP COLUMN {column}"))
             db.execute(sa.text("ALTER TABLE attempts DROP COLUMN failure_kind"))
             db.execute(schema_info.update().values(version=1))
@@ -275,9 +285,38 @@ class ArtifactTests(unittest.TestCase):
             columns = {c["name"] for c in inspector.get_columns("operations")}
             attempt_columns = {c["name"] for c in inspector.get_columns("attempts")}
             tables = set(inspector.get_table_names())
-        self.assertTrue({"artifact_id", "parser_version", "options"} <= columns)
+        self.assertTrue(
+            {"artifact_id", "parser_version", "options", "parent_operation_id"}
+            <= columns
+        )
         self.assertIn("failure_kind", attempt_columns)
         self.assertTrue({"artifacts", "secrets", "connection_checks"} <= tables)
+
+    def test_version_4_roles_become_options_and_receipts_still_match(self):
+        artifact, _ = self.submit(
+            self.write("a.json", export(("2026-06-03", 1))), "historical"
+        )
+        self.load(artifact)
+        with self.store.engine.begin() as db:
+            for column in ("options", "origin", "removed_at"):
+                db.execute(sa.text(f"ALTER TABLE artifacts DROP COLUMN {column}"))
+            db.execute(sa.text("ALTER TABLE artifacts ADD COLUMN role VARCHAR(16)"))
+            db.execute(sa.text("UPDATE artifacts SET role = 'historical'"))
+            db.execute(
+                sa.text("ALTER TABLE operations DROP COLUMN parent_operation_id")
+            )
+            db.execute(schema_info.update().values(version=4))
+        self.store.migrate()
+        upgraded = self.store.get_artifact(self.miroir.id, artifact["id"])
+        self.assertEqual(upgraded["options"], {"role": "historical"})
+        self.assertIsNone(upgraded["removed_at"])
+        # Identical bytes keep their recorded options; the import is not repeated.
+        self.assertEqual(
+            self.submit(Path(artifact["storage_path"]), "historical")[0]["id"],
+            artifact["id"],
+        )
+        with self.assertRaises(AlreadyImported):
+            self.load(upgraded)
 
 
 class ArtifactCliTests(unittest.TestCase):
@@ -300,8 +339,8 @@ class ArtifactCliTests(unittest.TestCase):
                 "submit",
                 "health",
                 str(exported),
-                "--role",
-                "ongoing",
+                "--option",
+                "role=ongoing",
                 "--artifacts",
                 str(root / "artifacts"),
             )

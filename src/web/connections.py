@@ -77,6 +77,7 @@ def connection_pages(service: MiroirService, page: Page) -> APIRouter:
             for key, value in form.items()
             if key.startswith("credential.")
         }
+        folder_path = str(form.get("folder.path", "")).strip() or None
         try:
             selected = service.setup_method(integration, method)
             service.create_connection(
@@ -85,13 +86,14 @@ def connection_pages(service: MiroirService, page: Page) -> APIRouter:
                 settings,
                 credentials,
                 delivery_method=selected["id"],
+                folder_path=folder_path,
             )
         except (ConfigurationError, OperationError, SecretResolutionError) as error:
             response = creation_page(
                 request,
                 integration,
                 method,
-                {"id": connection_id, **settings},
+                {"id": connection_id, "folder.path": folder_path, **settings},
                 str(error),
             )
             response.status_code = 400
@@ -201,6 +203,27 @@ def connection_pages(service: MiroirService, page: Page) -> APIRouter:
         except (ConfigurationError, OperationError) as error:
             view = service.connection_settings(connection_id)
             view["values"].update(values)
+            view["file_revision"] = revision
+            response = page(
+                request, "connection_settings.html", **view, error=str(error)
+            )
+            response.status_code = (
+                409 if isinstance(error, ConfigurationConflict) else 400
+            )
+            return response
+        service.check_connection(connection_id)
+        return back(connection_id, "saved")
+
+    @router.post("/connections/{connection_id}/folder")
+    async def save_folder(request: Request, connection_id: str) -> Response:
+        form = await request.form()
+        revision = str(form.get("file_revision", ""))
+        path = str(form.get("folder.path", "")).strip() or None
+        try:
+            service.update_folder(connection_id, path, revision)
+        except (ConfigurationError, OperationError) as error:
+            view = service.connection_settings(connection_id)
+            view["folder_values"] = {"path": path}
             view["file_revision"] = revision
             response = page(
                 request, "connection_settings.html", **view, error=str(error)

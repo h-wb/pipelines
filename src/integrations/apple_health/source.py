@@ -1,9 +1,8 @@
-"""Health Auto Export extraction from explicitly selected files and import roles."""
+"""Health Auto Export extraction from one stored file and its import role."""
 
 import json
 from collections.abc import Iterator
 from functools import lru_cache
-from pathlib import Path
 from typing import Any, cast
 
 import dlt
@@ -56,13 +55,3 @@ def health_files(files: list[tuple[str, bool]], cutoff: str) -> list[DltResource
 
 def apple_health_artifact(path: str, cutoff: str, historical: bool) -> DltSource:
     return health_files(files=[(path, historical)], cutoff=cutoff)
-
-
-def apple_health(data_dir: str, cutoff: str) -> DltSource:
-    root = Path(data_dir)
-    # Only this transitional folder acquisition interprets the old manual/ layout.
-    files = [
-        (str(path), "manual" in path.relative_to(root).parts[:-1])
-        for path in sorted(root.rglob("*.json"))
-    ]
-    return health_files(files=files, cutoff=cutoff)

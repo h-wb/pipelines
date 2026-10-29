@@ -57,6 +57,12 @@ def sync_connection(
         transform=build_connection_models,
         # Overlapping runs of one connection queue instead of failing.
         lock_wait=3600,
+        # Watched folders register files where the server keeps artifacts:
+        # MIROIR_ARTIFACT_DIR, or `artifacts` beside the configuration.
+        artifact_root=Path(
+            os.environ.get("MIROIR_ARTIFACT_DIR")
+            or Path(config_path).parent / "artifacts"
+        ),
     )
     return {
         "operation_id": outcome.operation_id,

@@ -6,15 +6,17 @@ now; the stored path is recorded so another backend can replace it later.
 """
 
 import hashlib
+import json
 import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from src.core.config import ResolvedConnection, ResolvedMiroir
-from src.core.operations import MetadataStore, OperationError, Role
-from src.integrations.formats import VALIDATORS
+from src.core.operations import ArtifactOrigin, MetadataStore, OperationError
 
 CHUNK = 1024 * 1024
 
@@ -59,39 +61,45 @@ def submit_artifact(
     miroir: ResolvedMiroir,
     connection: ResolvedConnection,
     source: Path,
-    role: Role,
+    options: dict[str, Any] | None = None,
     *,
     store: MetadataStore,
     root: Path,
     original_name: str | None = None,
+    origin: ArtifactOrigin = "upload",
+    input_format: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
-    """Validate, store, and register one file. Does not import it.
+    """Validate, store, and register one file with its import options.
 
-    Invalid files are rejected before anything is stored or recorded.
+    Every transport (upload, receiving URL, watched folder) comes through here.
+    Invalid files or options are rejected before anything is stored or recorded.
     """
-    input_format = connection.integration.input_format
-    if (
-        input_format is None
-        or "artifact_import" not in connection.integration.capabilities
-    ):
-        raise OperationError("Integration does not accept files")
-    delivery = connection.integration.file_delivery
-    if delivery is not None and role not in delivery.roles:
-        raise OperationError(
-            f"{delivery.label} files can only be imported as: {', '.join(delivery.roles)}"
+    try:
+        file_format = connection.integration.format(input_format)
+    except KeyError:
+        raise OperationError("This integration does not accept that file") from None
+    try:
+        chosen = file_format.options.model_validate(options or {})
+    except ValidationError as error:
+        fields = ", ".join(
+            ".".join(map(str, issue["loc"])) or "options"
+            for issue in error.errors(include_input=False)
         )
-    VALIDATORS[input_format](source)
+        raise OperationError(f"Invalid import options: {fields}") from None
+    file_format.validate(source)
     received = receive_file(source, root, miroir.id, connection.config.id)
     return store.register_artifact(
         miroir_id=miroir.id,
         connection_id=connection.config.id,
         sha256=received.sha256,
         size=received.size,
-        input_format=input_format,
-        role=role,
+        input_format=file_format.id,
+        options=json.dumps(chosen.model_dump(mode="json"), sort_keys=True),
+        origin=origin,
         original_name=(original_name or source.name)[:255],
         storage_path=str(received.path),
-        retention="keep",
+        # Folder copies rotate (the folder keeps the original); others are kept.
+        retention="rolling" if origin == "folder" else "keep",
     )
 
 

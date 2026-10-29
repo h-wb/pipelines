@@ -404,7 +404,7 @@ class OperationTests(unittest.TestCase):
             sha256="a" * 64,
             size=1,
             input_format="health_auto_export_json",
-            role="ongoing",
+            options='{"role": "ongoing"}',
             original_name="export.json",
             storage_path="/unused/export.json",
             retention="keep",

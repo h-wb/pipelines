@@ -5,7 +5,6 @@ values never appear in it. `rejected=True` means the service refused the
 credentials, as opposed to being unreachable.
 """
 
-import os
 from typing import Any
 
 
@@ -42,16 +41,6 @@ def listenbrainz(settings: Any, credentials: dict[str, str]) -> str:
             rejected=True,
         )
     return f"Token valid for {settings.username}"
-
-
-def apple_health(settings: Any, credentials: dict[str, str]) -> str:
-    if settings.data_dir is None:
-        return "Ready to receive Health Auto Export JSON; upload an export to verify it"
-    if not os.path.isdir(settings.data_dir):
-        raise CheckFailed("Export folder does not exist on this machine")
-    if not os.access(settings.data_dir, os.R_OK | os.X_OK):
-        raise CheckFailed("Export folder is not readable")
-    return "Export folder is readable"
 
 
 def github(settings: Any, credentials: dict[str, str]) -> str:
@@ -116,20 +105,3 @@ def bikeshare(settings: Any, credentials: dict[str, str]) -> str:
             f"Bike Share unreachable ({type(error).__name__}); check certificate settings if needed"
         ) from None
     return "Bike Share account access verified"
-
-
-def browser_history(settings: Any, credentials: dict[str, str]) -> str:
-    if settings.data_dir is None:
-        return "Ready to receive Firefox/Zen snapshots; upload one to verify it"
-    from pathlib import Path
-
-    from src.integrations.browser_history import validate_snapshot
-    from src.integrations.validation import InvalidArtifact
-
-    try:
-        validate_snapshot(Path(settings.data_dir) / "zen-places.sqlite.gz")
-    except (OSError, InvalidArtifact):
-        raise CheckFailed(
-            "No valid, readable zen-places.sqlite.gz snapshot in this folder"
-        ) from None
-    return "Browser snapshot is readable and valid"

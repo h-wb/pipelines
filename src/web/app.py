@@ -24,12 +24,13 @@ from src.core.config import ConfigurationConflict, ConfigurationError
 from src.core.operations import OperationError
 from src.core.secrets import SecretKeyError, SecretResolutionError
 from src.core.service import MiroirService
-from src.integrations.formats import InvalidArtifact
+from src.integrations.validation import InvalidArtifact
 
 SESSION_COOKIE = "miroir_session"
 DEFAULT_MAX_UPLOAD = 512 * 1024 * 1024
 CHUNK = 1024 * 1024
-ROLES = ("historical", "ongoing")
+# Query parameters of the upload API that are not import options.
+UPLOAD_PARAMETERS = {"import", "name", "format"}
 
 # Fixed messages for redirects: nothing user-supplied is reflected from the URL.
 NOTICES = {
@@ -150,17 +151,21 @@ def create_app(
             yield chunk
 
     def submit(
-        connection_id: str, path: Path, role: str, import_now: bool, name: str
+        connection_id: str,
+        path: Path,
+        options: dict[str, str],
+        import_now: bool,
+        name: str,
+        input_format: str | None = None,
     ) -> dict:
         try:
-            if role not in ROLES:
-                raise OperationError("role must be historical or ongoing")
             return service.submit_file(
                 connection_id,
                 path,
-                role,  # type: ignore[arg-type]
+                options,
                 import_now=import_now,
                 original_name=name,
+                input_format=input_format,
             )
         finally:
             path.unlink(missing_ok=True)
@@ -193,20 +198,33 @@ def create_app(
     async def api_upload(
         request: Request,
         connection_id: str,
-        role: str,
         name: str = "upload",
     ) -> JSONResponse:
         """Store the raw request body as one file (e.g. a Health Auto Export POST).
 
-        `?import=true` also requests its import. `name` is only a label.
+        `?import=true` also requests its import. `name` is only a label and
+        `format` picks one of the integration's formats. Every other query
+        parameter is an import option of that format (e.g. `?role=historical`).
         """
         import_now = request.query_params.get("import", "").lower() in (
             "1",
             "true",
             "yes",
         )
+        options = {
+            key: value
+            for key, value in request.query_params.items()
+            if key not in UPLOAD_PARAMETERS
+        }
         path = await save_stream(request.stream(), staging)
-        result = submit(connection_id, path, role, import_now, name)
+        result = submit(
+            connection_id,
+            path,
+            options,
+            import_now,
+            name,
+            request.query_params.get("format"),
+        )
         return JSONResponse(result, status_code=201 if result["new"] else 200)
 
     @app.post("/api/connections/{connection_id}/receive")
@@ -220,7 +238,7 @@ def create_app(
             result = service.submit_file(
                 connection_id,
                 path,
-                "ongoing",
+                # Received files take the format's default import options.
                 import_now=True,
                 origin="webhook",
             )
@@ -403,7 +421,6 @@ def create_app(
             request,
             "connection.html",
             c=data,
-            roles=ROLES,
             receive_path=f"/api/connections/{connection_id}/receive",
             refresh=_in_flight(data["status"]),
         )
@@ -425,14 +442,25 @@ def create_app(
 
     @app.post("/connections/{connection_id}/upload")
     async def upload(
+        request: Request,
         connection_id: str,
         file: UploadFile,
-        role: str = Form(),
         import_now: bool = Form(False),
     ) -> Response:
+        form = await request.form()
+        options = {
+            key.removeprefix("option."): str(value)
+            for key, value in form.items()
+            if key.startswith("option.")
+        }
         path = await save_stream(upload_chunks(file), staging)
         result = submit(
-            connection_id, path, role, import_now, file.filename or "upload"
+            connection_id,
+            path,
+            options,
+            import_now,
+            file.filename or "upload",
+            str(form.get("format") or "") or None,
         )
         if result.get("already_imported"):
             return back(connection_id, "already_imported")
