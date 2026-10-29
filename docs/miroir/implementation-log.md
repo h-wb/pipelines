@@ -706,3 +706,44 @@ Validation:
   rebuilds refuse changed analysis plans. A model-only operation does not claim
   changed source settings were applied. Failed/interrupted rebuilds mark analysis
   stale even without another load, since dbt may have partially replaced outputs.
+
+### Live release and verification
+
+Released `ghcr.io/h-wb/pipelines:sha-2d2981c7653014b3388cc0896260122a8de06558`
+(image workflow 40936853762 succeeded). Updated the live configuration's
+`deployment.image` and applied its two image-only deployment changes. Home-ops
+commit `391d1c0156da24671804ddc4e5df9491d8123695` pins the same runtime for server
+and worker. Both Kustomize builds, app-template 5.3.0 renders, and home-ops commit
+checks passed. Reconciled Flux source + both applications; Miroir release 11 and
+Prefect release 53 are ready. No metadata schema migration was required.
+
+- Set the connections' analysis timezone to America/Toronto, matching the existing
+  installation's dbt timezone. Source execution revisions/configuration-applied
+  status stayed unchanged. New model-only requests completed in Prefect on Jobs
+  using the release SHA: Health operation `0aa9c40d-533f-4209-8201-4581e3448224`
+  and ListenBrainz operation `cf34b9de-4577-447b-8ce7-79aa4d0984a3`. Both recorded
+  ingestion `not_run`, models `succeeded`, analysis `current`.
+- Created new, user-owned Metabase assets in collection 12 from the logical SQL
+  examples: Music dashboard 32 (six questions), Health dashboard 33 (eight
+  questions). All fourteen native queries executed successfully, including the
+  empty workouts table. Stored links on the appropriate connections and configured
+  Metabase/Prefect base URLs. Existing dashboard definitions were not replaced;
+  there is no automatic asset reconciliation or claim of dashboard portability.
+- Replayed one retained, previously successful real phone export, operation
+  `c89c5a12-a0b3-4baf-be69-1ed4c63ae9a2`. Its import and automatic health build both
+  succeeded, and Prefect/Job completed on the release image. Raw health row count
+  stayed 1,790; no synthetic health data was introduced. Compared daily steps
+  against raw measurements and the fresh Metabase question result. The values
+  agree, and both legacy Health/Music dashboards' queries/layouts are unchanged.
+- TLS-verified `/healthz` and authenticated connection pages returned 200 through
+  Envoy. Both pages show their correct new dashboard link and analysis controls.
+  Deployment drift is empty; both connections report current analysis.
+
+Remaining boundaries: cross-source input linking, managed dashboard ownership,
+legacy/n8n schedule cutover, and other connectors are still separate work. There
+are eight older unstarted operation records (seven Health, one ListenBrainz) with
+no backend binding; Prefect had no active Miroir runs before release. They were
+not silently executed/cancelled during this work. Submission recovery/cancellation
+needs a separate treatment rather than treating absence of a backend ID as proof
+that an ambiguous submission failed. Operator credentials used for release were
+kept outside the repository and removed from temporary files after verification.
