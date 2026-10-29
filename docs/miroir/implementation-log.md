@@ -421,3 +421,21 @@ Validation: 73 tests pass on Python 3.14.7 (`-W error::ResourceWarning`);
 lint, format, and mypy clean on the renamed slice; no "workspace" remains in
 code, configuration, or the living docs (older decisions and log entries keep
 their original wording as history).
+
+## 2026-10-29 — The server is deployed on the cluster
+
+Decision 007's remaining milestone: the web interface/API runs in home-ops
+(`automation/miroir`) on the same image as the flow runs — `pipelines-mirroir
+serve` behind envoy-internal at `miroir.<domain>`, metadata in postgres-miroir,
+artifacts and configuration on the NFS export at `/miroir/data/miroir/`. Its
+environment mirrors the repo's `mise mirroir:deploy` exactly (pool, cluster
+config path, image, job variables), so the server's and the operator's
+plan/apply never fight over drift. Requests are submitted as miroir-k8s flow
+runs; the local-subprocess fallback (`--duckdb`) is now optional and only
+required without `MIROIR_PREFECT_POOL`.
+
+The server waits for the `miroir-secret` Secret (MIROIR_SECRET_KEY and
+MIROIR_API_TOKEN, placed by hand until the Bitwarden `miroir` item exists) —
+the pod starts the moment it lands. Validation: helm template against
+app-template 5.3.0 renders the expected deployment, service, and HTTPRoute;
+repo lint clean; CLI lint/format/mypy clean and 73 tests still pass.

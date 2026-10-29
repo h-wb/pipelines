@@ -178,8 +178,24 @@ stored by the miroir.
 ```bash
 export MIROIR_API_TOKEN="$(openssl rand -hex 24)"
 export MIROIR_SECRET_KEY="$(uv run --locked pipelines-miroir generate-key)"
-uv run --locked pipelines-miroir --config miroir.json serve --duckdb /tmp/mirror.duckdb
+uv run --locked pipelines-miroir --config miroir.json serve
 # http://127.0.0.1:8765 — log in with the token. A missing miroir.json is created empty.
+```
+
+Without `MIROIR_PREFECT_POOL`, requests run as local subprocesses and need
+`--duckdb` (a local DuckDB file); with the pool set, they are submitted as
+Prefect flow runs instead.
+
+On the cluster the server is deployed (home-ops `automation/miroir`): the
+`miroir` service at `https://miroir.<domain>` behind envoy-internal, on the
+same image as the flow runs, with the metadata store in postgres-miroir and
+artifacts/configuration on the NFS export. It waits for the `miroir-secret`
+Secret — place it by hand until the Bitwarden `miroir` item exists:
+
+```bash
+kubectl -n automation create secret generic miroir-secret \
+  --from-literal=MIROIR_SECRET_KEY="$(uv run --locked pipelines-miroir generate-key)" \
+  --from-literal=MIROIR_API_TOKEN="$(openssl rand -hex 24)"
 ```
 
 The interface lists connections with their last attempt, when data was last loaded,

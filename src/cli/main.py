@@ -66,7 +66,9 @@ def main(argv: list[str] | None = None) -> int:
     serve = commands.add_parser(
         "serve", help="Web interface and HTTP API (needs MIROIR_API_TOKEN)"
     )
-    serve.add_argument("--duckdb", type=Path, required=True)
+    # Only needed without an orchestrator, for the local-subprocess executor;
+    # requests run as Prefect flow runs when MIROIR_PREFECT_POOL is set.
+    serve.add_argument("--duckdb", type=Path)
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8765)
     serve.add_argument(
@@ -375,6 +377,9 @@ def _serve(args: argparse.Namespace, store: Any, secrets: Any) -> int:
         return 2
     store.migrate()
     orchestrator = _orchestrator(args, store)
+    if orchestrator is None and args.duckdb is None:
+        print("Set MIROIR_PREFECT_POOL or pass --duckdb", file=sys.stderr)
+        return 2
     executor = orchestrator or SubprocessExecutor(
         [
             "--config",
