@@ -264,6 +264,7 @@ class ArtifactTests(unittest.TestCase):
                 "parser_version",
                 "options",
                 "parent_operation_id",
+                "analysis_id",
             ):
                 db.execute(sa.text(f"ALTER TABLE operations DROP COLUMN {column}"))
             db.execute(sa.text("ALTER TABLE attempts DROP COLUMN failure_kind"))
@@ -305,6 +306,7 @@ class ArtifactTests(unittest.TestCase):
             db.execute(
                 sa.text("ALTER TABLE operations DROP COLUMN parent_operation_id")
             )
+            db.execute(sa.text("ALTER TABLE operations DROP COLUMN analysis_id"))
             db.execute(schema_info.update().values(version=4))
         self.store.migrate()
         upgraded = self.store.get_artifact(self.miroir.id, artifact["id"])

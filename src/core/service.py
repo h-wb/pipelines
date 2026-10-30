@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from src.core.config import (
+    ResolvedAnalysis,
     ResolvedConnection,
     ResolvedMiroir,
     file_revision,
@@ -98,16 +99,156 @@ class MiroirService:
                 return connection
         raise OperationError("Unknown connection")
 
-    def _links(self, miroir: ResolvedMiroir, connection: ResolvedConnection) -> dict:
+    def _dashboards(
+        self, miroir: ResolvedMiroir, analysis: ResolvedAnalysis
+    ) -> list[dict[str, Any]]:
         metabase = miroir.links.metabase
+        if not metabase:
+            return []
+        return [
+            {"name": name, "url": f"{metabase.rstrip('/')}/dashboard/{id_}"}
+            for name, id_ in analysis.config.dashboards.items()
+        ]
+
+    # ---- Analyses (decision 022) ------------------------------------------------
+
+    def packages(self) -> list[dict[str, Any]]:
+        from src.analyses.catalog import PACKAGES
+
+        return [package.describe() for package in PACKAGES.values()]
+
+    def analysis_summary(
+        self, miroir: ResolvedMiroir, analysis: ResolvedAnalysis
+    ) -> dict[str, Any]:
+        from src.core.analysis import analysis_plan
+
+        plan = analysis_plan(analysis)
+        status = self.store.analysis_status(
+            miroir.id, analysis.id, [c.config.id for c in analysis.inputs.values()]
+        )
+        if status["state"] == "current" and status["built_receipt"] != plan.receipt:
+            status["state"] = "stale"
+            status["detail"] = "Rebuild to apply the current settings and models"
+        elif status["state"] == "stale" and status["last_outcome"] == "failed":
+            status["detail"] = status["last_detail"]
         return {
-            "dashboards": [
-                {"name": name, "url": f"{metabase.rstrip('/')}/dashboard/{id_}"}
-                for name, id_ in connection.config.dashboards.items()
-            ]
-            if metabase
-            else [],
+            "id": analysis.id,
+            "package": analysis.package.describe(),
+            "inputs": {
+                role: {
+                    "title": spec.title,
+                    "required": spec.required,
+                    "connection": analysis.inputs[role].config.id
+                    if role in analysis.inputs
+                    else None,
+                    "last_load": self.store.connection_status(
+                        miroir.id, analysis.inputs[role].config.id
+                    )["last_ingestion_success"]
+                    if role in analysis.inputs
+                    else None,
+                }
+                for role, spec in analysis.package.inputs.items()
+            },
+            "timezone": analysis.config.timezone,
+            "parameters": analysis.config.parameters,
+            "relations": list(plan.relations),
+            "status": status,
+            "dashboards": self._dashboards(miroir, analysis),
         }
+
+    def analyses(self) -> list[dict[str, Any]]:
+        miroir = self.miroir()
+        return [self.analysis_summary(miroir, a) for a in miroir.analyses]
+
+    def analysis(self, analysis_id: str) -> dict[str, Any]:
+        from src.core.analysis import find_analysis
+
+        miroir = self.miroir()
+        analysis = find_analysis(miroir, analysis_id)
+        _, revision = self._raw_config()
+        history = self.store.recent_operations(miroir.id, analysis_id=analysis.id)
+        for operation in history:
+            backend = operation["backend_run_id"]
+            if backend is None and operation["parent_operation_id"]:
+                backend = self.store.get_operation(
+                    operation["parent_operation_id"]
+                ).backend_run_id
+            operation["run_url"] = self.run_link(miroir, backend)
+        return {
+            **self.analysis_summary(miroir, analysis),
+            "operations": history,
+            "connections": [
+                {"id": c.config.id, "integration": c.integration.name}
+                for c in miroir.connections
+            ],
+            "file_revision": revision,
+        }
+
+    def create_analysis(
+        self,
+        analysis_id: str,
+        package: str,
+        inputs: dict[str, str],
+        expected_revision: str,
+        timezone: str = "UTC",
+    ) -> str:
+        """Add an analysis linking connections to a package's roles explicitly."""
+        raw = self._raw_for_edit(expected_revision)
+        if any(a.get("id") == analysis_id for a in raw["analyses"]):
+            from src.core.config import ConfigurationError
+
+            raise ConfigurationError("An analysis with this ID already exists")
+        raw["analyses"].append(
+            {
+                "id": analysis_id,
+                "package": package,
+                "inputs": {role: c for role, c in inputs.items() if c != ""},
+                "timezone": timezone,
+            }
+        )
+        self._write_config(raw, expected_revision)
+        return analysis_id
+
+    def update_analysis(
+        self,
+        analysis_id: str,
+        values: dict[str, Any],
+        expected_revision: str,
+    ) -> None:
+        """Change an analysis's timezone, parameters, or linked inputs."""
+        raw = self._raw_for_edit(expected_revision)
+        target = next((a for a in raw["analyses"] if a.get("id") == analysis_id), None)
+        if target is None:
+            raise OperationError("Unknown analysis")
+        if "inputs" in values:
+            if not isinstance(values["inputs"], dict):
+                raise OperationError("Expected an inputs object")
+            values = {
+                **values,
+                "inputs": {role: c for role, c in values["inputs"].items() if c != ""},
+            }
+        target.update(values)
+        self._write_config(raw, expected_revision)
+
+    def remove_analysis(self, analysis_id: str, expected_revision: str) -> None:
+        """Remove the configuration entry; built tables and history are kept."""
+        raw = self._raw_for_edit(expected_revision)
+        if not any(a.get("id") == analysis_id for a in raw["analyses"]):
+            raise OperationError("Unknown analysis")
+        raw["analyses"] = [a for a in raw["analyses"] if a.get("id") != analysis_id]
+        self._write_config(raw, expected_revision)
+
+    def _raw_for_edit(self, expected_revision: str) -> dict[str, Any]:
+        from src.core.config import ConfigurationConflict
+
+        if not expected_revision:
+            raise OperationError("Reload before saving")
+        raw, revision = self._raw_config()
+        if revision != expected_revision:
+            raise ConfigurationConflict(
+                "Configuration changed since you loaded it; reload before saving"
+            )
+        return raw
 
     def run_link(
         self, miroir: ResolvedMiroir, backend_run_id: str | None
@@ -123,27 +264,13 @@ class MiroirService:
             "miroir": miroir.id,
             "revision": miroir.revision,
             "connections": [self._summary(miroir, c) for c in miroir.connections],
+            "analyses": [self.analysis_summary(miroir, a) for a in miroir.analyses],
         }
 
     def _summary(self, miroir: ResolvedMiroir, connection: ResolvedConnection) -> dict:
-        from src.core.analysis import analysis_plan
+        from src.core.analysis import analyses_linking
 
         status = self.store.connection_status(miroir.id, connection.config.id)
-        plan = analysis_plan(connection)
-        if plan is None and status["analysis"] != "no_data":
-            # Loaded data no model reads is not "stale": nothing will ever build it.
-            status["analysis"] = "not_modelled"
-            status["analysis_detail"] = "integration has no models"
-        elif plan is not None and status["analysis"] == "current":
-            built = status["last_build"] or {}
-            if (
-                built.get("config_revision") != connection.revision
-                or built.get("transformation_detail") != plan.receipt
-            ):
-                status["analysis"] = "stale"
-                status["analysis_detail"] = (
-                    "Rebuild analysis to apply the current settings and models"
-                )
         last = status["last_attempt"]
         if last is not None:
             last["run_url"] = self.run_link(miroir, last.get("backend_run_id"))
@@ -151,7 +278,10 @@ class MiroirService:
         return {
             **connection.summary(),
             "status": status,
-            "analysis": plan.summary() if plan else None,
+            "analyses": [
+                self.analysis_summary(miroir, a)
+                for a in analyses_linking(miroir, connection.config.id)
+            ],
             # Saved configuration vs the configuration its last execution used.
             "configuration": "never_run"
             if applied is None
@@ -171,7 +301,6 @@ class MiroirService:
             "credential_status": self.store.credential_status(
                 miroir.id, connection.config.id
             ),
-            **self._links(miroir, connection),
         }
 
     def _credentials(
@@ -353,14 +482,14 @@ class MiroirService:
         self.executor.submit(operation.id)
         return operation.id
 
-    def request_models(self, connection_id: str) -> str:
+    def request_models(self, analysis_id: str) -> str:
         from src.core.runner import request_models
 
         miroir = self.miroir()
-        self.prepare_connection(connection_id)
         operation = request_models(
-            miroir, connection_id, store=self.store, origin="request"
+            miroir, analysis_id, store=self.store, origin="request"
         )
+        self.prepare_connection(operation.connection_id)
         self.executor.submit(operation.id)
         return operation.id
 
@@ -414,7 +543,6 @@ class MiroirService:
             "connection": self.connection(connection_id),
             "integration": definition,
             "values": connection.settings.model_dump(mode="json"),
-            "analysis_values": connection.config.analysis.model_dump(mode="json"),
             "folder_values": connection.config.folder.model_dump(mode="json")
             if connection.config.folder
             else None,
@@ -483,23 +611,6 @@ class MiroirService:
             target.pop("folder", None)
         self._write_config(raw, expected_revision)
 
-    def update_analysis_settings(
-        self, connection_id: str, settings: dict[str, Any], expected_revision: str
-    ) -> None:
-        from src.core.config import ConfigurationConflict
-
-        if not expected_revision:
-            raise OperationError("Reload settings before saving")
-        raw, revision = self._raw_config()
-        if revision != expected_revision:
-            raise ConfigurationConflict(
-                "Configuration changed; reload settings before saving"
-            )
-        self._connection(self.miroir(), connection_id)
-        target = next(c for c in raw["connections"] if c["id"] == connection_id)
-        target["analysis"] = {**target.get("analysis", {}), **settings}
-        self._write_config(raw, expected_revision)
-
     def prepare_connection(self, connection_id: str) -> None:
         """Make this connection executable without applying other connections' drift."""
         miroir = self.miroir()
@@ -519,10 +630,15 @@ class MiroirService:
             raise OperationError(f"Your connection is saved. {error}") from error
 
     def _raw_config(self) -> tuple[dict[str, Any], str]:
+        """The file as JSON in the current shape, and the revision of its bytes."""
         import json
 
+        from src.core.config import upgrade_raw
+
         data = self.config_path.read_bytes()
-        return json.loads(data), hashlib.sha256(data).hexdigest()
+        raw = json.loads(data)
+        upgrade_raw(raw)  # edits are written back in the current shape
+        return raw, hashlib.sha256(data).hexdigest()
 
     def _write_config(self, raw: dict[str, Any], revision: str) -> ResolvedMiroir:
         import json
@@ -546,7 +662,7 @@ class MiroirService:
         """
         import json
 
-        from src.core.config import ConfigurationError, parse_miroir
+        from src.core.config import ConfigurationError, default_analysis, parse_miroir
         from src.integrations.registry import INTEGRATIONS
 
         definition = INTEGRATIONS.get(integration)
@@ -578,6 +694,11 @@ class MiroirService:
                 **({"folder": {"path": folder_path}} if folder_path else {}),
             }
         )
+        default = default_analysis(integration, connection_id)
+        if default is not None and not any(
+            a.get("id") == connection_id for a in raw["analyses"]
+        ):
+            raw["analyses"].append(default)
         miroir = parse_miroir(json.dumps(raw))  # validate before storing anything
         connection = self._connection(miroir, connection_id)
         if self.store.secret_metadata(miroir.id, connection_id):
@@ -642,12 +763,30 @@ class MiroirService:
 
         Loaded data, artifacts, and history are kept: purging them is separate.
         """
+        from src.core.analysis import analyses_linking
+
         miroir = self.miroir()
         self._connection(miroir, connection_id)
+        linking = analyses_linking(miroir, connection_id)
+        # Its own default analysis goes with it; others must be unlinked first.
+        connection = self._connection(miroir, connection_id)
+        own = {
+            a.id
+            for a in linking
+            if a.id == connection_id
+            and len(a.inputs) == 1
+            and a.package.id == connection.integration.analysis
+        }
+        others = [a.id for a in linking if a.id not in own]
+        if others:
+            raise OperationError(
+                f"Unlink this connection from {', '.join(others)} before removing it"
+            )
         raw, revision = self._raw_config()
         raw["connections"] = [
             c for c in raw["connections"] if c.get("id") != connection_id
         ]
+        raw["analyses"] = [a for a in raw["analyses"] if a.get("id") not in own]
         self._write_config(raw, revision)
         self.store.delete_secrets(miroir.id, connection_id)
         self.store.revoke_delivery_token(miroir.id, connection_id)

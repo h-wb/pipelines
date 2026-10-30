@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Add an analysis{% endblock %}
+{% block body %}
+<h1>Add an analysis</h1>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if not package %}
+<p>Choose what to analyse. Each analysis links the connections it reads explicitly.</p>
+<div class="cards">
+{% for p in packages %}
+  <a class="choice" href="/analyses/new?package={{ p.id }}">
+    <strong>{{ p.title }}</strong>
+    <span class="muted">{{ p.description }}</span>
+  </a>
+{% endfor %}
+</div>
+{% else %}
+<p class="muted"><a href="/analyses/new">Analyses</a> / {{ package.title }}</p>
+<p>{{ package.description }}</p>
+<form method="post" action="/analyses/new" class="stack">
+  <input type="hidden" name="package" value="{{ package.id }}">
+  <input type="hidden" name="file_revision" value="{{ file_revision }}">
+  <label>Analysis ID
+    <input name="id" required pattern="[a-z][a-z0-9_]{0,23}" value="{{ values.get('id', '') }}">
+    <span class="muted">Names its output schemas. Lowercase letters, digits, and underscores.</span>
+  </label>
+  {% for role, spec in package.inputs.items() %}
+  <label>{{ spec.title }}{% if not spec.required %} <span class="muted">(optional)</span>{% endif %}
+    <select name="input.{{ role }}" {% if spec.required %}required{% endif %}>
+      <option value="">{% if spec.required %}Choose a connection{% else %}Not linked: measures are unknown{% endif %}</option>
+      {% for c in connections if c.integration in spec.integrations %}
+      <option value="{{ c.id }}" {% if values.get('inputs', {}).get(role) == c.id %}selected{% endif %}>{{ c.id }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  {% endfor %}
+  <label>Timezone <input name="timezone" value="{{ values.get('timezone', 'UTC') }}" required>
+    <span class="muted">IANA timezone, for example America/Toronto.</span></label>
+  <p><button>Add analysis</button> <a href="/analyses/new">Back</a></p>
+</form>
+{% endif %}
+{% endblock %}

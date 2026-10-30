@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge, when %}
+{% block title %}{{ a.id }}{% endblock %}
+{% block body %}
+<h1>{{ a.id }} <span class="muted">{{ a.package.title }}</span></h1>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<p>Analysis {{ badge(a.status.state) }}
+  {% if a.status.last_build %}· last built {{ when(a.status.last_build) }}{% endif %}
+  {% if a.status.last_input_load %}· inputs loaded {{ when(a.status.last_input_load) }}{% endif %}</p>
+{% if a.status.detail %}<p>{{ a.status.detail }}</p>{% endif %}
+<p class="muted">{{ a.package.description }} Rebuilds after any linked connection loads.</p>
+{% if a.status.state != 'no_data' %}
+<form class="inline" method="post" action="/analyses/{{ a.id }}/models"><button>Rebuild analysis</button></form>
+{% else %}<p class="muted">Import or sync a linked connection to build it.</p>{% endif %}
+{% if a.dashboards %}<p>{% for d in a.dashboards %}<a href="{{ d.url }}" target="_blank" rel="noopener">Open {{ d.name }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+
+<h2>Inputs and settings</h2>
+<form method="post" action="/analyses/{{ a.id }}/settings" class="stack">
+  <input type="hidden" name="file_revision" value="{{ a.file_revision }}">
+  {% for role, input in a.inputs.items() %}
+  {% set spec = a.package.inputs[role] %}
+  <label>{{ input.title }}{% if not input.required %} <span class="muted">(optional)</span>{% endif %}
+    <select name="input.{{ role }}" {% if input.required %}required{% endif %}>
+      {% if not input.required %}<option value="">Not linked: measures are unknown</option>{% endif %}
+      {% for c in a.connections if c.integration in spec.integrations %}
+      <option value="{{ c.id }}" {% if input.connection == c.id %}selected{% endif %}>{{ c.id }}</option>
+      {% endfor %}
+    </select>
+    {% if input.connection %}<span class="muted"><a href="/connections/{{ input.connection }}">Open {{ input.connection }}</a> · {% if input.last_load %}last loaded {{ when(input.last_load) }}{% else %}no successful load recorded{% endif %}</span>{% endif %}
+  </label>
+  {% endfor %}
+  <label>Timezone <input name="timezone" value="{{ a.timezone }}" required>
+    <span class="muted">IANA timezone, for local days and hours.</span></label>
+  {% for name, prop in (a.package.parameters_schema.properties or {}).items() %}
+  <label>{{ prop.title or name }}
+    {% if prop.type == 'array' %}
+    <textarea name="parameter_list.{{ name }}" rows="3" style="min-height:4rem">{{ (a.parameters.get(name) or []) | join('\n') }}</textarea>
+    {% else %}<input name="parameter.{{ name }}" value="{{ a.parameters.get(name) or '' }}">{% endif %}
+    {% if prop.description %}<span class="muted">{{ prop.description }}</span>{% endif %}
+  </label>
+  {% endfor %}
+  <button>Save</button>
+  <p class="muted">Changes apply to the next build; rebuild to update existing results.</p>
+</form>
+
+<details class="setting-block"><summary>Model outputs</summary>
+<ul>{% for relation in a.relations %}<li><code>{{ relation }}</code></li>{% endfor %}</ul>
+</details>
+<h2>Build history</h2>
+{% if a.operations %}
+<table>
+  <tr><th>Requested</th><th>Input connection</th><th>Result</th><th>Open</th></tr>
+  {% for operation in a.operations %}
+  <tr>
+    <td>{{ when(operation.created_at) }}</td>
+    <td><a href="/connections/{{ operation.connection_id }}">{{ operation.connection_id }}</a></td>
+    <td>{% if operation.attempts %}{% set attempt = operation.attempts[-1] %}{{ badge(attempt.transformation) }}
+      {% if attempt.transformation in ['failed', 'lost', 'cancelled', 'blocked'] %}<div>{{ attempt.transformation_detail or attempt.error_message or '' }}</div>{% endif %}
+      {% else %}{{ badge('requested') }}{% endif %}</td>
+    <td>{% if operation.run_url %}<a href="{{ operation.run_url }}" target="_blank" rel="noopener">Prefect run</a>{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}<p class="muted">No builds yet.</p>{% endif %}
+<details class="setting-block"><summary>Remove analysis</summary>
+<form method="post" action="/analyses/{{ a.id }}/remove" class="stack">
+  <input type="hidden" name="file_revision" value="{{ a.file_revision }}">
+  <p>Removes the configuration entry. Built tables and history are kept.</p>
+  <label>Type {{ a.id }} to confirm <input name="confirm" required></label>
+  <button>Remove analysis</button>
+</form>
+</details>
+{% endblock %}

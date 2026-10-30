@@ -1,12 +1,15 @@
-"""Resolve integration analysis metadata into an executable, connection-bound plan."""
+"""Resolve a configured analysis (decision 022) into an executable dbt plan."""
 
 import hashlib
 import json
 from dataclasses import dataclass
 from typing import Any
 
-from src.analyses.catalog import ANALYSES
-from src.core.config import ResolvedConnection
+from src.core.config import ResolvedAnalysis, ResolvedMiroir
+
+# Unlinked inputs use this placeholder and are excluded from table discovery;
+# they never fall back to a legacy source schema.
+UNLINKED = "miroir_unlinked_input"
 
 
 @dataclass(frozen=True)
@@ -32,29 +35,56 @@ class AnalysisPlan:
             "title": self.title,
             "relations": list(self.relations),
             "timezone": self.variables["timezone"],
-            "scope": "Uses this connection only. Cross-source analyses are not enabled yet.",
         }
 
 
-def analysis_plan(connection: ResolvedConnection) -> AnalysisPlan | None:
-    models = ANALYSES.get(connection.integration.analysis or "")
-    if models is None:
-        return None
-    identity = json.dumps([connection.miroir_id, connection.config.id])
+def analysis_plan(analysis: ResolvedAnalysis) -> AnalysisPlan:
+    package = analysis.package
+    identity = json.dumps([analysis.miroir_id, analysis.id])
     suffix = hashlib.sha256(identity.encode()).hexdigest()[:16]
     # Every group (including intermediate) fits Postgres's identifier limit.
-    namespace = f"miroir_{connection.config.id[:16]}_{suffix}"
-    return AnalysisPlan(
-        title=models.title,
-        selector=models.selector,
-        variables={
-            "miroir_sources": {models.dbt_source: connection.binding.dataset_name},
-            "miroir_namespace": namespace,
-            "timezone": connection.config.analysis.timezone,
-            **models.variables(
-                connection.settings, connection.config.analysis.parameters
-            ),
+    namespace = f"miroir_{analysis.id[:16]}_{suffix}"
+    variables: dict[str, Any] = {
+        "miroir_sources": {
+            spec.dbt_source: analysis.inputs[role].binding.dataset_name
+            if role in analysis.inputs
+            else UNLINKED
+            for role, spec in package.inputs.items()
         },
-        relations=tuple(f"{namespace}_{models.group}.{r}" for r in models.relations),
-        version=models.version,
+        "miroir_namespace": namespace,
+        "timezone": analysis.config.timezone,
+        **package.variables(
+            {role: c.settings for role, c in analysis.inputs.items()},
+            analysis.config.parameters,
+        ),
+    }
+    if any(not spec.required for spec in package.inputs.values()):
+        # Models report measures of unlinked inputs as unknown, not zero.
+        variables["miroir_inputs"] = sorted(analysis.inputs)
+        variables["miroir_unlinked_sources"] = [
+            spec.dbt_source
+            for role, spec in package.inputs.items()
+            if role not in analysis.inputs
+        ]
+    return AnalysisPlan(
+        title=package.title,
+        selector=package.selector,
+        variables=variables,
+        relations=tuple(f"{namespace}_{package.group}.{r}" for r in package.relations),
+        version=package.version,
     )
+
+
+def analyses_linking(
+    miroir: ResolvedMiroir, connection_id: str
+) -> tuple[ResolvedAnalysis, ...]:
+    return tuple(a for a in miroir.analyses if a.links(connection_id))
+
+
+def find_analysis(miroir: ResolvedMiroir, analysis_id: str) -> ResolvedAnalysis:
+    from src.core.operations import OperationError
+
+    for analysis in miroir.analyses:
+        if analysis.id == analysis_id:
+            return analysis
+    raise OperationError("Unknown analysis")

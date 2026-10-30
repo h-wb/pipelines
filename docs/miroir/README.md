@@ -52,7 +52,7 @@ folder is connection configuration, not a source setting:
 `pattern` defaults to the format's, `options` to its defaults, and `format` to the
 connector's first. Each sync scans the folder, registers new content (identical
 bytes map to their existing artifact), imports each pending file as its own import
-operation linked to the sync, and builds the analysis once. A scan that finds
+operation linked to the sync, and builds each linked analysis once. A scan that finds
 nothing new loads and builds nothing. Folder files keep the latest `keep_last`
 stored copies (`null` keeps all); older imported copies are removed, their receipts
 and history kept, and replaying them is refused until the file arrives again. A
@@ -71,10 +71,11 @@ production warehouse, and it skips dbt (models target Postgres). dlt working sta
 goes next to the DuckDB file (`<name>.dlt/`). Exit status 1 means the run failed;
 the redacted cause is on the attempt record.
 
-`status` shows, per connection: the latest attempt (origin, ingestion and
-transformation outcome, load IDs, redacted error), the last successful ingestion
-and transformation, whether analysis is `current`, `stale`, or `no_data`, and how
-many requested operations have not started. A `running` attempt is marked
+`status` shows, per connection: the latest ingestion attempt (origin, ingestion and
+transformation outcome, load IDs, redacted error), the last successful ingestion,
+and how many ingestion operations have not started. `analyses` lists each configured
+analysis, its linked inputs, build time, and `current`, `stale`, `running`, or
+`no_data` status. A `running` attempt is marked
 `verified: false` until the flow records its outcome or `refresh` (below) closes
 it from the orchestrator's state.
 
@@ -246,54 +247,80 @@ kubectl -n automation create secret generic miroir-secret \
   --from-literal=MIROIR_API_TOKEN="$(openssl rand -hex 24)"
 ```
 
-The interface lists connections with their last attempt, when data was last loaded,
-analysis freshness (`current`, `stale`, `not_modelled`, `no_data`), and whether
-the saved configuration has been applied. Each connection page has sync/scan,
-file upload, import/replay, and history. Configuration is edited as JSON with
-validation and conflict detection. Pages refresh while work is in flight.
-Dashboard and Prefect run links appear when `links` and `dashboards` are configured:
+The overview lists connections and analyses separately. Connections own source
+settings, credentials, delivery, ingestion, and schedules. Analyses link connections
+to packages and own interpretation, build status, output relations, and dashboard
+links (decision 022). Configuration edits detect conflicting saves.
+
+### Analyses and explicit input links
+
+Creating a connection creates its recommended analysis. **Add an analysis** on the
+overview selects a package and explicitly links each input role to a compatible
+connection. Multiple analyses may read the same connection. Open an analysis to
+change its inputs, timezone, or typed parameters (including GitHub author emails),
+rebuild it, inspect its outputs and build history, or remove its configuration.
+Removing an analysis keeps its tables and history. A connection cannot be removed
+while another analysis links it; its own default analysis is removed with it.
+
+Analyses are top-level configuration entries. For example, with connections named
+`health` and `music`:
 
 ```json
-"links": {"prefect_ui": "https://prefect.example", "metabase": "https://metabase.example"},
-"connections": [{"id": "health", "...": "...", "dashboards": {"Health": 24}}]
+"analyses": [
+  {"id": "music", "package": "music", "inputs": {"music": "music"},
+   "timezone": "America/Toronto", "dashboards": {"Music": 32}},
+  {"id": "together", "package": "crossovers",
+   "inputs": {"health": "health", "music": "music"},
+   "timezone": "America/Toronto"}
+]
 ```
 
-Health and music analysis rebuild automatically after successful Postgres imports
-and syncs. Each connection reads its own bound raw dataset and writes separate
-`miroir_<connection>_<identity>_{staging,health,music}` schemas; **Model outputs**
-on Activity lists the exact reporting relations. Even an explicit legacy raw binding
-writes isolated model outputs. Existing `health.*`, `music.*`, and legacy dashboards
-are preserved. Point connection-specific Metabase questions at the listed output
-relations, then configure their dashboard links as above. Miroir does not yet
-create/reconcile dashboard assets on every installation.
+Packages are `music`, `health`, `github`, `biking`, `browser`, and `crossovers`.
+The first five require one input. Crossovers requires Health and optionally reads
+music and biking. Unlinked inputs are empty and their measures are unknown (null),
+including yearly counts and late-listening categories. They never fall back to
+legacy datasets or another account. A linked input with no successful load is shown
+on the analysis page. Health dates keep the exported local date; the analysis's
+IANA timezone controls local music and biking days/hours.
+
+Each successful Postgres load builds every analysis linking that connection once,
+as a separate child `models` operation. Folder syncs build after all files load;
+a scan with no new files builds nothing. A failed analysis leaves ingestion
+successful and does not prevent other analyses from building. Model-only rebuilds
+resolve no source credentials and leave ingestion times unchanged. **Rebuild
+analysis** uses one linked connection's Prefect deployment. Local DuckDB execution
+skips Postgres models.
+
+An analysis is current only after a successful build with the current plan receipt,
+using data at least as recent as every linked input's last successful load. A load
+arriving during a build conservatively leaves it stale until another build. Failed
+or interrupted builds also make it stale, since dbt may have replaced some outputs.
+
+```bash
+uv run --locked pipelines-miroir --config miroir.json analyses
+uv run --locked pipelines-miroir --config miroir.json models together
+```
+
+Each analysis reads its inputs' actual raw bindings and writes isolated
+`miroir_<analysis>_<identity>_<group>` schemas. **Model outputs** lists exact relations.
+Even a legacy raw binding leaves legacy reporting schemas and dashboards intact.
+Packages select their models and ancestors through dbt; they do not maintain a
+second SQL dependency graph. Absent optional raw fields/resources are typed nulls
+or empty inputs; present tables missing required identity/time fields fail clearly.
+
+`links.metabase` and each analysis's `dashboards` provide dashboard links;
+`links.prefect_ui` provides run links. Miroir does not yet reconcile dashboard assets.
 [`examples/analysis-dashboards.json`](../../examples/analysis-dashboards.json)
-provides source-local SQL/chart seeds with logical `{health}`/`{music}` schema
-placeholders. Resolve these against the listed output schema, create new questions
-and dashboards in Metabase, and retain their IDs in the connection's `dashboards`.
-The examples never reference this installation's backend IDs or overwrite assets.
+contains SQL/chart seeds using logical `{health}`/`{music}` schema placeholders.
+Resolve them against the analysis's output schema, create new Metabase assets, and
+store their IDs on that analysis. Managed dashboard ownership/conflicts and portable
+installation/restore remain later milestone-6 slices.
 
-Health, music, GitHub, biking, and browser builds are independent: only their own
-models and ancestors are selected. Analyses live in `src/analyses/catalog.py`;
-integrations recommend one by ID. Cross-source models remain on the legacy path until their health,
-music, and bike-share inputs can be explicitly linked. Missing optional columns
-and resources in small exports produce nulls/empty tables, rather than failing or
-substituting zero activity. Existing raw tables missing required identity/time
-fields fail clearly. Legacy dbt commands retain their original source schemas,
-output schemas, and column types.
-
-**Rebuild analysis** on Activity requests a model-only operation through the same
-executor/connection lock. It does not fetch source credentials, load rows, or change
-the last-ingestion time. Its result appears separately in history; model failure
-does not undo ingestion. Analysis is current only after a successful build after
-the latest load using the current configuration and analysis-plan version. The CLI
-equivalent is `pipelines-miroir --config miroir.json models <connection>` (Prefect
-deployment required). Local DuckDB execution keeps skipping Postgres models.
-
-**Analysis settings** contains an IANA timezone (UTC by default), stored as
-`"analysis": {"timezone": "America/Toronto"}` on the connection. It controls music
-days/hours. Health dates retain the exported local date. Save and rebuild to apply
-changes to already loaded data. Analysis settings are separate from source settings,
-delivery settings, credentials, and scheduling.
+A configuration without an `analyses` key upgrades on read: each connection gets its
+recommended analysis under its connection ID, carrying its old `analysis` settings
+and `dashboards`. Output namespaces, source revisions, and existing build receipts
+stay stable. Service edits write the upgraded shape. An explicit `"analyses": []`
+means no analyses; connection-level analysis fields are invalid once the list exists.
 
 Requests run as `pipelines-miroir execute <operation>` subprocesses against
 the same local DuckDB file; with `MIROIR_PREFECT_POOL` set they are submitted
@@ -305,8 +332,11 @@ The JSON API takes `Authorization: Bearer $MIROIR_API_TOKEN`:
 | --- | --- |
 | `GET /api/overview`, `GET /api/connections/{id}` | Status, history, files |
 | `POST /api/connections/{id}/sync` | Request a sync (202, operation ID) |
-| `POST /api/connections/{id}/models` | Request analysis rebuild without ingestion (202, operation ID); requires previously loaded data |
-| `PUT /api/connections/{id}/analysis` with `If-Match: <file_revision>` | Update analysis settings, e.g. `{"timezone": "America/Toronto"}` |
+| `GET /api/packages`, `GET /api/analyses`, `GET /api/analyses/{id}` | Package inputs/parameters; analysis status, inputs, outputs, and build history |
+| `POST /api/analyses` with `If-Match: <file_revision>` | Add `{id, package, inputs, timezone}` |
+| `PUT /api/analyses/{id}` with `If-Match: <file_revision>` | Update inputs, timezone, parameters, or dashboard links |
+| `DELETE /api/analyses/{id}` with `If-Match: <file_revision>` | Remove configuration; keep tables and history |
+| `POST /api/analyses/{id}/models` | Rebuild without ingestion (202, operation ID); requires a successful input load |
 | `POST /api/connections/{id}/artifacts?import=true&name=…&<option>=…` | Store the raw request body as a file, optionally import it |
 | `POST /api/connections/{id}/artifacts/{artifact}/import?replay=false` | Request an import |
 | `POST /api/connections/{id}/delivery-token`, `DELETE /api/connections/{id}/delivery-token` | Create/replace (value shown once) or revoke a receive-only token; requires administrator auth |
@@ -384,26 +414,25 @@ Confirm a real receipt and successful import before disabling the old n8n workfl
 or changing legacy dataset bindings (decision 009). The CLI's `submit` only
 registers a file; its `import` command targets local DuckDB.
 
-This change upgrades metadata to version 4 to add hashed delivery tokens and
-separate first/latest receipt times. Identical repeated exports advance the latest
-receipt time without changing the artifact's first receipt or re-importing it. Release
-the server, worker, and flow-run image together: older runtimes refuse the new
-schema version. Phone delivery and production cutover still need a real-device
-check; synthetic tests alone do not establish those.
+Metadata schema 6 includes hashed delivery tokens and separate first/latest receipt
+times (version 4), file options and folder provenance (version 5), and analysis IDs
+on build operations (version 6). Earlier build records are backfilled under their
+connection IDs so upgraded default analyses retain their history and freshness.
+Release the server, worker, and flow-run image together: older runtimes refuse
+schema 6. Before rollout, drain active Miroir runs and back up configuration and
+metadata. Downgrading requires restoring that matching backup; old runtimes cannot
+read the migrated database. Production connector cutover remains separate.
 
 The Prefect flow `src/pipelines/miroir.py:sync_connection` uses the same runner
-against Postgres and runs dbt for connections whose dataset matches its source
-binding. Miroir manages its deployments through plan/apply; `prefect.yaml` holds
+against Postgres and builds analyses that link the loaded connection. Miroir manages its deployments through plan/apply; `prefect.yaml` holds
 the legacy deployments only.
 
-Configuration version 1 contains a miroir ID, connections, and optional deployment
-settings and service links. Each
-connection has an integration, validated settings, credential references, and an
-optional explicit pipeline/dataset binding, resource selection (`resources`: a
-subset of the integration's declared resources; unselected resources keep their
-stored state and rows), analysis settings (`analysis.timezone`,
-`analysis.parameters` validated by the analysis, e.g. GitHub `author_emails`),
-schedule, and dashboard links.
+Configuration version 1 contains a miroir ID, connections, analyses, and optional
+deployment settings and service links. Each connection has an integration, validated
+settings, credential references, and optional explicit pipeline/dataset binding,
+resource selection (`resources`: a subset of declared resources; unselected resources
+keep their stored state and rows), watched folder, and schedule. Analyses own input
+links, timezone, typed parameters, and dashboard links.
 Credentials use `provider: "miroir"` for the built-in encrypted store without a
 key, or `provider: "env"` / `"fnox"` with a `key` naming the external value. Inline
 credential fields and unknown settings are rejected. The configuration's content
@@ -423,8 +452,8 @@ This only describes a binding. It does not adopt, reset, or modify any live stat
 The validator rejects duplicate connection IDs, pipeline names, and dataset names
 within a miroir. The first design assumes one warehouse per miroir.
 
-Resource selection, configurable destinations, machine-local overlays, and stored
-immutable revision snapshots remain outside this schema. Unsupported fields fail validation rather than being ignored.
+Configurable destinations, machine-local overlays, and stored immutable revision
+snapshots remain outside this schema. Unsupported fields fail validation rather than being ignored.
 Add each through a documented schema change when its operation is implemented.
 
 ## Validate in an isolated environment

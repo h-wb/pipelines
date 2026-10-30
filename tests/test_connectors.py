@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import requests
 
-from src.analyses.catalog import ANALYSES
+from src.analyses.catalog import PACKAGES
 from src.core.analysis import analysis_plan
 from src.core.artifacts import submit_artifact
 from src.core.config import ConfigurationError, parse_miroir
@@ -63,7 +63,7 @@ def places(path: Path) -> Path:
 class ConnectorContractTests(unittest.TestCase):
     def test_every_integration_recommends_a_cataloged_analysis(self):
         for definition in INTEGRATIONS.values():
-            self.assertIn(definition.analysis, ANALYSES, definition.name)
+            self.assertIn(definition.analysis, PACKAGES, definition.name)
             self.assertTrue(definition.fetch or definition.formats)
 
     def test_resource_selection_is_validated_and_applied(self):
@@ -89,25 +89,45 @@ class ConnectorContractTests(unittest.TestCase):
             )
 
     def test_analysis_parameters_belong_to_the_analysis_not_credentials(self):
-        connection = parse(
-            github(
-                analysis={"parameters": {"author_emails": [" Me@X.org", "me@x.org"]}}
+        def configure(parameters):
+            return parse_miroir(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "id": "tests",
+                        "connections": [github()],
+                        "analyses": [
+                            {
+                                "id": "code",
+                                "package": "github",
+                                "inputs": {"github": "code"},
+                                "parameters": parameters,
+                            }
+                        ],
+                    }
+                )
             )
-        ).connections[0]
-        variables = analysis_plan(connection).variables
+
+        miroir = configure({"author_emails": [" Me@X.org", "me@x.org"]})
+        variables = analysis_plan(miroir.analyses[0]).variables
+        # Identity comes from the linked connection, emails from the analysis.
         self.assertEqual(variables["github_login"], "octo-cat")
         self.assertEqual(variables["github_author_emails"], ["me@x.org"])
+        for bad in ({"author_emails": ["nope"]}, {"unknown": 1}):
+            with self.assertRaises(ConfigurationError):
+                configure(bad)
+        # Connections no longer carry analysis settings once analyses exist.
         with self.assertRaises(ConfigurationError):
-            parse(github(analysis={"parameters": {"author_emails": ["nope"]}}))
-        music = {
-            "id": "music",
-            "integration": "listenbrainz",
-            "settings": {"username": "u", "start_date": "2020-01-01T00:00:00Z"},
-            "credentials": {"access_token": SECRET},
-            "analysis": {"parameters": {"author_emails": []}},
-        }
-        with self.assertRaises(ConfigurationError):
-            parse(music)
+            parse_miroir(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "id": "tests",
+                        "connections": [github(analysis={"timezone": "UTC"})],
+                        "analyses": [],
+                    }
+                )
+            )
 
     def test_github_check_rejects_a_token_for_another_account(self):
         settings = parse(github()).connections[0].settings

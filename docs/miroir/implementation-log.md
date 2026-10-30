@@ -888,3 +888,69 @@ work across API pulls, manual imports, automatic delivery, and folders.
   `data_dir`, folder validation, retention outside the revision), a v4→v5
   upgrade test (role becomes options; the earlier import still counts), and a
   web test for folder settings and option fields.
+
+## 2026-10-30 — Configured analyses and explicit cross-source inputs (decision 022)
+
+Continued Claude's unfinished milestone-6 first slice after its session limit.
+The connector cutover remains separate; this session changes code and documentation,
+not live connections, schedules, reporting tables, or Metabase assets.
+
+### What changed
+
+- The independent catalog now defines packages with named, typed input roles,
+  selectors, outputs, parameters, and versions. Top-level `analyses` configure
+  instances, explicit connection links, timezone, parameters, and dashboard links.
+  Each new connection gets its recommended default analysis. Legacy configurations
+  without `analyses` upgrade on read, preserving source revisions, output namespaces,
+  analysis settings, and dashboard links; explicit empty lists stay empty. Service
+  edits persist the new shape. Invalid legacy analysis values still fail safely.
+- Crossovers requires Health and optionally links music and biking. Its build uses
+  actual raw bindings, selected accounts, and its own namespace. Unlinked sources
+  are explicitly excluded from table discovery, even if a table exists at the
+  placeholder schema. Daily/yearly measures and late-listening categories stay null
+  for unlinked inputs. Legacy dbt invocations retain their behavior.
+- Metadata schema 6 adds `operations.analysis_id` and build-outcome update times.
+  Earlier build operations are backfilled under their connection IDs, preserving
+  successful receipts. Each linked analysis builds once per load as its own child
+  operation; one model failure neither fails ingestion nor stops the other builds.
+  Folder syncs still build once after collecting/importing files; unchanged folders
+  do not build. Explicit rebuilds pin the plan and never resolve source credentials.
+- Analysis freshness checks all linked inputs, the current plan receipt, the latest
+  completed outcome, and active builds. Loads arriving during a build leave it stale.
+  Outcomes follow completion time, since builds submitted through different inputs
+  can acquire the dbt concurrency slot in a different order. Migrated combined
+  load/build records use ingestion time as the safe input boundary. Inline child
+  builds/imports are observed through the parent's backend run while keeping that
+  submission ID unique. Connection status continues to describe ingestion attempts.
+- Added overview/detail/create/edit/remove UI and JSON API for analyses, explicit
+  compatible input selectors, timezone/GitHub-parameter editing, per-input load
+  evidence, model outputs, dashboard links, and build history with Prefect links.
+  Connection removal refuses other analysis dependencies; its own default analysis
+  goes with it. CLI `analyses` lists status; `models` accepts an analysis ID.
+- Updated the README and roadmap with configuration/API/CLI examples, migration
+  behavior, rollout requirements, and the remaining milestone boundaries.
+
+### Validation
+
+- Ruff lint/format and mypy passed across the maintained slice. Example configuration
+  validation and `git diff --check` passed.
+- The full unittest suite passed 130 tests, including the four real temporary
+  Prefect API scenarios and seven disposable Postgres/dbt scenarios. Command:
+  `MIROIR_TEST_POSTGRES_BIN=/home/paseo/.local/share/mise/installs/postgres/17.11/bin uv run --locked python -m unittest discover -s tests`.
+- New tests cover legacy config and metadata migration, stable namespaces/receipts,
+  invalid links/parameters/timezones, explicit empty analyses, UI/API conflict and
+  removal behavior, CLI listing, one build per linked analysis, failure isolation,
+  crash observation, freshness across inputs, a load during a build, and builds
+  completing out of request order. Real Postgres builds cover Health-only crossovers
+  with unknown optional measures, an occupied unlinked placeholder that is never
+  read, and linked music/biking data in the same isolated output namespace.
+
+### Release boundary and next work
+
+This slice requires server, worker, and flow-run images on the same schema-6 runtime.
+Drain active Miroir runs, back up configuration/metadata, then coordinate the image
+pins and deployment apply. Old runtimes cannot read schema 6; rollback requires the
+matching pre-upgrade backup. No live migration or connector cutover was performed
+in this session. Milestone 6 remains open: managed Metabase asset ownership and
+conflicts, a default installation bundle, and an exercised fresh install/restore
+are subsequent slices.

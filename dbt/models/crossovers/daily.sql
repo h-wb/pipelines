@@ -1,4 +1,4 @@
--- One row per day across every source
+-- One row per day across every source. Unlinked optional inputs are unknown (null).
 select
     d.day,
     d.steps,
@@ -9,10 +9,10 @@ select
     d.hrv_ms,
     d.sleep_h,
     d.bedtime_h,
-    coalesce(l.listens, 0) as listens,
-    coalesce(l.late_listens, 0) as late_listens,
-    coalesce(r.rides, 0) as rides,
-    coalesce(r.ride_min, 0) as ride_min,
+    {{ if_linked('music', 'coalesce(l.listens, 0)', 'bigint') }} as listens,
+    {{ if_linked('music', 'coalesce(l.late_listens, 0)', 'bigint') }} as late_listens,
+    {{ if_linked('biking', 'coalesce(r.rides, 0)', 'bigint') }} as rides,
+    {{ if_linked('biking', 'coalesce(r.ride_min, 0)', 'numeric') }} as ride_min,
     coalesce(w.workout_min, 0) as workout_min
 from {{ ref('daily_summary') }} d
 left join (

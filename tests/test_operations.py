@@ -28,9 +28,11 @@ from src.core.operations import (
     ConnectionBusy,
     MetadataStore,
     OperationError,
-    attempts,
     delivery_tokens,
     schema_info,
+)
+from src.core.operations import (
+    attempts as attempt_table,
 )
 from src.core.runner import (
     IngestionFailed,
@@ -122,6 +124,10 @@ class OperationTests(unittest.TestCase):
     def status(self, miroir, connection="music"):
         return self.store.connection_status(miroir.id, connection)
 
+    def analysis(self, miroir, analysis="music"):
+        """The store's view; the service also compares the plan receipt."""
+        return self.store.analysis_status(miroir.id, analysis, [analysis])
+
     def test_sync_without_transform_records_load_and_keeps_analysis_stale(self):
         miroir = self.miroir()
         outcome = self.run_music(miroir)
@@ -140,14 +146,14 @@ class OperationTests(unittest.TestCase):
             status["last_attempt"]["transformation_detail"], "no transform configured"
         )
         # Loaded but never modelled: analysis does not reflect this data.
-        self.assertEqual(status["analysis"], "stale")
+        self.assertEqual(self.analysis(miroir)["state"], "stale")
 
     def test_model_failure_keeps_load_and_marks_analysis_stale(self):
         miroir = self.miroir(legacy_binding=True)
         selectors = []
         self.run_music(miroir, transform=selectors.append)
-        self.assertEqual(selectors, [analysis_plan(miroir.connections[0])])
-        self.assertEqual(self.status(miroir)["analysis"], "current")
+        self.assertEqual(selectors, [analysis_plan(miroir.analyses[0])])
+        self.assertEqual(self.analysis(miroir)["state"], "current")
 
         def failing(selector):
             raise RuntimeError(f"dbt failed near {TOKEN}")
@@ -157,8 +163,8 @@ class OperationTests(unittest.TestCase):
             (outcome.ingestion, outcome.transformation), ("succeeded", "failed")
         )
         status = self.status(miroir)
-        self.assertEqual(status["analysis"], "stale")
-        self.assertNotIn(TOKEN, json.dumps(status))
+        self.assertEqual(self.analysis(miroir)["state"], "stale")
+        self.assertNotIn(TOKEN, json.dumps([status, self.analysis(miroir)]))
         self.assertEqual(self.rows("listenbrainz_data"), 1)
 
     def test_model_rebuild_uses_existing_data_without_source_credentials(self):
@@ -188,11 +194,9 @@ class OperationTests(unittest.TestCase):
             {"listenbrainz": miroir.connections[0].binding.dataset_name},
         )
         status = self.status(miroir)
-        self.assertEqual(status["analysis"], "current")
+        self.assertEqual(self.analysis(miroir)["state"], "current")
         self.assertEqual(status["last_ingestion_success"], ingested)
-        self.assertEqual(
-            status["last_build"]["transformation_detail"], plans[0].receipt
-        )
+        self.assertEqual(self.analysis(miroir)["built_receipt"], plans[0].receipt)
 
         def failing(plan):
             raise RuntimeError("model test failed")
@@ -210,7 +214,7 @@ class OperationTests(unittest.TestCase):
             (outcome.ingestion, outcome.transformation), ("not_run", "failed")
         )
         # dbt may have replaced some relations before a model/test failed.
-        self.assertEqual(self.status(miroir)["analysis"], "stale")
+        self.assertEqual(self.analysis(miroir)["state"], "stale")
         self.assertEqual(self.status(miroir)["last_ingestion_success"], ingested)
         operation = request_models(miroir, "music", store=self.store, origin="local")
         execute_operation(
@@ -221,12 +225,19 @@ class OperationTests(unittest.TestCase):
             resolve_credentials=lambda c: self.fail("source credentials requested"),
             transform=plans.append,
         )
-        self.assertEqual(self.status(miroir)["analysis"], "current")
+        self.assertEqual(self.analysis(miroir)["state"], "current")
 
         requested = request_models(miroir, "music", store=self.store, origin="local")
         config = example()
         config["connections"] = config["connections"][:1]
-        config["connections"][0]["analysis"] = {"timezone": "America/Toronto"}
+        config["analyses"] = [
+            {
+                "id": "music",
+                "package": "music",
+                "inputs": {"music": "music"},
+                "timezone": "America/Toronto",
+            }
+        ]
         changed = parse_miroir(json.dumps(config))
         self.assertEqual(
             changed.connections[0].revision, miroir.connections[0].revision
@@ -245,28 +256,32 @@ class OperationTests(unittest.TestCase):
 
     def test_crashed_model_build_preserves_successful_ingestion(self):
         miroir = self.miroir()
-        operation = self.run_music(miroir)
+        self.run_music(miroir, transform=lambda plan: None)
+        (build,) = [
+            o
+            for o in self.store.recent_operations(miroir.id, "music")
+            if o["kind"] == "models"
+        ]
+        self.assertEqual(build["analysis_id"], "music")
         with self.store.engine.connect() as db:
             attempt = db.execute(
-                sa.select(attempts.c.id).where(
-                    attempts.c.operation_id == operation.operation_id
+                sa.select(attempt_table.c.id).where(
+                    attempt_table.c.operation_id == build["id"]
                 )
             ).scalar_one()
         self.store.update_attempt(attempt, transformation="running")
-        self.store.close_unverified(
-            operation.operation_id, attempt, "lost", "Worker crashed"
-        )
+        self.store.close_unverified(build["id"], attempt, "lost", "Worker crashed")
         status = self.status(miroir)
-        self.assertEqual(status["last_attempt"]["ingestion"], "succeeded")
-        self.assertEqual(status["last_attempt"]["transformation"], "lost")
-        self.assertEqual(status["analysis"], "stale")
+        self.assertEqual(self.analysis(miroir)["last_outcome"], "lost")
+        self.assertIsNotNone(status["last_ingestion_success"])
+        self.assertEqual(self.analysis(miroir)["state"], "stale")
         self.store.update_attempt(attempt, transformation="succeeded")
         self.assertFalse(
             self.store.close_unverified(
-                operation.operation_id, attempt, "lost", "Late observation"
+                build["id"], attempt, "lost", "Late observation"
             )
         )
-        self.assertEqual(self.status(miroir)["analysis"], "current")
+        self.assertEqual(self.analysis(miroir)["state"], "current")
 
     def test_ingestion_failure_is_recorded_and_redacted(self):
         miroir = self.miroir()
@@ -275,7 +290,7 @@ class OperationTests(unittest.TestCase):
         status = self.status(miroir)
         self.assertEqual(status["last_attempt"]["ingestion"], "failed")
         self.assertEqual(status["last_attempt"]["transformation"], "not_run")
-        self.assertEqual(status["analysis"], "no_data")
+        self.assertEqual(self.analysis(miroir)["state"], "no_data")
         self.assertNotIn(TOKEN, json.dumps(status) + str(raised.exception))
         self.assertIn("***", status["last_attempt"]["error_message"])
 

@@ -19,7 +19,7 @@ from typing import Any, Literal
 
 import sqlalchemy as sa
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 POSTGRES_SCHEMA = "miroir_meta"
 LOCK_POLL_SECONDS = 1.0
 
@@ -73,6 +73,8 @@ operations = sa.Table(
     sa.Column("options", sa.Text),
     # Version 5: imports a sync started for its watched folder's new files.
     sa.Column("parent_operation_id", sa.String(36)),
+    # Version 6: the analysis a `models` operation builds (decision 022).
+    sa.Column("analysis_id", sa.String(24)),
 )
 
 # Columns added to `operations` by version 2, as portable DDL fragments.
@@ -119,6 +121,7 @@ attempts = sa.Table(
     sa.Column("transformation", sa.String(16), nullable=False),
     sa.Column("transformation_detail", sa.String(200)),
     sa.Column("transformed_at", sa.DateTime(timezone=True)),
+    sa.Column("transformation_updated_at", sa.DateTime(timezone=True)),
     sa.Column("error_type", sa.String(200)),
     sa.Column("error_message", sa.Text),
     # Version 3: why it failed, when known (e.g. "credentials_rejected").
@@ -186,6 +189,7 @@ class Operation:
     parser_version: int | None = None
     options: str | None = None
     parent_operation_id: str | None = None
+    analysis_id: str | None = None
 
 
 def _now() -> datetime:
@@ -311,6 +315,56 @@ class MetadataStore:
                             "ADD COLUMN parent_operation_id VARCHAR(36)"
                         )
                     )
+            if version < 6:
+                columns = {
+                    column["name"]
+                    for column in sa.inspect(db).get_columns(
+                        "attempts", schema=POSTGRES_SCHEMA if postgres else None
+                    )
+                }
+                if "transformation_updated_at" not in columns:
+                    timestamp = "TIMESTAMP WITH TIME ZONE" if postgres else "TIMESTAMP"
+                    db.execute(
+                        sa.text(
+                            f"ALTER TABLE {prefix}attempts ADD COLUMN transformation_updated_at {timestamp}"
+                        )
+                    )
+                db.execute(
+                    attempts.update().values(
+                        transformation_updated_at=sa.func.coalesce(
+                            attempts.c.transformed_at, attempts.c.started_at
+                        )
+                    )
+                )
+                operation_columns = {
+                    column["name"]
+                    for column in sa.inspect(db).get_columns(
+                        "operations", schema=POSTGRES_SCHEMA if postgres else None
+                    )
+                }
+                if "analysis_id" not in operation_columns:
+                    db.execute(
+                        sa.text(
+                            f"ALTER TABLE {prefix}operations "
+                            "ADD COLUMN analysis_id VARCHAR(24)"
+                        )
+                    )
+                # Before 022 each connection had at most one analysis, which is
+                # upgraded under the connection's ID: earlier builds are its builds.
+                db.execute(
+                    operations.update()
+                    .where(
+                        operations.c.analysis_id.is_(None),
+                        operations.c.id.in_(
+                            sa.select(attempts.c.operation_id).where(
+                                attempts.c.transformation.in_(
+                                    ("succeeded", "failed", "lost", "cancelled")
+                                )
+                            )
+                        ),
+                    )
+                    .values(analysis_id=operations.c.connection_id)
+                )
             db.execute(schema_info.update().values(version=SCHEMA_VERSION))
 
     def create_operation(self, **values: Any) -> Operation:
@@ -387,6 +441,8 @@ class MetadataStore:
             values["ingested_at"] = _now()
         if values.get("transformation") == "succeeded":
             values["transformed_at"] = _now()
+        if "transformation" in values:
+            values["transformation_updated_at"] = _now()
         with self.engine.begin() as db:
             db.execute(
                 attempts.update().where(attempts.c.id == attempt_id).values(**values)
@@ -410,6 +466,7 @@ class MetadataStore:
         scope = sa.and_(
             operations.c.miroir_id == miroir_id,
             operations.c.connection_id == connection_id,
+            operations.c.kind != "models",
         )
         joined = attempts.join(operations)
         with self.engine.connect() as db:
@@ -425,48 +482,12 @@ class MetadataStore:
                 .select_from(joined)
                 .where(scope)
             ).scalar()
-            transformed = db.execute(
-                sa.select(sa.func.max(attempts.c.transformed_at))
-                .select_from(joined)
-                .where(scope)
-            ).scalar()
-            built = db.execute(
-                sa.select(
-                    operations.c.config_revision, attempts.c.transformation_detail
-                )
-                .select_from(joined)
-                .where(scope, attempts.c.transformed_at.is_not(None))
-                .order_by(attempts.c.transformed_at.desc(), attempts.c.id.desc())
-                .limit(1)
-            ).first()
-            model_outcome = db.execute(
-                sa.select(attempts.c.transformation)
-                .select_from(joined)
-                .where(
-                    scope,
-                    attempts.c.transformation.in_(
-                        ("succeeded", "failed", "lost", "cancelled")
-                    ),
-                )
-                .order_by(attempts.c.id.desc())
-                .limit(1)
-            ).scalar()
             pending = db.execute(
                 sa.select(sa.func.count())
                 .select_from(operations.outerjoin(attempts))
                 .where(scope, attempts.c.id.is_(None))
             ).scalar_one()
-        ingested, transformed = _aware(ingested), _aware(transformed)
-        if ingested is None:
-            analysis = "no_data"
-        elif (
-            transformed is not None
-            and transformed >= ingested
-            and model_outcome == "succeeded"
-        ):
-            analysis = "current"
-        else:
-            analysis = "stale"
+        ingested = _aware(ingested)
         last = None
         if latest is not None:
             last = _attempt(latest)
@@ -479,10 +500,95 @@ class MetadataStore:
             "connection": connection_id,
             "last_attempt": last,
             "last_ingestion_success": _iso(ingested),
-            "last_transformation_success": _iso(transformed),
-            "last_build": dict(built._mapping) if built is not None else None,
-            "analysis": analysis,
             "requested_not_started": pending,
+        }
+
+    def analysis_status(
+        self, miroir_id: str, analysis_id: str, connection_ids: list[str]
+    ) -> dict[str, Any]:
+        """Builds of one analysis against the loads of its linked connections.
+
+        `current` needs a succeeded latest outcome built no earlier than the
+        latest load of any input; the caller also compares the build receipt
+        with the current plan.
+        """
+        scope = sa.and_(
+            operations.c.miroir_id == miroir_id,
+            operations.c.analysis_id == analysis_id,
+        )
+        joined = attempts.join(operations)
+        with self.engine.connect() as db:
+            loaded = db.execute(
+                sa.select(sa.func.max(attempts.c.ingested_at))
+                .select_from(joined)
+                .where(
+                    operations.c.miroir_id == miroir_id,
+                    operations.c.connection_id.in_(connection_ids),
+                )
+            ).scalar()
+            built = db.execute(
+                sa.select(
+                    attempts.c.transformation_detail,
+                    attempts.c.transformed_at,
+                    attempts.c.started_at,
+                    attempts.c.ingested_at,
+                )
+                .select_from(joined)
+                .where(scope, attempts.c.transformed_at.is_not(None))
+                .order_by(attempts.c.transformed_at.desc(), attempts.c.id.desc())
+                .limit(1)
+            ).first()
+            latest = db.execute(
+                sa.select(
+                    attempts.c.transformation,
+                    attempts.c.transformation_detail,
+                    attempts.c.started_at,
+                )
+                .select_from(joined)
+                .where(
+                    scope,
+                    attempts.c.transformation.in_(
+                        ("succeeded", "failed", "lost", "cancelled", "running")
+                    ),
+                )
+                .order_by(
+                    attempts.c.transformation_updated_at.desc(), attempts.c.id.desc()
+                )
+                .limit(1)
+            ).first()
+            pending = db.execute(
+                sa.select(sa.func.count())
+                .select_from(operations.outerjoin(attempts))
+                .where(
+                    scope,
+                    sa.or_(
+                        attempts.c.id.is_(None),
+                        attempts.c.transformation.in_(("pending", "running")),
+                    ),
+                )
+            ).scalar_one()
+        loaded = _aware(loaded)
+        built_at = _aware(built.transformed_at) if built is not None else None
+        outcome = latest.transformation if latest is not None else None
+        if loaded is None:
+            state = "no_data"
+        elif outcome == "running" or pending:
+            state = "running"
+        elif (
+            built is not None
+            and _utc(built.ingested_at or built.started_at) >= loaded
+            and outcome == "succeeded"
+        ):
+            state = "current"
+        else:
+            state = "stale"
+        return {
+            "state": state,
+            "last_input_load": _iso(loaded),
+            "last_build": _iso(built_at),
+            "built_receipt": built.transformation_detail if built is not None else None,
+            "last_outcome": outcome,
+            "last_detail": latest.transformation_detail if latest is not None else None,
         }
 
     def last_executed_revision(self, miroir_id: str, connection_id: str) -> str | None:
@@ -503,7 +609,12 @@ class MetadataStore:
         return revision
 
     def recent_operations(
-        self, miroir_id: str, connection_id: str, limit: int = 20
+        self,
+        miroir_id: str,
+        connection_id: str | None = None,
+        limit: int = 20,
+        *,
+        analysis_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Newest operations first, each with its attempts (oldest first)."""
         with self.engine.connect() as db:
@@ -511,7 +622,12 @@ class MetadataStore:
                 operations.select()
                 .where(
                     operations.c.miroir_id == miroir_id,
-                    operations.c.connection_id == connection_id,
+                    operations.c.connection_id == connection_id
+                    if connection_id is not None
+                    else sa.true(),
+                    operations.c.analysis_id == analysis_id
+                    if analysis_id is not None
+                    else sa.true(),
                 )
                 .order_by(operations.c.created_at.desc())
                 .limit(limit)
@@ -739,31 +855,44 @@ class MetadataStore:
         Attempts still `running`, and operations bound to a backend run that never
         started an attempt (the run died before registering).
         """
+        # Inline child imports/builds execute inside their parent's backend run.
+        # backend_run_id stays unique on the parent for idempotent submission.
+        parent = operations.alias("parent")
+        backend = sa.func.coalesce(
+            operations.c.backend_run_id, parent.c.backend_run_id
+        ).label("backend_run_id")
+        parents = operations.outerjoin(
+            parent, operations.c.parent_operation_id == parent.c.id
+        )
         with self.engine.connect() as db:
             running = db.execute(
                 sa.select(
                     attempts.c.id,
                     operations.c.id.label("operation_id"),
-                    operations.c.backend_run_id,
+                    backend,
                 )
-                .select_from(attempts.join(operations))
+                .select_from(
+                    attempts.join(parents, attempts.c.operation_id == operations.c.id)
+                )
                 .where(
                     operations.c.miroir_id == miroir_id,
                     sa.or_(
                         attempts.c.ingestion == "running",
                         attempts.c.transformation.in_(("pending", "running")),
                     ),
-                    operations.c.backend_run_id.is_not(None),
+                    backend.is_not(None),
                 )
             ).all()
             unstarted = db.execute(
-                sa.select(
-                    operations.c.id.label("operation_id"), operations.c.backend_run_id
+                sa.select(operations.c.id.label("operation_id"), backend)
+                .select_from(
+                    parents.outerjoin(
+                        attempts, attempts.c.operation_id == operations.c.id
+                    )
                 )
-                .select_from(operations.outerjoin(attempts))
                 .where(
                     operations.c.miroir_id == miroir_id,
-                    operations.c.backend_run_id.is_not(None),
+                    backend.is_not(None),
                     attempts.c.id.is_(None),
                 )
             ).all()
@@ -822,6 +951,7 @@ class MetadataStore:
                     transformation=sa.case((modelling, outcome), else_="not_run"),
                     error_type="Orchestrator",
                     error_message=message,
+                    transformation_updated_at=_now(),
                 )
             ).rowcount
         return updated == 1

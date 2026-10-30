@@ -1,6 +1,11 @@
-"""Source-local analysis metadata; SQL dependencies remain owned by dbt."""
+"""Analysis packages (decision 022); SQL dependencies remain owned by dbt.
 
-from collections.abc import Callable
+A package declares its selector, outputs, parameters, and the inputs it reads:
+named roles, each accepting certain integrations through one dbt source. An
+analysis in the configuration links each role to a connection.
+"""
+
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -9,7 +14,7 @@ from pydantic import Field, field_validator
 from src.core.models import StrictModel
 
 
-class AnalysisParameters(StrictModel):
+class NoParameters(StrictModel):
     pass
 
 
@@ -17,7 +22,8 @@ class GitHubParameters(StrictModel):
     author_emails: list[str] = Field(
         default_factory=list,
         title="Your commit author emails",
-        description="One email per line. Helps identify commits whose email is not linked to your GitHub account.",
+        description="One email per line. Helps identify commits whose email is not "
+        "linked to your GitHub account.",
     )
 
     @field_validator("author_emails")
@@ -34,95 +40,158 @@ class GitHubParameters(StrictModel):
         return sorted({v.strip().lower() for v in values})
 
 
-def _no_variables(source_settings: Any, parameters: Any) -> dict[str, Any]:
+@dataclass(frozen=True)
+class InputSpec:
+    """One role a package reads: which integrations fill it, via which dbt source."""
+
+    title: str
+    integrations: tuple[str, ...]
+    dbt_source: str
+    required: bool = True
+
+
+def _no_variables(inputs: Mapping[str, Any], parameters: Any) -> dict[str, Any]:
     return {}
 
 
 def _github_variables(
-    source_settings: Any, parameters: GitHubParameters
+    inputs: Mapping[str, Any], parameters: GitHubParameters
 ) -> dict[str, Any]:
     # Account identity is an input to the GitHub analysis, never a global env override.
     return {
-        "github_login": source_settings.username,
+        "github_login": inputs["github"].username,
         "github_author_emails": parameters.author_emails,
     }
 
 
 @dataclass(frozen=True)
-class AnalysisDefinition:
+class Package:
     id: str
-    dbt_source: str
     title: str
+    description: str
     selector: str
     group: str
     relations: tuple[str, ...]
-    parameters: type[StrictModel] = AnalysisParameters
+    inputs: Mapping[str, InputSpec]
+    parameters: type[StrictModel] = NoParameters
     version: int = 1
-    # dbt variables from the source settings and validated analysis parameters.
-    bind: Callable[[Any, Any], dict[str, Any]] = _no_variables
+    # dbt variables from the linked inputs' settings (by role) and validated
+    # parameters; unlinked optional roles are absent.
+    bind: Callable[[Mapping[str, Any], Any], dict[str, Any]] = _no_variables
 
     def variables(
-        self, source_settings: Any, parameters: dict[str, Any]
+        self, settings_by_role: Mapping[str, Any], parameters: dict[str, Any]
     ) -> dict[str, Any]:
-        return self.bind(source_settings, self.parameters.model_validate(parameters))
+        return self.bind(settings_by_role, self.parameters.model_validate(parameters))
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "description": self.description,
+            "relations": list(self.relations),
+            "inputs": {
+                role: {
+                    "title": spec.title,
+                    "integrations": list(spec.integrations),
+                    "required": spec.required,
+                }
+                for role, spec in self.inputs.items()
+            },
+            "parameters_schema": self.parameters.model_json_schema(),
+        }
 
 
-ANALYSES = {
-    "music": AnalysisDefinition(
-        "music",
-        "listenbrainz",
-        "Music analysis",
-        "+path:models/music",
-        "music",
-        (
-            "daily",
-            "listens",
-            "artists",
-            "sessions",
-            "monthly_top",
-            "streaks",
-            "on_repeat",
+def _single(role: str, title: str, integration: str) -> Mapping[str, InputSpec]:
+    return {role: InputSpec(title, (integration,), integration)}
+
+
+PACKAGES: Mapping[str, Package] = {
+    p.id: p
+    for p in (
+        Package(
+            "music",
+            "Music analysis",
+            "Listening history: daily totals, sessions, artists, streaks.",
+            "+path:models/music",
+            "music",
+            (
+                "daily",
+                "listens",
+                "artists",
+                "sessions",
+                "monthly_top",
+                "streaks",
+                "on_repeat",
+            ),
+            _single("music", "Listening history", "listenbrainz"),
         ),
-    ),
-    "health": AnalysisDefinition(
-        "health",
-        "apple_health",
-        "Health analysis",
-        "+path:models/health",
-        "health",
-        ("daily_summary", "workout_summary"),
-    ),
-    "github": AnalysisDefinition(
-        "github",
-        "github",
-        "GitHub analysis",
-        "+path:models/github",
-        "github",
-        (
-            "commits",
-            "pull_requests",
-            "issues",
-            "issue_comments",
-            "releases",
-            "contributions",
+        Package(
+            "health",
+            "Health analysis",
+            "Daily activity, heart, and sleep; workouts.",
+            "+path:models/health",
+            "health",
+            ("daily_summary", "workout_summary"),
+            _single("health", "Health exports", "apple_health"),
         ),
-        GitHubParameters,
-        bind=_github_variables,
-    ),
-    "biking": AnalysisDefinition(
-        "biking",
-        "bikeshare",
-        "Bike share analysis",
-        "+path:models/biking",
-        "biking",
-        ("rides", "stations", "routes"),
-    ),
-    "browser": AnalysisDefinition(
-        "browser",
-        "browser_history",
-        "Browser analysis",
-        "+path:models/browser",
-        "browser",
-        ("visits", "domains_daily"),
-    ),
+        Package(
+            "github",
+            "GitHub analysis",
+            "Commits, pull requests, issues, releases, and contributions.",
+            "+path:models/github",
+            "github",
+            (
+                "commits",
+                "pull_requests",
+                "issues",
+                "issue_comments",
+                "releases",
+                "contributions",
+            ),
+            _single("github", "GitHub account", "github"),
+            GitHubParameters,
+            bind=_github_variables,
+        ),
+        Package(
+            "biking",
+            "Bike share analysis",
+            "Rides, stations, and routes.",
+            "+path:models/biking",
+            "biking",
+            ("rides", "stations", "routes"),
+            _single("biking", "Bike share account", "bikeshare"),
+        ),
+        Package(
+            "browser",
+            "Browser analysis",
+            "Visits and time spent per site.",
+            "+path:models/browser",
+            "browser",
+            ("visits", "domains_daily"),
+            _single("browser", "Browser history", "browser_history"),
+        ),
+        Package(
+            "crossovers",
+            "Across sources",
+            "Days, nights, listens, and rides combined: what was playing during "
+            "workouts and rides, late listening against sleep, correlations, and a "
+            "year in review. Music and biking are optional; without them their "
+            "measures are unknown, not zero.",
+            "+path:models/crossovers",
+            "crossovers",
+            ("daily", "listens", "rides", "nights", "correlations", "years"),
+            {
+                "health": InputSpec(
+                    "Health exports", ("apple_health",), "apple_health"
+                ),
+                "music": InputSpec(
+                    "Listening history", ("listenbrainz",), "listenbrainz", False
+                ),
+                "biking": InputSpec(
+                    "Bike share account", ("bikeshare",), "bikeshare", False
+                ),
+            },
+        ),
+    )
 }

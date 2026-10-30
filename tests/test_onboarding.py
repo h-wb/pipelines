@@ -165,7 +165,7 @@ class OnboardingTests(WebFixture):
             "dataset_name": "health_dataset",
         }
         self.config_path.write_text(json.dumps(raw))
-        original = copy.deepcopy(raw)
+        original, _ = self.service._raw_config()
         view = self.service.connection_settings("health")
         response = self.client.post(
             "/connections/health/settings",
@@ -197,12 +197,10 @@ class OnboardingTests(WebFixture):
         self.assertEqual(invalid.status_code, 400)
         self.assertEqual(json.loads(self.config_path.read_text()), expected)
         # Folder settings can be added and removed without affecting other delivery.
-        self.service.update_connection_settings(
-            "health", {"data_dir": str(self.root)}, revision
-        )
+        self.service.update_folder("health", str(self.root), revision)
         self.assertTrue(self.service.connection("health")["can_sync"])
         revision = self.service.connection_settings("health")["file_revision"]
-        self.service.update_connection_settings("health", {"data_dir": None}, revision)
+        self.service.update_folder("health", None, revision)
         self.assertFalse(self.service.connection("health")["can_sync"])
         self.assertTrue(self.service.connection("health")["accepts_files"])
 

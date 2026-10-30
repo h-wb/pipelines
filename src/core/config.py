@@ -7,7 +7,7 @@ import os
 import tempfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 from urllib.parse import quote_plus
 
 from pydantic import (
@@ -21,6 +21,9 @@ from pydantic import (
 from src.core.models import DatabaseIdentifier, Identifier, SecretKey, StrictModel
 from src.integrations.contracts import IntegrationDefinition
 from src.integrations.registry import INTEGRATIONS
+
+if TYPE_CHECKING:
+    from src.analyses.catalog import Package
 
 
 def metadata_url() -> str | None:
@@ -118,11 +121,26 @@ class Schedule(StrictModel):
         return value
 
 
-class AnalysisSettings(StrictModel):
-    """Interpretation for analysis, independent of source credentials/delivery."""
+Dashboards = dict[
+    Annotated[str, StringConstraints(min_length=1, max_length=100)],
+    Annotated[int, Field(gt=0)],
+]
 
+
+class AnalysisConfig(StrictModel):
+    """An instance of an analysis package with its inputs linked (decision 022).
+
+    Interpretation only: none of this changes what a connection loads.
+    """
+
+    id: Identifier
+    package: Identifier
+    # Package role -> connection ID. Unlinked optional roles are simply absent.
+    inputs: dict[Identifier, Identifier]
     timezone: str = "UTC"
     parameters: dict[str, Any] = Field(default_factory=dict)
+    # Metabase dashboard name -> ID, shown as links next to the analysis.
+    dashboards: Dashboards = Field(default_factory=dict)
 
     @field_validator("timezone")
     @classmethod
@@ -179,12 +197,6 @@ class ConnectionConfig(StrictModel):
     resources: list[Identifier] | None = None
     folder: Folder | None = None
     schedule: Schedule | None = None
-    analysis: AnalysisSettings = Field(default_factory=AnalysisSettings)
-    # Metabase dashboard name -> ID, shown as links next to the connection.
-    dashboards: dict[
-        Annotated[str, StringConstraints(min_length=1, max_length=100)],
-        Annotated[int, Field(gt=0)],
-    ] = Field(default_factory=dict)
 
 
 class Deployment(StrictModel):
@@ -208,6 +220,7 @@ class MiroirConfig(StrictModel):
     id: Identifier
     # Empty is valid: a new installation starts with no connections.
     connections: list[ConnectionConfig] = Field(default_factory=list)
+    analyses: list[AnalysisConfig] = Field(default_factory=list)
     links: Links = Field(default_factory=Links)
     # Absent: execution settings come from the writer's environment (the
     # MIROIR_* defaults); present: they are authoritative here instead.
@@ -258,10 +271,27 @@ class ResolvedConnection:
 
 
 @dataclass(frozen=True)
+class ResolvedAnalysis:
+    config: AnalysisConfig
+    package: "Package"
+    # Linked role -> connection; unlinked optional roles are absent.
+    inputs: dict[str, ResolvedConnection]
+    miroir_id: str = ""
+
+    @property
+    def id(self) -> str:
+        return self.config.id
+
+    def links(self, connection_id: str) -> bool:
+        return any(c.config.id == connection_id for c in self.inputs.values())
+
+
+@dataclass(frozen=True)
 class ResolvedMiroir:
     id: str
     revision: str
     connections: tuple[ResolvedConnection, ...]
+    analyses: tuple[ResolvedAnalysis, ...] = ()
     links: Links = field(default_factory=Links)
     # Declared execution settings (decision 016); None when the writer's
     # environment supplies them instead.
@@ -299,9 +329,7 @@ def parse_miroir(text: str) -> ResolvedMiroir:
         raw = json.loads(text, object_pairs_hook=_unique_keys)
     except (ValueError, RecursionError) as error:
         raise ConfigurationError("Invalid JSON configuration") from error
-    if isinstance(raw, dict):
-        for connection in raw.get("connections") or []:
-            _upgrade_legacy_folder(connection)
+    upgrade_raw(raw)
     try:
         config = MiroirConfig.model_validate(raw)
     except ValidationError as error:
@@ -344,15 +372,6 @@ def parse_miroir(text: str) -> ResolvedMiroir:
                 raise ConfigurationError(
                     f"{prefix}.resources: select distinct declared resources"
                 )
-        from src.analyses.catalog import ANALYSES
-
-        analysis = ANALYSES.get(definition.analysis or "")
-        try:
-            (analysis.parameters if analysis else StrictModel).model_validate(
-                connection.analysis.parameters
-            )
-        except ValidationError as error:
-            raise _validation_error(error, f"{prefix}.analysis.parameters") from error
         # Length-prefix the miroir ID so (a_b, c) and (a, b_c) cannot alias.
         name = f"ws_{len(config.id)}_{config.id}_{connection.id}"
         binding = connection.binding or Binding(pipeline_name=name, dataset_name=name)
@@ -379,7 +398,6 @@ def parse_miroir(text: str) -> ResolvedMiroir:
             "settings": c.settings.model_dump(),
             "credentials": {k: v.model_dump() for k, v in c.config.credentials.items()},
             "binding": c.binding.model_dump(),
-            "analysis": c.config.analysis.model_dump(),
             **(
                 {"resources": c.config.resources}
                 if c.config.resources is not None
@@ -400,27 +418,137 @@ def parse_miroir(text: str) -> ResolvedMiroir:
             revision=_hash(
                 {
                     "miroir": config.id,
-                    **{
-                        k: v for k, v in entries[c.config.id].items() if k != "analysis"
-                    },
+                    **entries[c.config.id],
                 }
             ),
             miroir_id=config.id,
         )
         for c in connections
     ]
+    analyses = _resolve_analyses(config, {c.config.id: c for c in connections})
     normalized = {
         "schema_version": config.schema_version,
         "id": config.id,
         "connections": [entries[key] for key in sorted(entries)],
+        "analyses": sorted(
+            (a.config.model_dump(exclude={"dashboards"}) for a in analyses),
+            key=lambda a: a["id"],
+        ),
     }
     return ResolvedMiroir(
         config.id,
         _hash(normalized),
         tuple(connections),
+        analyses,
         links=config.links,
         deployment=config.deployment,
     )
+
+
+def _resolve_analyses(
+    config: MiroirConfig, connections: dict[str, ResolvedConnection]
+) -> tuple[ResolvedAnalysis, ...]:
+    from src.analyses.catalog import PACKAGES
+
+    resolved, ids = [], set()
+    for index, analysis in enumerate(config.analyses):
+        prefix = f"analyses.{index}"
+        if analysis.id in ids:
+            raise ConfigurationError(f"{prefix}.id: duplicate analysis")
+        ids.add(analysis.id)
+        package = PACKAGES.get(analysis.package)
+        if package is None:
+            raise ConfigurationError(f"{prefix}.package: unknown package")
+        inputs = {}
+        for role, connection_id in analysis.inputs.items():
+            spec = package.inputs.get(role)
+            if spec is None:
+                raise ConfigurationError(f"{prefix}.inputs: unknown role")
+            connection = connections.get(connection_id)
+            if connection is None:
+                raise ConfigurationError(f"{prefix}.inputs.{role}: unknown connection")
+            if connection.integration.name not in spec.integrations:
+                raise ConfigurationError(
+                    f"{prefix}.inputs.{role}: this role cannot read that integration"
+                )
+            inputs[role] = connection
+        missing = [
+            r for r, s in package.inputs.items() if s.required and r not in inputs
+        ]
+        if missing:
+            raise ConfigurationError(f"{prefix}.inputs: link the required inputs")
+        try:
+            parameters = package.parameters.model_validate(analysis.parameters)
+        except ValidationError as error:
+            raise _validation_error(error, f"{prefix}.parameters") from error
+        normalized = analysis.model_copy(
+            update={"parameters": parameters.model_dump(mode="json")}
+        )
+        resolved.append(ResolvedAnalysis(normalized, package, inputs, config.id))
+    return tuple(resolved)
+
+
+def upgrade_raw(raw: Any) -> None:
+    """Upgrade an older configuration's shape in place, before validation.
+
+    A pre-021 `settings.data_dir` becomes a watched folder. A configuration
+    without `analyses` (pre-022) gets one analysis per connection whose
+    integration recommends a package, with the connection's ID and its former
+    analysis settings and dashboards, so output namespaces are unchanged.
+    """
+    if not isinstance(raw, dict):
+        return
+    items = raw.get("connections", [])
+    if not isinstance(items, list):
+        return  # normal validation reports the invalid connections field
+    connections = [c for c in items if isinstance(c, dict)]
+    for connection in connections:
+        _upgrade_legacy_folder(connection)
+    if "analyses" in raw:
+        return
+    analyses = []
+    for connection in connections:
+        legacy = connection.pop("analysis", {})
+        dashboards = connection.pop("dashboards", {})
+        if not isinstance(legacy, dict) or set(legacy) - {"timezone", "parameters"}:
+            raise ConfigurationError("connections.analysis: expected analysis settings")
+        default = default_analysis(connection.get("integration"), connection.get("id"))
+        if default is None:
+            continue
+        analyses.append(
+            {
+                **default,
+                **({"timezone": legacy["timezone"]} if "timezone" in legacy else {}),
+                **(
+                    {"parameters": legacy["parameters"]}
+                    if "parameters" in legacy
+                    else {}
+                ),
+                "dashboards": dashboards,
+            }
+        )
+    raw["analyses"] = analyses
+
+
+def default_analysis(integration: Any, connection_id: Any) -> dict[str, Any] | None:
+    """The analysis a new connection gets: its package, sharing the connection ID."""
+    from src.analyses.catalog import PACKAGES
+
+    definition = INTEGRATIONS.get(str(integration))
+    package = PACKAGES.get(definition.analysis or "") if definition else None
+    if definition is None or package is None:
+        return None
+    role = next(
+        (
+            r
+            for r, spec in package.inputs.items()
+            if definition.name in spec.integrations
+        ),
+        None,
+    )
+    if role is None:
+        return None
+    return {"id": connection_id, "package": package.id, "inputs": {role: connection_id}}
 
 
 def _upgrade_legacy_folder(connection: Any) -> None:

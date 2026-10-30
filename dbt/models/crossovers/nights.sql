@@ -3,6 +3,7 @@ select
     d.day,
     d.late_listens,
     case
+        when d.late_listens is null then null
         when d.late_listens = 0 then '0 · none'
         when d.late_listens <= 5 then '1 · 1-5 tracks'
         when d.late_listens <= 15 then '2 · 6-15 tracks'

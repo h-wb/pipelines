@@ -44,14 +44,14 @@ class AnalysisPlanTests(unittest.TestCase):
         self.assertEqual(before.connections[0].revision, after.connections[0].revision)
         self.assertNotEqual(before.revision, after.revision)
         self.assertNotEqual(
-            analysis_plan(before.connections[0]).receipt,
-            analysis_plan(after.connections[0]).receipt,
+            analysis_plan(before.analyses[0]).receipt,
+            analysis_plan(after.analyses[0]).receipt,
         )
 
     def test_bindings_accounts_and_timezone_are_part_of_the_plan(self):
         config = example()
         first = parse_miroir(json.dumps(config)).connections[0]
-        plan = analysis_plan(first)
+        plan = analysis_plan(parse_miroir(json.dumps(config)).analyses[0])
         self.assertEqual(
             plan.variables["miroir_sources"],
             {"listenbrainz": first.binding.dataset_name},
@@ -62,14 +62,14 @@ class AnalysisPlanTests(unittest.TestCase):
             "dataset_name": "old_music",
         }
         config["connections"][0]["analysis"] = {"timezone": "America/Toronto"}
-        bound = analysis_plan(parse_miroir(json.dumps(config)).connections[0])
+        bound = analysis_plan(parse_miroir(json.dumps(config)).analyses[0])
         self.assertEqual(bound.relations, plan.relations)
         self.assertNotEqual(bound.receipt, plan.receipt)
         self.assertEqual(
             bound.variables["miroir_sources"], {"listenbrainz": "old_music"}
         )
         config["connections"][0]["id"] = "other_music"
-        other = analysis_plan(parse_miroir(json.dumps(config)).connections[0])
+        other = analysis_plan(parse_miroir(json.dumps(config)).analyses[0])
         self.assertNotEqual(other.relations, bound.relations)
         config["connections"][0]["analysis"]["timezone"] = "not-a-timezone"
         with self.assertRaises(ConfigurationError):
@@ -80,7 +80,7 @@ class AnalysisPlanTests(unittest.TestCase):
             config = example()
             config["id"] = miroir_id
             config["connections"][0]["id"] = connection_id
-            return analysis_plan(parse_miroir(json.dumps(config)).connections[0])
+            return analysis_plan(parse_miroir(json.dumps(config)).analyses[0])
 
         longest = plan("a" * 24, "b" * 24)
         self.assertLessEqual(
@@ -255,7 +255,7 @@ class DbtPostgresTests(unittest.TestCase):
 
         result = self.load_export(miroir, "health_one", metrics(12))
         self.assertEqual(result.transformation, "succeeded")
-        one, two = [analysis_plan(c) for c in miroir.connections]
+        one, two = [analysis_plan(a) for a in miroir.analyses]
         self.assertEqual(
             self.query(f"select steps, sleep_h from {one.relations[0]}"), [(12, None)]
         )
@@ -313,13 +313,16 @@ class DbtPostgresTests(unittest.TestCase):
                 "listenbrainz_data",
             }.isdisjoint(schemas)
         )
-        self.assertFalse(any(s.endswith("_crossovers") for s in schemas))
+        for plan in (one, two):
+            self.assertNotIn(
+                plan.variables["miroir_namespace"] + "_crossovers", schemas
+            )
 
     def test_optional_resources_are_empty_required_fields_fail_and_legacy_tables_survive(
         self,
     ):
         miroir = self.configuration([self.health("empty_health")])
-        plan = analysis_plan(miroir.connections[0])
+        plan = analysis_plan(miroir.analyses[0])
         self.query(
             "create schema health; create table health.daily_summary (sentinel int); insert into health.daily_summary values (42)"
         )
@@ -354,7 +357,7 @@ class DbtPostgresTests(unittest.TestCase):
                 miroir, "music_models", origin="local", **self.execution
             )
         self.assertEqual(outcome.transformation, "succeeded")
-        plan = analysis_plan(miroir.connections[0])
+        plan = analysis_plan(miroir.analyses[0])
         self.assertEqual(
             self.query(f"select count(*) from {plan.relations[1]}"), [(1,)]
         )
@@ -398,16 +401,90 @@ class DbtPostgresTests(unittest.TestCase):
             self.root / "artifacts",
             InlineExecutor(lambda _: None),
         )
-        self.assertEqual(
-            service.connection("music_models")["status"]["analysis"], "current"
-        )
+        self.assertEqual(service.analysis("music_models")["status"]["state"], "current")
         music["analysis"]["timezone"] = "Europe/Paris"
         config_path.write_text(
             json.dumps({"schema_version": 1, "id": miroir.id, "connections": [music]})
         )
-        self.assertEqual(
-            service.connection("music_models")["status"]["analysis"], "stale"
+        self.assertEqual(service.analysis("music_models")["status"]["state"], "stale")
+
+    def test_crossovers_use_only_linked_accounts_and_unlinked_inputs_stay_unknown(self):
+        health = self.health("cross_health")
+        music = example()["connections"][0]
+        music["id"] = "cross_music"
+        raw = {
+            "schema_version": 1,
+            "id": "cross_tests",
+            "connections": [health, music],
+            "analyses": [
+                {
+                    "id": "combined",
+                    "package": "crossovers",
+                    "inputs": {"health": "cross_health"},
+                }
+            ],
+        }
+        miroir = parse_miroir(json.dumps(raw))
+        health_schema, music_schema = [
+            c.binding.dataset_name for c in miroir.connections
+        ]
+        self.query(
+            f"create schema {health_schema}; create table {health_schema}.metrics "
+            "(metric_name text, date text, qty double precision, total_sleep double precision); "
+            f"insert into {health_schema}.metrics values "
+            "('step_count', '2026-10-29 12:00:00 -0400', 123, null), "
+            "('sleep_analysis', '2026-10-29 08:00:00 -0400', null, 7.5)"
         )
+        self.query(
+            f"create schema {music_schema}; create table {music_schema}.listens "
+            "(_dlt_id text, listened_at double precision, track_metadata__artist_name text); "
+            f"insert into {music_schema}.listens values ('one', "
+            "extract(epoch from '2026-10-29 01:00:00+00'::timestamptz), 'Linked artist')"
+        )
+        # Even a real table at the unlinked placeholder must never be read.
+        self.query(
+            "create schema miroir_unlinked_input; create table "
+            "miroir_unlinked_input.listens (bad_column int)"
+        )
+        self.addCleanup(self.query, "drop schema miroir_unlinked_input cascade")
+        plan = analysis_plan(miroir.analyses[0])
+        build_connection_models(plan)
+        daily, listens, rides, nights, _, years = plan.relations
+        self.assertEqual(
+            self.query(f"select steps, listens, rides, ride_min from {daily}"),
+            [(123, None, None, None)],
+        )
+        self.assertEqual(self.query(f"select late_listening from {nights}"), [(None,)])
+        self.assertEqual(
+            self.query(f"select artists, rides from {years}"), [(None, None)]
+        )
+        self.assertEqual(self.query(f"select count(*) from {listens}"), [(0,)])
+        self.assertEqual(self.query(f"select count(*) from {rides}"), [(0,)])
+        bike = self.migrated()[1]
+        bike["id"] = "cross_bike"
+        raw["connections"].append(bike)
+        raw["analyses"][0]["inputs"]["biking"] = "cross_bike"
+        raw["analyses"][0]["inputs"]["music"] = "cross_music"
+        bike_schema = parse_miroir(json.dumps(raw)).connections[2].binding.dataset_name
+        self.query(
+            f"create schema {bike_schema}; create table {bike_schema}.trips "
+            "(_dlt_id text, rental_id text, sd bigint, ed bigint); "
+            f"insert into {bike_schema}.trips values ('ride', 'ride-one', "
+            "(extract(epoch from '2026-10-29 00:59:00+00'::timestamptz) * 1000)::bigint, "
+            "(extract(epoch from '2026-10-29 01:20:00+00'::timestamptz) * 1000)::bigint)"
+        )
+        linked = analysis_plan(parse_miroir(json.dumps(raw)).analyses[0])
+        self.assertEqual(plan.relations, linked.relations)
+        self.assertNotEqual(plan.receipt, linked.receipt)
+        build_connection_models(linked)
+        self.assertEqual(
+            self.query(f"select listens, late_listens, rides from {daily}"),
+            [(1, 1, 1)],
+        )
+        self.assertEqual(
+            self.query(f"select artist from {listens}"), [("Linked artist",)]
+        )
+        self.assertEqual(self.query(f"select artists, rides from {years}"), [(1, 1)])
 
     def migrated(self):
         secret = {"provider": "env", "key": "UNUSED"}
@@ -432,8 +509,8 @@ class DbtPostgresTests(unittest.TestCase):
         connections = self.migrated()
         for connection in connections:  # own namespaces; the database is shared
             connection["id"] += "_empty"
-        for connection in self.configuration(connections).connections:
-            plan = analysis_plan(connection)
+        for analysis in self.configuration(connections).analyses:
+            plan = analysis_plan(analysis)
             build_connection_models(plan)
             for relation in plan.relations:
                 self.assertEqual(
@@ -455,7 +532,7 @@ class DbtPostgresTests(unittest.TestCase):
             "('https://github.com/octo-cat/r/commit/a', 'a', 'me@example.org', now()), "
             "('https://github.com/octo-cat/r/commit/b', 'b', 'o''brien@x.org', now())"
         )
-        plan = analysis_plan(connection)
+        plan = analysis_plan(self.configuration([github]).analyses[0])
         build_connection_models(plan)
         commits = plan.relations[0]
         self.assertEqual(
@@ -499,7 +576,7 @@ class DbtPostgresTests(unittest.TestCase):
             miroir, "browsing", artifact["id"], origin="local", **self.execution
         )
         self.assertEqual(outcome.transformation, "succeeded")
-        visits, daily = analysis_plan(connection).relations
+        visits, daily = analysis_plan(miroir.analyses[2]).relations
         self.assertEqual(
             self.query(
                 f"select visit_type, is_navigation from {visits} order by visit_id"

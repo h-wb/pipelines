@@ -663,3 +663,44 @@ Cutover of the legacy GitHub, Bike Share, and browser loads binds each connectio
 to the legacy pipeline/dataset (history, `export_*` tables, and dlt cursors carry
 over), pauses the legacy schedule before the first Miroir run, compares counts
 and cursors, and only then removes the legacy deployment.
+
+## 022 — Analyses are configured instances of packages with linked inputs
+
+Status: accepted, 2026-10-30. Milestone 6, first slice. Refines 019 and 020.
+Requires metadata schema 6.
+
+A **package** (the analysis catalog) declares a dbt selector, output relations, a
+version, typed parameters, and **inputs**: named roles, each accepting certain
+integrations through one dbt source, required or optional. Single-source packages
+(music, health, GitHub, biking, browser) have one required input; the cross-source
+package combines health (required) with music and biking (optional).
+
+An **analysis** is configuration: a top-level `analyses` list whose entries name a
+package, link each role to a connection, and carry their timezone, parameters, and
+dashboard links. This is the only analysis concept; connections no longer carry
+analysis settings. Creating a connection adds its package's default analysis.
+A configuration without an `analyses` key is upgraded on read: each connection
+whose integration recommends a package becomes an analysis with the connection's
+ID and its former analysis settings and dashboards. Output namespaces derive from
+the miroir and analysis IDs exactly as they derived from the connection ID before,
+so existing relations and dashboards keep resolving.
+
+Linking is explicit; nothing is inferred from which connections happen to exist.
+An unlinked optional input resolves to a schema that never exists, so its models
+are empty, and cross-source measures that depend on it are null (unknown), not
+zero; it never falls back to a legacy source schema. A linked connection's
+integration must be one the role accepts, and a connection cannot be removed while
+an analysis links it.
+
+Every build is its own `models` operation with an `analysis_id`. After a
+connection loads, each analysis linking it builds once (a child of the load); a
+rebuild requested in the interface runs through one of its input connections'
+deployments. Analysis status compares the latest successful build with the
+current plan receipt and with the latest successful load of any linked input.
+Builds are serialized by the existing dbt concurrency limit. Freshness compares
+input load times with the start of a build, so an input loading during that build
+conservatively requires another build. For migrated combined load/build attempts,
+the recorded ingestion time is the safe boundary. Inline child builds inherit their
+parent's backend run for observation without duplicating its unique submission ID.
+Unlinked sources are explicitly excluded from raw-table discovery, even if a table
+exists at the placeholder schema.

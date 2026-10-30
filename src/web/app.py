@@ -47,6 +47,8 @@ NOTICES = {
     "removed": "Connection removed. Its secrets were deleted; loaded data and files were kept.",
     "applied": "Deployments applied: the configuration and Prefect now agree.",
     "delivery_revoked": "Automatic delivery token revoked. File uploads remain available.",
+    "analysis_created": "Analysis added. It builds after its inputs next load; rebuild to build it now.",
+    "analysis_removed": "Analysis removed. Its built tables were kept.",
 }
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -190,9 +192,53 @@ def create_app(
     def api_sync(connection_id: str) -> dict:
         return {"operation_id": service.request_sync(connection_id)}
 
-    @app.post("/api/connections/{connection_id}/models", status_code=202)
-    def api_models(connection_id: str) -> dict:
-        return {"operation_id": service.request_models(connection_id)}
+    @app.get("/api/packages")
+    def api_packages() -> list:
+        return service.packages()
+
+    @app.get("/api/analyses")
+    def api_analyses() -> list:
+        return service.analyses()
+
+    @app.get("/api/analyses/{analysis_id}")
+    def api_analysis(analysis_id: str) -> dict:
+        return service.analysis(analysis_id)
+
+    @app.post("/api/analyses", status_code=201)
+    async def api_create_analysis(request: Request) -> dict:
+        body = await request.json()
+        if not isinstance(body, dict) or not isinstance(body.get("inputs"), dict):
+            raise OperationError("Expected {id, package, inputs, timezone}")
+        analysis_id = service.create_analysis(
+            str(body.get("id", "")),
+            str(body.get("package", "")),
+            body["inputs"],
+            request.headers.get("if-match", "").strip('"'),
+            timezone=str(body.get("timezone", "UTC")),
+        )
+        return {"id": analysis_id}
+
+    @app.put("/api/analyses/{analysis_id}")
+    async def api_update_analysis(request: Request, analysis_id: str) -> dict:
+        values = await request.json()
+        allowed = {"timezone", "parameters", "inputs", "dashboards"}
+        if not isinstance(values, dict) or set(values) - allowed:
+            raise OperationError(f"Expected an object with {sorted(allowed)}")
+        service.update_analysis(
+            analysis_id, values, request.headers.get("if-match", "").strip('"')
+        )
+        return {"saved": True}
+
+    @app.post("/api/analyses/{analysis_id}/models", status_code=202)
+    def api_models(analysis_id: str) -> dict:
+        return {"operation_id": service.request_models(analysis_id)}
+
+    @app.delete("/api/analyses/{analysis_id}", status_code=204)
+    def api_remove_analysis(request: Request, analysis_id: str) -> Response:
+        service.remove_analysis(
+            analysis_id, request.headers.get("if-match", "").strip('"')
+        )
+        return Response(status_code=204)
 
     @app.post("/api/connections/{connection_id}/artifacts")
     async def api_upload(
@@ -304,16 +350,6 @@ def create_app(
         )
         return {"saved": True, "check": service.check_connection(connection_id)}
 
-    @app.put("/api/connections/{connection_id}/analysis")
-    async def api_save_analysis_settings(request: Request, connection_id: str) -> dict:
-        settings = await request.json()
-        if not isinstance(settings, dict):
-            raise OperationError("Expected an analysis settings object")
-        service.update_analysis_settings(
-            connection_id, settings, request.headers.get("if-match", "").strip('"')
-        )
-        return {"saved": True}
-
     @app.post("/api/connections/{connection_id}/prepare")
     def api_prepare_connection(connection_id: str) -> dict:
         service.prepare_connection(connection_id)
@@ -404,9 +440,11 @@ def create_app(
         response.delete_cookie(SESSION_COOKIE)
         return response
 
+    from src.web.analyses import analysis_pages
     from src.web.connections import connection_pages
 
     app.include_router(connection_pages(service, page))
+    app.include_router(analysis_pages(service, page))
 
     @app.get("/", response_class=HTMLResponse)
     def overview(request: Request) -> HTMLResponse:
@@ -434,11 +472,6 @@ def create_app(
     def sync(connection_id: str) -> Response:
         service.request_sync(connection_id)
         return back(connection_id, "sync_requested")
-
-    @app.post("/connections/{connection_id}/models")
-    def rebuild_models(connection_id: str) -> Response:
-        service.request_models(connection_id)
-        return back(connection_id, "models_requested")
 
     @app.post("/connections/{connection_id}/upload")
     async def upload(

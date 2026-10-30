@@ -19,21 +19,13 @@
 {% endif %}
 
 <section class="setting-block" id="analysis">
-<h2>Analysis {{ badge(c.status.analysis) }}</h2>
-{% if c.analysis %}
-<p>{{ c.analysis.title }} rebuilds after each successful import or sync.
-{% if c.status.last_transformation_success %}Last successful build {{ when(c.status.last_transformation_success) }}.{% endif %}</p>
-{% if c.status.analysis_detail %}<p>{{ c.status.analysis_detail }}</p>{% endif %}
-{% if c.status.last_ingestion_success %}
-<form method="post" action="/connections/{{ c.id }}/models"><button>Rebuild analysis</button></form>
-{% else %}<p class="muted">Import or sync data to build your analysis.</p>{% endif %}
-{% if c.dashboards %}<p>{% for d in c.dashboards %}<a href="{{ d.url }}" target="_blank" rel="noopener">Open {{ d.name }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
-<p class="muted">{{ c.analysis.scope }}</p>
-<details><summary>Model outputs</summary>
-<p class="muted">These tables contain this connection's analysis. Health dates come from the export; music days use the configured timezone.</p>
-<ul>{% for relation in c.analysis.relations %}<li><code>{{ relation }}</code></li>{% endfor %}</ul>
-</details>
-{% else %}<p class="muted">This integration has no analysis models yet.</p>{% endif %}
+<h2>Analyses</h2>
+{% for a in c.analyses %}
+<p><a href="/analyses/{{ a.id }}"><strong>{{ a.id }}</strong></a> · {{ a.package.title }} {{ badge(a.status.state) }}
+  {% if a.status.last_build %}<span class="muted">built {{ when(a.status.last_build) }}</span>{% endif %}
+  {% for d in a.dashboards %} · <a href="{{ d.url }}" target="_blank" rel="noopener">{{ d.name }}</a>{% endfor %}</p>
+{% else %}<p class="muted">No analysis links this connection. <a href="/analyses/new">Add one</a>.</p>{% endfor %}
+<p class="muted">Each linked analysis rebuilds after this connection loads.</p>
 </section>
 
 {% if c.accepts_files %}

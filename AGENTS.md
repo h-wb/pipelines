@@ -41,10 +41,11 @@ Miroir (decision 014); history keeps its own words.
   are the legacy path, kept only until each cutover (decision 020).
 - `dbt/` — models (staging + reporting), profiles read
   `DESTINATION__POSTGRES__CREDENTIALS__*` env.
-- `src/analyses/catalog.py` — analysis definitions (dbt selector, output
-  relations, typed parameters, version); integrations recommend one by ID.
-- `tests/` — unittest; no pytest. 119 tests, ~110s, include four against a real
-  temporary Prefect API (`prefect_test_harness`), CLI subprocess tests, and six
+- `src/analyses/catalog.py` — analysis packages (typed input roles, dbt selector,
+  outputs, parameters, version); top-level config analyses link connections to
+  those roles. Integrations recommend a default package by ID (decision 022).
+- `tests/` — unittest; no pytest. 130 tests, ~130s, include four against a real
+  temporary Prefect API (`prefect_test_harness`), CLI subprocess tests, and seven
   disposable Postgres/dbt scenarios (set `MIROIR_TEST_POSTGRES_BIN` to the bin
   directory of an installed Postgres, or put `initdb`/`pg_ctl` on PATH; in this
   pod the mise shims have no default version, so use

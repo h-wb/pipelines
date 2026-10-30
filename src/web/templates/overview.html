@@ -8,7 +8,7 @@
 <p class="muted">No connections yet. Add one to start mirroring your data.</p>
 {% else %}
 <table>
-  <tr><th>Connection</th><th>Credentials</th><th>Last attempt</th><th>Data loaded</th><th>Analysis</th><th>Configuration</th><th>Open</th></tr>
+  <tr><th>Connection</th><th>Credentials</th><th>Last attempt</th><th>Data loaded</th><th>Configuration</th><th>Open</th></tr>
   {% for c in overview.connections %}
   {% set s = c.status %}
   <tr>
@@ -20,16 +20,31 @@
       {% if s.requested_not_started %}<div>{{ badge("requested") }} {{ s.requested_not_started }}</div>{% endif %}
     </td>
     <td>{{ when(s.last_ingestion_success) }}</td>
-    <td>{{ badge(s.analysis) }}<div class="muted">models {{ when(s.last_transformation_success) }}</div></td>
     <td>{{ badge(c.configuration) }}</td>
     <td>
-      {% for d in c.dashboards %}<a href="{{ d.url }}" target="_blank" rel="noopener">{{ d.name }}</a><br>{% endfor %}
       {% if s.last_attempt and s.last_attempt.run_url %}<a href="{{ s.last_attempt.run_url }}" target="_blank" rel="noopener">Prefect run</a>{% endif %}
     </td>
   </tr>
   {% endfor %}
 </table>
 {% endif %}
-<p class="muted">“Stale” means data was loaded after the models were last built. “Not modelled” means
-the dbt models do not read this connection’s dataset. “Unverified” running attempts have not been checked against Prefect.</p>
+
+<h2>Analyses</h2>
+<p><a href="/analyses/new">Add an analysis</a></p>
+{% if overview.analyses %}
+<table>
+  <tr><th>Analysis</th><th>Inputs</th><th>Status</th><th>Built</th><th>Open</th></tr>
+  {% for a in overview.analyses %}
+  <tr>
+    <td><a href="/analyses/{{ a.id }}"><strong>{{ a.id }}</strong></a><div class="muted">{{ a.package.title }}</div></td>
+    <td>{% for role, input in a.inputs.items() %}{% if input.connection %}<a href="/connections/{{ input.connection }}">{{ input.connection }}</a>{% else %}<span class="muted">{{ role }} not linked</span>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}</td>
+    <td>{{ badge(a.status.state) }}</td>
+    <td>{{ when(a.status.last_build) }}</td>
+    <td>{% for d in a.dashboards %}<a href="{{ d.url }}" target="_blank" rel="noopener">{{ d.name }}</a><br>{% endfor %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}<p class="muted">No analyses yet.</p>{% endif %}
+<p class="muted">“Stale” means an input loaded after the analysis was last built, or its settings changed.
+“Unverified” running attempts have not been checked against Prefect.</p>
 {% endblock %}

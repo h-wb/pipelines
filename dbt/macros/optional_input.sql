@@ -8,7 +8,7 @@
         select * from {{ raw }}
     {% else %}
     {% set ns = namespace(relation=none, available=[]) %}
-    {% if execute %}
+    {% if execute and source_name not in var('miroir_unlinked_sources', []) %}
         {% set ns.relation = adapter.get_relation(database=raw.database, schema=raw.schema, identifier=raw.identifier) %}
         {% if ns.relation is not none %}
             {% for column in adapter.get_columns_in_relation(ns.relation) %}

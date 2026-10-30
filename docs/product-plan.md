@@ -423,6 +423,11 @@ operating on the same connection. Production cutover is a separate explicit acti
 
 ## Milestone 6: analysis packages and portable installation
 
+First slice implemented (2026-10-30, decision 022): standalone configured analyses,
+explicit package input links, cross-source builds, per-analysis history/freshness,
+and UI/API/CLI management. Managed dashboards and the fresh-install/restore exercise
+below remain outstanding; this milestone is not complete.
+
 Work:
 
 - Define analysis-package metadata, source dependencies, compatibility versions,

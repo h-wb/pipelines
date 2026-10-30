@@ -116,10 +116,22 @@ def main(argv: list[str] | None = None) -> int:
         "refresh", help="Close runs Prefect reports as crashed or cancelled"
     )
     models = commands.add_parser(
-        "models", help="Rebuild a connection's analysis in Prefect"
+        "models", help="Rebuild an analysis in Prefect from loaded data"
     )
-    models.add_argument("connection")
-    commands_with_store = (status, run, submit, load, listing, execute, serve)
+    models.add_argument("analysis")
+    analyses = commands.add_parser(
+        "analyses", help="List analyses, their linked inputs, and build status"
+    )
+    commands_with_store = (
+        status,
+        run,
+        submit,
+        load,
+        listing,
+        execute,
+        serve,
+        analyses,
+    )
     for command in (
         *commands_with_store,
         credential,
@@ -259,7 +271,7 @@ def _orchestrate(
     if args.command == "refresh":
         return _print(service.refresh())
     if args.command == "models":
-        return _print({"operation_id": service.request_models(args.connection)})
+        return _print({"operation_id": service.request_models(args.analysis)})
     if args.action == "plan":
         return _print(service.deployments_plan())
     return _print({"applied": service.deployments_apply()})
@@ -314,6 +326,13 @@ def _with_store(
         )
         result = [service.connection(c)["status"] for c in selected]
         return _print(result)
+    if args.command == "analyses":
+        from src.core.service import InlineExecutor, MiroirService
+
+        service = MiroirService(
+            args.config, store, Path(DEFAULT_ARTIFACTS), InlineExecutor(lambda _: None)
+        )
+        return _print(service.analyses())
     if args.command == "artifacts":
         result = [
             {**artifact, "imports": store.artifact_imports(artifact["id"])}

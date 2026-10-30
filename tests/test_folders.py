@@ -85,11 +85,11 @@ class FolderSyncTests(unittest.TestCase):
                 "ORDER BY 1"
             ).fetchall()
 
-    def children(self, operation_id):
+    def children(self, operation_id, kind="import"):
         return [
             o
             for o in self.store.recent_operations(self.miroir.id, "health", limit=100)
-            if o["parent_operation_id"] == operation_id
+            if o["parent_operation_id"] == operation_id and o["kind"] == kind
         ]
 
     def test_new_files_are_imported_as_children_and_built_once(self):
@@ -107,6 +107,9 @@ class FolderSyncTests(unittest.TestCase):
         self.assertEqual([qty for _, qty in self.metrics()], [1, 2])
         children = self.children(outcome.operation_id)
         self.assertEqual(sorted(c["kind"] for c in children), ["import", "import"])
+        # The build is its own operation for the connection's default analysis.
+        (build,) = self.children(outcome.operation_id, "models")
+        self.assertEqual(build["analysis_id"], "health")
         artifacts = self.store.list_artifacts(self.miroir.id, "health")
         self.assertEqual({a["origin"] for a in artifacts}, {"folder"})
         self.assertEqual({a["retention"] for a in artifacts}, {"rolling"})
@@ -121,8 +124,8 @@ class FolderSyncTests(unittest.TestCase):
         )
         self.assertEqual(self.children(again.operation_id), [])
         self.assertEqual(len(self.builds), 1)
-        status = self.store.connection_status(self.miroir.id, "health")
-        self.assertNotEqual(status["analysis"], "stale")
+        status = self.store.analysis_status(self.miroir.id, "health", ["health"])
+        self.assertEqual(status["state"], "current")
 
         # A changed file is new content: only it is imported.
         self.write("b.json", ("2026-06-02", 2), ("2026-06-03", 3))

@@ -86,7 +86,7 @@ class WebFixture(unittest.TestCase):
 
 class WebTests(WebFixture):
     def test_analysis_rebuild_and_settings_have_independent_history(self):
-        url = "/api/connections/health/models"
+        url = "/api/analyses/health/models"
         self.assertEqual(self.client.post(url, headers=BEARER).status_code, 400)
         self.client.post(
             "/api/connections/health/artifacts?role=ongoing&import=true",
@@ -110,25 +110,23 @@ class WebTests(WebFixture):
         )
         self.assertEqual(self.client.post(url, headers=BEARER).status_code, 202)
         detail = self.service.connection("health")
-        self.assertEqual(detail["status"]["analysis"], "current")
+        self.assertEqual(self.service.analysis("health")["status"]["state"], "current")
         self.assertEqual(detail["operations"][0]["kind"], "models")
         self.assertEqual(detail["status"]["last_ingestion_success"], ingested)
         self.assertEqual(len(plans), 1)
         config = self.client.get("/api/config", headers=BEARER).json()
         revision = config["file_revision"]
         response = self.client.put(
-            "/api/connections/health/analysis",
+            "/api/analyses/health",
             headers={**BEARER, "If-Match": revision},
             json={"timezone": "America/Toronto"},
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(
-            self.service.connection("health")["status"]["analysis"], "stale"
-        )
+        self.assertEqual(self.service.analysis("health")["status"]["state"], "stale")
         self.assertEqual(self.service.connection("health")["configuration"], "applied")
         self.assertEqual(
             self.client.put(
-                "/api/connections/health/analysis",
+                "/api/analyses/health",
                 headers={**BEARER, "If-Match": revision},
                 json={"timezone": "UTC"},
             ).status_code,
@@ -142,13 +140,11 @@ class WebTests(WebFixture):
             original["connections"][1]["settings"],
         )
         self.login()
-        page = self.client.get("/connections/health")
+        page = self.client.get("/analyses/health")
         self.assertIn("Rebuild analysis", page.text)
         self.assertIn("daily_summary", page.text)
         self.assertIn("Open Health", page.text)
-        self.assertIn(
-            "Analysis settings", self.client.get("/connections/health/settings").text
-        )
+        self.assertIn("Inputs and settings", page.text)
 
     def test_everything_but_login_requires_the_token(self):
         self.assertEqual(self.client.get("/healthz").status_code, 200)
@@ -195,7 +191,7 @@ class WebTests(WebFixture):
         self.assertEqual(detail["status"]["last_attempt"]["ingestion"], "succeeded")
         self.assertEqual(detail["artifacts"][0]["original_name"], "auto.json")
         # This local DuckDB executor has no Postgres/dbt transform configured.
-        self.assertEqual(detail["status"]["analysis"], "stale")
+        self.assertEqual(self.service.analysis("health")["status"]["state"], "stale")
         self.assertEqual(detail["operations"][0]["artifact_name"], "auto.json")
         self.assertEqual(len(self.executed), 1)
 
