@@ -954,3 +954,29 @@ matching pre-upgrade backup. No live migration or connector cutover was performe
 in this session. Milestone 6 remains open: managed Metabase asset ownership and
 conflicts, a default installation bundle, and an exercised fresh install/restore
 are subsequent slices.
+
+## 2026-10-31 — Schema-6 rollout preparation
+
+Prepared release of `sha-43f2838ea816b0997ef979d1e248bf8ae72e4688` (image
+workflow 40991623452 succeeded). Live server, worker, and both Prefect deployments
+still use schema-5 image `sha-190a3fd8457ed71c65d9f7e8b984965eed48cdb5`.
+The server and worker are ready. Authenticated Prefect inspection found no active
+Miroir runs and no schedules on the two Miroir deployments; existing connector
+cutovers remain separate. The latest CNPG metadata backup completed
+2026-10-31 00:00:06 UTC, and its ContinuousArchiving condition is healthy.
+
+Home-ops local commit `f0ebc4109` pins the new image for the server and worker
+(including its pool initializer). Both Kustomize builds and app-template 5.3.0
+Helm renders passed; kubeconform validated eight resources and skipped three
+custom resources, with no errors. Home-ops commit checks passed. That commit is
+not pushed yet: the live configuration and deployment image must be updated first.
+
+Access limitation: the pod's Kubernetes service account cannot read the Miroir or
+metadata credential Secrets. Renewing the configured ProtonPass session restored
+Prefect API access, but `env-dlt` has no `miroir` item, so its metadata-password
+reference cannot resolve; no Miroir administrator API token is configured here.
+There is also no connected authenticated browser. No live configuration or
+metadata was changed. Requested the operator to save a configuration backup, set
+`deployment.image` to the new SHA in `/config`, save, and Apply deployments.
+After that step, push the prepared home-ops pin, reconcile both apps, and verify
+readiness, a flow run on the release image, analysis outcomes, and empty drift.
