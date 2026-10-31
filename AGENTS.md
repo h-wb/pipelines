@@ -91,6 +91,10 @@ findings. Secrets for mise tasks come from ProtonPass via fnox
 - **Secrets**: `miroir-secret` (MIROIR_SECRET_KEY, MIROIR_API_TOKEN) from the
   Bitwarden item `miroir`; warehouse credentials from `postgres-metabase-app`.
   The workspace master key is the ONLY installation secret not derived in-cluster.
+- **Operator API access**: the Bitwarden `miroir` item holds the API token.
+  Resolve the CLI's `BWS_ACCESS_TOKEN` through its ProtonPass reference in
+  home-ops `fnox.toml`, using an authorized active Pass session; keep credentials
+  in process memory. This pod cannot read Kubernetes Secrets directly.
 
 ## Release and deploy cycle
 
@@ -104,8 +108,9 @@ findings. Secrets for mise tasks come from ProtonPass via fnox
    kubeconfig: `kubernetes/clusters/main/kubeconfig` in home-ops; `kubectl`
    works read-only, `flux` reconcile and pod deletion are allowed).
 4. Verify server/worker readiness, a flow run using the same image, and an empty
-   deployments plan. Schema 4 was deployed with decision 017; schema 3 runtimes
-   cannot run against it.
+   deployments plan. Schema 6 was deployed with decision 022; schema 5 runtimes
+   cannot run against it. Drain Miroir runs and preserve configuration plus a
+   matching metadata recovery point before another incompatible migration.
 
 ## Working conventions
 
@@ -121,14 +126,14 @@ findings. Secrets for mise tasks come from ProtonPass via fnox
   (`/app/.venv/bin/python -m src.cli` / `-m prefect`) — a node once refused
   PATH lookups of console scripts despite a correct image.
 
-## Known remaining work (2026-10-29)
+## Known remaining work (2026-10-31)
 
 - Add a schedule to the ListenBrainz connection (cron in config → Apply
   deployments). First sync already succeeded end to end.
 - Apple Health n8n cutover (decision 009): point Health Auto Export at
   `POST /api/connections/health/receive` with a connection-specific delivery token
   (decision 017 is deployed). Folder-free setup and token management are live;
-  real phone delivery is verified. Metadata schema 4 requires updating the server,
+  real phone delivery is verified. Metadata schema 6 requires updating the server,
   worker, and flow-run image together.
 - Legacy cutover: map the connection binding to `listenbrainz_data`
   explicitly when ready, disable the legacy schedule; delete the stale

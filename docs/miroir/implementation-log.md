@@ -980,3 +980,44 @@ metadata was changed. Requested the operator to save a configuration backup, set
 `deployment.image` to the new SHA in `/config`, save, and Apply deployments.
 After that step, push the prepared home-ops pin, reconcile both apps, and verify
 readiness, a flow run on the release image, analysis outcomes, and empty drift.
+
+### Live rollout completed
+
+Recovered authenticated operator access through the documented Bitwarden CLI token
+reference in home-ops `fnox.toml`, using the already-authorized ProtonPass session
+(which can read `env-home-ops` as well as `env-dlt`). The Bitwarden `miroir` item
+contains the application API token. Credentials stayed in process memory; Kubernetes
+RBAC was not changed. The operator UI step requested above was not needed.
+
+- Saved the original configuration, overview, deployment definitions, and pool/queue
+  settings under `~/.local/state/miroir/releases/20261031T170841Z/`, with private
+  directory/file permissions. Database recovery is covered by CNPG backup
+  `20261031T000003` and healthy continuous WAL archiving. No new logical database
+  dump was taken; the application metadata credential remains unavailable here.
+- Paused only the Miroir pool and its default queue during maintenance. The queue
+  guard also covers the worker initializer updating the pool. Applied the two
+  reviewed image-only Prefect deployment updates through Miroir's authenticated API.
+  Pushed home-ops `f0ebc4109813c738b5e65f8365d67aac3bac5221` and reconciled Flux
+  source plus both applications. Miroir Helm release 14 and Prefect release 57 are
+  ready; server, worker, initializer, and new flow Jobs use
+  `sha-43f2838ea816b0997ef979d1e248bf8ae72e4688`.
+- The schema-6 runtime started cleanly. Both existing analyses retained their
+  successful build receipts/current status immediately after migration. Output
+  relation identities and dashboard links match the saved pre-upgrade overview.
+- Restored the original unpaused pool and queue settings. Submitted two model-only
+  verification operations through the new analysis API. ListenBrainz operation
+  `aae2049f-e518-4795-85c7-fc1e83852d65` completed in Prefect run
+  `0187a8db-f291-4c7e-b31a-1cf13dabcb24`, Job `able-bulldog-fb2ws`; Health operation
+  `4d11493b-4012-41d4-8c1a-c933f4dd7e96` completed in run
+  `20f72e5f-13d8-48be-ba75-3192e81b8f9b`, Job `artificial-seal-kmdrv`. Both Jobs used
+  the release image and recorded ingestion `not_run`, models `succeeded`, analysis
+  `current`. Last successful ingestion timestamps stayed unchanged.
+- TLS-verified requests through Envoy returned 200 for health, overview, Health
+  connection, both analysis pages, and crossover creation. This pod lacks the LAN
+  split-DNS record, so the verification process resolved the application hostname
+  to the Gateway's advertised address while retaining certificate/hostname checks.
+  Deployment drift is empty. Verification evidence is saved beside the config backup.
+
+Schema 6 is now deployed. Connector cutovers, new cross-source configuration, managed
+Metabase assets, and installation/restore validation remain separate work. No source
+bindings, legacy schedules, or dashboard definitions were changed during rollout.
