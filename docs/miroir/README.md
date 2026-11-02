@@ -208,7 +208,7 @@ mise run miroir:refresh    # close unverified runs
 ```
 
 The tasks get the metadata password from the ProtonPass item
-`env-dlt/miroir/metadata-password` (the app-user password of the
+`env-home-ops/miroir/metadata-password` (the app-user password of the
 postgres-miroir cluster — create the item from the cluster's
 `postgres-miroir-app` secret after bootstrap); the other
 `MIROIR_METADATA__*` parts are non-secret defaults in `mise.toml`.

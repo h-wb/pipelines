@@ -1054,3 +1054,23 @@ Validation: TOML parsing and provider/reference consistency checks passed; mise
 validated all 20 tasks with the updated dotfiles template. No live secret fetch,
 pipeline execution, deployment or token-grant change was performed. Agent grants
 must include the moved Automation items before secret-consuming tasks can run.
+
+## 2026-11-02 — Move infrastructure operator copies to env-home-ops, retire env-dlt
+
+The remaining `env-dlt` items (`prefect`, `postgres-metabase`, `miroir`) exist so a
+Paseo worktree or the workstation can run the operator tasks against the existing
+cluster (Prefect API, warehouse and miroir metadata databases, miroir master key) —
+the same dev-mode principle as the Sento project config. They are infrastructure
+credentials, not pipeline source tokens, so they move to the **`env-home-ops`**
+vault, which the Paseo pod token already reads; the workstation `dlt` token needs
+item-level grants on those three items. `fnox.toml` gains an `infra` provider
+(vault `env-home-ops`) for these references, and the legacy `env-dlt` vault is
+retired once the references update. Authoritative sources stay the cluster's:
+BWS items `prefect`/`miroir` and CNPG secrets `postgres-metabase-app`/
+`postgres-miroir-app`; a later migration can point fnox at BWS directly and drop
+the Proton copies entirely.
+
+Validation: TOML parsing and provider/reference consistency checks passed; mise
+validated all tasks with the updated dotfiles template. No live secret fetch,
+pipeline execution, deployment, item move or token-grant change was performed —
+the Proton Pass moves and item-level grants are operator actions listed in PR #3.

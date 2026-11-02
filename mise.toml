@@ -39,8 +39,10 @@ MIROIR_METADATA__USERNAME = "miroir"
 BROWSER_HISTORY__DATA_DIR = "/root/.prefect/data/browser"
 APPLE_HEALTH__DATA_DIR = "/root/.prefect/data/health"
 APPLE_HEALTH__CUTOFF = "2026-06-04"
-# Grant the workstation/pod tokens only the required Automation and env-dlt items.
-# Both use this repo session (shared by its Paseo worktrees).
+# Grant the workstation/pod tokens only the required Automation and
+# env-home-ops items. Both use this repo session (shared by its Paseo
+# worktrees). The legacy env-dlt vault is retired: source tokens moved to
+# Automation, infrastructure copies to env-home-ops.
 PROTON_PASS_SESSION_DIR = "{{env.HOME}}/.local/state/pass-cli/dlt"
 PROTON_PASS_AGENT_REASON = "dlt fnox"
 

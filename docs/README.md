@@ -62,9 +62,12 @@ rebuilds its own downstream models (`dbt build --select source:<name>+`);
 - Machine-only source credentials live in Proton Pass **`Automation`**:
   `listenbrainz`, `bikeshare`, and `github-pipelines`. References map them to env
   vars in [`fnox.toml`](../fnox.toml); token grants must include these items.
-  Infrastructure copies (`prefect`, `postgres-metabase`, `miroir`) remain in
-  **`env-dlt`** until operator tasks read their existing BWS/CNPG sources directly.
-  Keep those items during this transition; new source credentials use Automation.
+  Operator copies of infrastructure credentials (`prefect`, `postgres-metabase`,
+  `miroir`) live in **`env-home-ops`**, the infrastructure vault the Paseo pod
+  token already reads; grant the workstation `dlt` token item-level access to
+  those three items. They mirror the cluster's authoritative BWS/CNPG sources
+  and stay until operator tasks read those directly. New source credentials
+  always use Automation — the legacy `env-dlt` vault is retired.
   Mise injects only the keys listed in each task's `secrets = [...]` grant, including warehouse and
   Prefect credentials only where needed.
   Run `mise run pass:login` first (macOS Keychain or Paseo's `PROTON_PASS_TOKEN`).

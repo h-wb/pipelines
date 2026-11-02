@@ -16,7 +16,7 @@ src/sources/     one dlt source per service (extract only, raw records)
 src/pipelines/   one Prefect @flow per source (+ transform.py: run_dbt)
 dbt/             staging views + mart schemas (music, health, biking, github, browser, crossovers)
 prefect.yaml     deployments: schedules, parameters, env
-fnox.toml        secret references (Proton Pass Automation + transitional env-dlt items)
+fnox.toml        secret references (Proton Pass Automation + env-home-ops infrastructure items)
 mise.toml        tools, shared config, task secret grants; mise.local.toml: machine overrides
 docs/            documentation
 ```
@@ -51,8 +51,10 @@ uv run ruff check src/
 ```
 
 Secret values are never committed here. Machine-only source credentials live in
-Proton Pass `Automation`, with references in `fnox.toml`. Existing infrastructure
-copies remain in `env-dlt` until operator access uses their BWS/CNPG sources directly. Details in [docs/README.md](docs/README.md#secrets-and-config).
+Proton Pass `Automation`; operator copies of infrastructure credentials (`prefect`,
+`postgres-metabase`, `miroir`) live in `env-home-ops` until operator access uses their
+BWS/CNPG sources directly (`env-dlt` is retired). References in `fnox.toml`. Details in
+[docs/README.md](docs/README.md#secrets-and-config).
 
 Tasks receive only their declared fnox secrets; they are not exported to the shell.
 For an ad-hoc command, use `mise x --secrets KEY -- <command>`.

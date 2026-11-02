@@ -11,10 +11,15 @@
 # Workstations read pass-cli-dlt from the macOS Keychain; Paseo uses
 # PROTON_PASS_TOKEN from the pod environment. See mise.toml for the session dir.
 # One-off commands: `mise x --secrets KEY -- <command>`.
+#
+# Vaults: source tokens in `Automation` (provider `automation`); operator
+# copies of infrastructure credentials in `env-home-ops` (provider `infra`,
+# the infrastructure vault the pod token already reads). The legacy `env-dlt`
+# vault is retired with this change.
 
-[providers.protonpass]
+[providers.infra]
 type = "proton-pass"
-vault = "env-dlt"
+vault = "env-home-ops"
 agent_reason = "dlt fnox"
 
 [providers.automation]
@@ -30,17 +35,20 @@ GITHUB__ACCESS_TOKEN           = { provider = "automation", value = "pass://Auto
 # JSON list of commit author emails that are "mine" (kept out of this public repo)
 GITHUB__AUTHOR_EMAILS          = { provider = "automation", value = "pass://Automation/github-pipelines/author-emails" }
 
-# Transitional operator copies of infrastructure credentials remain in env-dlt.
-# Keep these until operator tasks read the existing BWS/CNPG sources directly.
-# Warehouse and Prefect credentials are granted only to tasks that need them.
-DESTINATION__POSTGRES__CREDENTIALS__PASSWORD = { provider = "protonpass", value = "pass://env-dlt/postgres-metabase/password" }
-PREFECT_API_URL                              = { provider = "protonpass", value = "pass://env-dlt/prefect/api-url" }
-PREFECT_API_AUTH_STRING                      = { provider = "protonpass", value = "pass://env-dlt/prefect/api-auth-string" }
+# Operator copies of infrastructure credentials live in `env-home-ops` (the
+# infrastructure vault). These mirror the cluster's authoritative sources —
+# BWS items `prefect` and `miroir`, CNPG secrets `postgres-metabase-app` and
+# `postgres-miroir-app` — and stay until operator tasks read those sources
+# directly. Warehouse and Prefect credentials are granted only to tasks that
+# need them.
+DESTINATION__POSTGRES__CREDENTIALS__PASSWORD = { provider = "infra", value = "pass://env-home-ops/postgres-metabase/password" }
+PREFECT_API_URL                              = { provider = "infra", value = "pass://env-home-ops/prefect/api-url" }
+PREFECT_API_AUTH_STRING                      = { provider = "infra", value = "pass://env-home-ops/prefect/api-auth-string" }
 # Miroir metadata database (schema miroir_meta in the postgres-miroir CNPG
 # cluster, decision 015). In the cluster, flow-run Jobs read the password from
 # the CNPG-generated postgres-miroir-app secret; this ProtonPass item holds the
 # same app-user password for the operator's laptop (create it from the cluster
 # secret after bootstrap). The miroir master key is granted only to tasks that
 # decrypt built-in secrets.
-MIROIR_METADATA__PASSWORD                     = { provider = "protonpass", value = "pass://env-dlt/miroir/metadata-password" }
-MIROIR_SECRET_KEY                            = { provider = "protonpass", value = "pass://env-dlt/miroir/secret-key" }
+MIROIR_METADATA__PASSWORD                     = { provider = "infra", value = "pass://env-home-ops/miroir/metadata-password" }
+MIROIR_SECRET_KEY                            = { provider = "infra", value = "pass://env-home-ops/miroir/secret-key" }
