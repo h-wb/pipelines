@@ -17,15 +17,22 @@ type = "proton-pass"
 vault = "env-dlt"
 agent_reason = "dlt fnox"
 
-[secrets]
-LISTENBRAINZ__ACCESS_TOKEN     = { provider = "protonpass", value = "pass://env-dlt/listenbrainz/access-token" }
-BIKESHARE__MEMBER_ID           = { provider = "protonpass", value = "pass://env-dlt/bikeshare/member-id" }
-BIKESHARE__AUTHORIZATION_TOKEN = { provider = "protonpass", value = "pass://env-dlt/bikeshare/authorization-token" }
-GITHUB__ACCESS_TOKEN           = { provider = "protonpass", value = "pass://env-dlt/github/access-token" }
-# JSON list of commit author emails that are "mine" (kept out of this public repo)
-GITHUB__AUTHOR_EMAILS          = { provider = "protonpass", value = "pass://env-dlt/github/author-emails" }
+[providers.automation]
+type = "proton-pass"
+vault = "Automation"
+agent_reason = "dlt fnox"
 
-# Warehouse and Prefect credentials, granted only to tasks that need them.
+[secrets]
+LISTENBRAINZ__ACCESS_TOKEN     = { provider = "automation", value = "pass://Automation/listenbrainz/access-token" }
+BIKESHARE__MEMBER_ID           = { provider = "automation", value = "pass://Automation/bikeshare/member-id" }
+BIKESHARE__AUTHORIZATION_TOKEN = { provider = "automation", value = "pass://Automation/bikeshare/authorization-token" }
+GITHUB__ACCESS_TOKEN           = { provider = "automation", value = "pass://Automation/github-pipelines/access-token" }
+# JSON list of commit author emails that are "mine" (kept out of this public repo)
+GITHUB__AUTHOR_EMAILS          = { provider = "automation", value = "pass://Automation/github-pipelines/author-emails" }
+
+# Transitional operator copies of infrastructure credentials remain in env-dlt.
+# Keep these until operator tasks read the existing BWS/CNPG sources directly.
+# Warehouse and Prefect credentials are granted only to tasks that need them.
 DESTINATION__POSTGRES__CREDENTIALS__PASSWORD = { provider = "protonpass", value = "pass://env-dlt/postgres-metabase/password" }
 PREFECT_API_URL                              = { provider = "protonpass", value = "pass://env-dlt/prefect/api-url" }
 PREFECT_API_AUTH_STRING                      = { provider = "protonpass", value = "pass://env-dlt/prefect/api-auth-string" }

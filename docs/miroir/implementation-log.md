@@ -1038,3 +1038,19 @@ removal, rejected credentials, macOS Keychain selection, session isolation and
 ordinary/monorepo task inheritance with fake credentials. No product code, live
 credentials, deployments, data or token grants changed. Update dotfiles before
 using these operator tasks.
+
+
+## 2026-11-02 — Follow credentials moved to Automation
+
+Point the ListenBrainz, Bike Share and GitHub source references at the moved
+Automation items, retaining field names and per-task grants. GitHub uses the
+`github-pipelines` item to distinguish its credential from workstation access.
+Keep the `prefect`, `postgres-metabase` and `miroir` operator references in
+`env-dlt`: their existing BWS/CNPG sources require a separate operator-access
+migration before those copies can be removed. Update setup documentation to
+stop directing new source credentials into the legacy vault.
+
+Validation: TOML parsing and provider/reference consistency checks passed; mise
+validated all 20 tasks with the updated dotfiles template. No live secret fetch,
+pipeline execution, deployment or token-grant change was performed. Agent grants
+must include the moved Automation items before secret-consuming tasks can run.
