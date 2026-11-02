@@ -213,6 +213,13 @@ postgres-miroir cluster — create the item from the cluster's
 `postgres-miroir-app` secret after bootstrap); the other
 `MIROIR_METADATA__*` parts are non-secret defaults in `mise.toml`.
 
+Operator mise tasks require the installed dotfiles' global `proton-login`
+task template. This repo's `pass:login` extends it with session name `dlt`;
+tasks that request fnox secrets depend on login. The shared implementation
+selects macOS Keychain service `pass-cli-dlt` or the pod's `PROTON_PASS_TOKEN`,
+refreshes rotated/expired sessions, and clears the named cache on missing or
+rejected credentials. It does not alter token grants or deployed flow credentials.
+
 Installation secrets (the master key, Postgres roles, Prefect and Metabase
 credentials) are environment variables provided by whoever deploys. They are not
 stored by the miroir.

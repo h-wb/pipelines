@@ -1021,3 +1021,20 @@ RBAC was not changed. The operator UI step requested above was not needed.
 Schema 6 is now deployed. Connector cutovers, new cross-source configuration, managed
 Metabase assets, and installation/restore validation remain separate work. No source
 bindings, legacy schedules, or dashboard definitions were changed during rollout.
+
+
+## 2026-11-02 — Share managed Proton Pass login with dotfiles
+
+The repository's login previously reused any cached Proton session before checking
+its supplied token. Replace that implementation with an extension of dotfiles'
+global `proton-login` mise task template, retaining the existing `dlt` session and
+macOS Keychain service. Operator tasks that request fnox secrets now depend on
+login, so rotation/removal is checked before resolving their task grants.
+
+Validation: with the updated dotfiles as `MISE_CONFIG_DIR`, `mise tasks validate
+--errors-only` passed all 20 tasks and `mise tasks deps miroir:deploy` showed the
+login prerequisite. Shared dotfiles regressions exercise token rotation, expiry,
+removal, rejected credentials, macOS Keychain selection, session isolation and
+ordinary/monorepo task inheritance with fake credentials. No product code, live
+credentials, deployments, data or token grants changed. Update dotfiles before
+using these operator tasks.

@@ -45,23 +45,12 @@ PROTON_PASS_SESSION_DIR = "{{env.HOME}}/.local/state/pass-cli/dlt"
 PROTON_PASS_AGENT_REASON = "dlt fnox"
 
 [tasks."pass:login"]
-description = "Log the repo's Proton Pass session in (macOS Keychain or PROTON_PASS_TOKEN on Paseo)"
-quiet = true
-run = '''
-mkdir -p "$PROTON_PASS_SESSION_DIR" && chmod 700 "$PROTON_PASS_SESSION_DIR"
-pass-cli info >/dev/null 2>&1 && { echo "already logged in"; exit 0; }
-if command -v security >/dev/null 2>&1; then
-    token="$(security find-generic-password -s pass-cli-dlt -a "$USER" -w)"
-elif [ -n "${PROTON_PASS_TOKEN:-}" ]; then
-    token="$PROTON_PASS_TOKEN"
-else
-    echo "pass:login: need the macOS Keychain (security) or PROTON_PASS_TOKEN in env" >&2
-    exit 1
-fi
-PROTON_PASS_PERSONAL_ACCESS_TOKEN="$token" pass-cli login
-'''
+extends = "proton-login"
+description = "Authenticate the dlt Proton Pass session using dotfiles' global task"
+env.PROTON_PASS_LOGIN_SESSION = "dlt"
 
 [tasks.deploy]
+depends = ["pass:login"]
 description = "Deploy all flows to Prefect"
 secrets = [
   "DESTINATION__POSTGRES__CREDENTIALS__PASSWORD",
@@ -79,6 +68,7 @@ run = "prefect deploy --all --prefect-file prefect.yaml"
 # miroir.json must match the copy on the NFS export; flow runs read the
 # cluster path (MIROIR_PREFECT_CONFIG_PATH), not this file.
 [tasks."miroir:deploy"]
+depends = ["pass:login"]
 description = "Reconcile Prefect deployments with miroir.json (see plan first)"
 secrets = [
   "PREFECT_API_URL",
@@ -89,6 +79,7 @@ env = { MIROIR_PREFECT_CONFIG_PATH = "/miroir/data/miroir/miroir.json" }
 run = "pipelines-miroir --config miroir.json deployments apply"
 
 [tasks."miroir:refresh"]
+depends = ["pass:login"]
 description = "Close unverified runs from Prefect's state (crash -> lost, cancel -> cancelled)"
 secrets = [
   "PREFECT_API_URL",
@@ -99,16 +90,19 @@ env = { MIROIR_PREFECT_POOL = "miroir-k8s" }
 run = "pipelines-miroir --config miroir.json refresh"
 
 [tasks.prefect]
+depends = ["pass:login"]
 description = "Run the prefect CLI with secrets (e.g. mise run prefect -- deployment ls)"
 secrets = ["PREFECT_API_URL", "PREFECT_API_AUTH_STRING"]
 run = "prefect"
 
 [tasks.worker]
+depends = ["pass:login"]
 description = "Start Prefect worker"
 secrets = ["PREFECT_API_URL", "PREFECT_API_AUTH_STRING"]
 run = "prefect worker start --pool local-pool"
 
 [tasks."run:listenbrainz"]
+depends = ["pass:login"]
 description = "Run listenbrainz pipeline locally"
 secrets = [
   "DESTINATION__POSTGRES__CREDENTIALS__PASSWORD",
@@ -120,6 +114,7 @@ secrets = [
 run = "python -m src.pipelines.listenbrainz"
 
 [tasks."run:bikeshare"]
+depends = ["pass:login"]
 description = "Run bikeshare pipeline locally"
 secrets = [
   "DESTINATION__POSTGRES__CREDENTIALS__PASSWORD",
@@ -132,6 +127,7 @@ secrets = [
 run = "python -m src.pipelines.bikeshare"
 
 [tasks."run:github"]
+depends = ["pass:login"]
 description = "Run github pipeline locally"
 secrets = [
   "DESTINATION__POSTGRES__CREDENTIALS__PASSWORD",
@@ -143,6 +139,7 @@ secrets = [
 run = "python -m src.pipelines.github"
 
 [tasks."run:browser-history"]
+depends = ["pass:login"]
 description = "Run browser history pipeline locally"
 secrets = [
   "DESTINATION__POSTGRES__CREDENTIALS__PASSWORD",
@@ -153,6 +150,7 @@ secrets = [
 run = "python -m src.pipelines.browser_history"
 
 [tasks."run:apple-health"]
+depends = ["pass:login"]
 description = "Run apple health pipeline locally (uses APPLE_HEALTH__DATA_DIR and APPLE_HEALTH__CUTOFF)"
 secrets = [
   "DESTINATION__POSTGRES__CREDENTIALS__PASSWORD",
@@ -163,6 +161,7 @@ secrets = [
 run = "python -m src.pipelines.apple_health"
 
 [tasks."run:dbt"]
+depends = ["pass:login"]
 description = "Build and test the dbt models (needs DESTINATION__POSTGRES__CREDENTIALS__*)"
 secrets = ["DESTINATION__POSTGRES__CREDENTIALS__PASSWORD", "GITHUB__AUTHOR_EMAILS"]
 run = "dbt build --project-dir dbt --profiles-dir dbt"
