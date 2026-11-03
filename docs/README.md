@@ -63,11 +63,11 @@ rebuilds its own downstream models (`dbt build --select source:<name>+`);
   `listenbrainz`, `bikeshare`, and `github-pipelines`. References map them to env
   vars in [`fnox.toml`](../fnox.toml); token grants must include these items.
   Operator copies of infrastructure credentials (`prefect`, `postgres-metabase`,
-  `miroir`) live in **`env-home-ops`**, the infrastructure vault the Paseo pod
-  token already reads; grant the workstation `dlt` token item-level access to
-  those three items. They mirror the cluster's authoritative BWS/CNPG sources
+  `miroir`) use **`env-home-ops`** references; move the items and verify the
+  workstation/pod tokens' item-level access before using those references.
+  They mirror the cluster's authoritative BWS/CNPG sources
   and stay until operator tasks read those directly. New source credentials
-  always use Automation — the legacy `env-dlt` vault is retired.
+  always use Automation. Retire `env-dlt` only after verifying the moved lookups.
   Mise injects only the keys listed in each task's `secrets = [...]` grant, including warehouse and
   Prefect credentials only where needed.
   Run `mise run pass:login` first (macOS Keychain or Paseo's `PROTON_PASS_TOKEN`).

@@ -41,8 +41,8 @@ APPLE_HEALTH__DATA_DIR = "/root/.prefect/data/health"
 APPLE_HEALTH__CUTOFF = "2026-06-04"
 # Grant the workstation/pod tokens only the required Automation and
 # env-home-ops items. Both use this repo session (shared by its Paseo
-# worktrees). The legacy env-dlt vault is retired: source tokens moved to
-# Automation, infrastructure copies to env-home-ops.
+# worktrees). Verify the infrastructure item moves to env-home-ops before
+# retiring env-dlt; source token references use Automation.
 PROTON_PASS_SESSION_DIR = "{{env.HOME}}/.local/state/pass-cli/dlt"
 PROTON_PASS_AGENT_REASON = "dlt fnox"
 
@@ -50,6 +50,21 @@ PROTON_PASS_AGENT_REASON = "dlt fnox"
 extends = "proton-login"
 description = "Authenticate the dlt Proton Pass session using dotfiles' global task"
 env.PROTON_PASS_LOGIN_SESSION = "dlt"
+
+[tasks.dev]
+description = "Serve Miroir with workspace-local SQLite/DuckDB state (no Proton secrets)"
+run = "uv run --locked python -m scripts.dev local"
+
+[tasks."dev:infra"]
+description = "Serve this checkout against the existing Miroir installation"
+depends = ["pass:login"]
+secrets = [
+  "MIROIR_METADATA__PASSWORD",
+  "MIROIR_SECRET_KEY",
+  "PREFECT_API_URL",
+  "PREFECT_API_AUTH_STRING",
+]
+run = "uv run --locked python -m scripts.dev infra"
 
 [tasks.deploy]
 depends = ["pass:login"]

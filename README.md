@@ -43,6 +43,8 @@ The data paths default to the Prefect worker's mounts; override them for local i
 ## Common tasks
 
 ```bash
+mise run dev                                      # local Miroir UI, no Proton access
+mise run dev:infra                                # UI against the existing installation (see prerequisites)
 mise run deploy                                   # register all deployments (task-scoped secrets)
 mise run prefect -- deployment run load-github/load_github --watch
 mise run run:listenbrainz                         # run a pipeline locally (see mise.toml for all)
@@ -51,10 +53,17 @@ uv run ruff check src/
 ```
 
 Secret values are never committed here. Machine-only source credentials live in
-Proton Pass `Automation`; operator copies of infrastructure credentials (`prefect`,
-`postgres-metabase`, `miroir`) live in `env-home-ops` until operator access uses their
-BWS/CNPG sources directly (`env-dlt` is retired). References in `fnox.toml`. Details in
+Proton Pass `Automation`; operator infrastructure references (`prefect`,
+`postgres-metabase`, `miroir`) target `env-home-ops`. Move those items and verify
+token grants before retiring `env-dlt`. They remain copies until operator access
+uses BWS/CNPG directly. References are in `fnox.toml`. Details in
 [docs/README.md](docs/README.md#secrets-and-config).
 
 Tasks receive only their declared fnox secrets; they are not exported to the shell.
 For an ad-hoc command, use `mise x --secrets KEY -- <command>`.
+
+Paseo exposes `dev` and `infra` as service scripts with assigned ports. Local
+development keeps its state under `.miroir/dev/`; the infrastructure script
+requires the installation config, shared artifacts, and item grants. See
+[development launchers](docs/miroir/README.md#development-launchers) for setup and
+the distinction between running the UI checkout and executing deployed flows.

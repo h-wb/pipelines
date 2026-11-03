@@ -1,5 +1,15 @@
 {
   "worktree": {
     "setup": "mise install && mise exec -- uv sync --dev"
+  },
+  "scripts": {
+    "dev": {
+      "type": "service",
+      "command": "mise run dev -- --host \"$HOST\" --port \"$PASEO_PORT\""
+    },
+    "infra": {
+      "type": "service",
+      "command": "mise run dev:infra -- --host \"$HOST\" --port \"$PASEO_PORT\""
+    }
   }
 }

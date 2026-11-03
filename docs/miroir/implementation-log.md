@@ -1074,3 +1074,34 @@ Validation: TOML parsing and provider/reference consistency checks passed; mise
 validated all tasks with the updated dotfiles template. No live secret fetch,
 pipeline execution, deployment, item move or token-grant change was performed —
 the Proton Pass moves and item-level grants are operator actions listed in PR #3.
+
+
+## 2026-11-03 — Local and infrastructure development launchers
+
+Implement decision 023 with `mise run dev` and `mise run dev:infra`, exposed as
+Paseo `dev`/`infra` service scripts. Both forward assigned host/port arguments to
+the checkout's CLI. Local mode uses its own SQLite, DuckDB, config, artifacts and
+persistent generated credentials under `.miroir/dev/`; inherited installation
+settings do not select an orchestrator or database. Infrastructure mode depends
+on shared Proton login and requests only the metadata password, encryption key
+and Prefect URL/auth. It requires existing installation config, PostgreSQL
+settings, a configured deployment and shared artifacts before starting. Its own
+UI token stays under `.miroir/dev-infra/`; credentials never enter argv or logs.
+
+Keep the infrastructure capability distinct from flow-code development: requested
+Prefect operations execute the configured deployment image. Document that the
+draft general Paseo host's read-only `/data` export is different from Miroir's
+installation data; the `/miroir/data` mount still needs provisioning. Correct
+current docs/comments that assumed item moves or pod-token grants were already
+verified. The Proton operator copies still duplicate their BWS/CNPG sources.
+
+Validation: all 135 unittest tests passed, including five new launcher tests for
+inherited-setting isolation, persistent private credentials, infrastructure
+selection and missing-prerequisite failures. Ruff lint/format and mypy passed for
+the new launcher. All 22 mise tasks validate; `dev:infra -> pass:login` is present,
+and `mise run dev -- --help` forwards arguments without Proton authentication.
+An actual server in a disposable directory returned healthy and authenticated
+overview responses, created only local metadata and ignored synthetic inherited
+infrastructure settings. The temporary server was stopped and removed. No live
+Proton secret retrieval, infrastructure launch, vault move, mount change or
+deployment was performed.

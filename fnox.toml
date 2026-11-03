@@ -13,9 +13,9 @@
 # One-off commands: `mise x --secrets KEY -- <command>`.
 #
 # Vaults: source tokens in `Automation` (provider `automation`); operator
-# copies of infrastructure credentials in `env-home-ops` (provider `infra`,
-# the infrastructure vault the pod token already reads). The legacy `env-dlt`
-# vault is retired with this change.
+# copies of infrastructure credentials in `env-home-ops` (provider `infra`).
+# Move items and verify item-level viewer grants before using these references.
+# Retire the legacy `env-dlt` vault only after the moved lookups work.
 
 [providers.infra]
 type = "proton-pass"
