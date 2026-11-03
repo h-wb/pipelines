@@ -35,7 +35,7 @@ GITHUB__ACCESS_TOKEN           = { provider = "automation", value = "pass://Auto
 # JSON list of commit author emails that are "mine" (kept out of this public repo)
 GITHUB__AUTHOR_EMAILS          = { provider = "automation", value = "pass://Automation/github-pipelines/author-emails" }
 
-# Operator copies of infrastructure credentials live in `env-home-ops` (the
+# Operator copies of infrastructure credentials live in `Infrastructure` (the
 # infrastructure vault). These mirror the cluster's authoritative sources —
 # BWS items `prefect` and `miroir`, CNPG secrets `postgres-metabase-app` and
 # `postgres-miroir-app` — and stay until operator tasks read those sources
@@ -55,3 +55,15 @@ PREFECT_API_AUTH_STRING                      = { provider = "infra", value = "pa
 # decrypt built-in secrets.
 MIROIR_METADATA__PASSWORD                     = { provider = "infra", value = "pass://Infrastructure/miroir/metadata-password" }
 MIROIR_SECRET_KEY                            = { provider = "infra", value = "pass://Infrastructure/miroir/secret-key" }
+
+# The general Paseo reader has individual item grants. Workstation tokens
+# retain the named-vault references above. Full share/item IDs need no vault grant.
+[profiles.paseo-general.secrets]
+LISTENBRAINZ__ACCESS_TOKEN = { provider = "automation", value = "pass://YytdrTfgvR9bD15xSWK42JV3Jp8SNZzlSxt7mU3ri4arXKJ9ubNcT8Wj5pk6EsnAAJZ5e4Wd7FOEmMTlOjn27g==/PihfRyJppPTIeUtik5izcvZu-BQrN2LkzWnYe5cmCTahQ1NycBbJPTVmH7Nt6XWxFeCxsh_d0lKLFdq73JsgGA==/access-token" }
+BIKESHARE__MEMBER_ID = { provider = "automation", value = "pass://OL_-QPkYEG6jQ8OBcIuxENkufNgwWkXZ2DlVpHgN_sHfSmC7GGDPYBhFOALO_b660LXvLoe_FN6zqicoNPAWEg==/d9RNkQYAoV83YLBjNHg3eyvhbC-MyHUC64jxnCewxmpexcl9iLPldhNLewRNADaOuyuKEq5j0dv7HOeZoijkLA==/member-id" }
+BIKESHARE__AUTHORIZATION_TOKEN = { provider = "automation", value = "pass://OL_-QPkYEG6jQ8OBcIuxENkufNgwWkXZ2DlVpHgN_sHfSmC7GGDPYBhFOALO_b660LXvLoe_FN6zqicoNPAWEg==/d9RNkQYAoV83YLBjNHg3eyvhbC-MyHUC64jxnCewxmpexcl9iLPldhNLewRNADaOuyuKEq5j0dv7HOeZoijkLA==/authorization-token" }
+GITHUB__ACCESS_TOKEN = { provider = "automation", value = "pass://0YnVHZljgLsa-zVpObztiVsQbjWqs3ubV3SOdAre-7CXF9Gvbc2Rp_JfL8uFlZ_IFYBu484KGTfWZ6GPi2DhXA==/7x73eROgPsMCX8lfjAelT4dRD1QxjLwJrw5WnEmoE9boLoxt7L5rToXmybck-lw6Jz9mQxXEswU0A6mP317voQ==/access-token" }
+GITHUB__AUTHOR_EMAILS = { provider = "automation", value = "pass://0YnVHZljgLsa-zVpObztiVsQbjWqs3ubV3SOdAre-7CXF9Gvbc2Rp_JfL8uFlZ_IFYBu484KGTfWZ6GPi2DhXA==/7x73eROgPsMCX8lfjAelT4dRD1QxjLwJrw5WnEmoE9boLoxt7L5rToXmybck-lw6Jz9mQxXEswU0A6mP317voQ==/author-emails" }
+DESTINATION__POSTGRES__CREDENTIALS__PASSWORD = { provider = "infra", value = "pass://fVnFraK53dZceOJF9Wfd9vRThlVM7LAv8jQvq9NK9Lx5-7MyKGHKxUDc8C6BAZ01ymA0wimOnIgHj5U_gVcbwg==/a_3kJ_HadR57Z1xqSD0238PKST3dkUBpKgkNd071tg2OGwm_LwrmLX5oAOi7RRxd4MuBxMX4aCqoFZYF7hEgXg==/password" }
+PREFECT_API_URL = { provider = "infra", value = "pass://L-fPPip20ntIct5iFutssziZ9EsJZoyv8SwqYW0w-SqESQhDuH5NtL4cWemkA2dS_Gr6FqHzyP1rI-QLN85H6g==/udTvbY9adtw9RmGK7pT3juI9jTxOzMObSX6-FP3oLFNM2KGIDK6xgcuXB9HjNF11xkDDiqmJergBGCLDmXgIgQ==/api-url" }
+PREFECT_API_AUTH_STRING = { provider = "infra", value = "pass://L-fPPip20ntIct5iFutssziZ9EsJZoyv8SwqYW0w-SqESQhDuH5NtL4cWemkA2dS_Gr6FqHzyP1rI-QLN85H6g==/udTvbY9adtw9RmGK7pT3juI9jTxOzMObSX6-FP3oLFNM2KGIDK6xgcuXB9HjNF11xkDDiqmJergBGCLDmXgIgQ==/api-auth-string" }

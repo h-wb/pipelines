@@ -35,6 +35,13 @@ mise run dev:infra
 mise run dev:infra -- --config /miroir/data/miroir/miroir.json --artifacts /miroir/data/miroir/artifacts
 ```
 
+On the scoped general host, mise selects the native fnox `paseo-general`
+profile. It maps the eight provisioned source/warehouse/Prefect fields to
+individual item shares. Workstations retain the default named-vault references;
+`FNOX_PROFILE` can explicitly select another configured profile. The two Miroir
+installation fields remain provisioning prerequisites and are not covered by
+the current general token.
+
 The task authenticates through the shared `proton-login` template and receives
 only `MIROIR_METADATA__PASSWORD`, `MIROIR_SECRET_KEY`, `PREFECT_API_URL`, and
 `PREFECT_API_AUTH_STRING`. Grant its Proton token the `Infrastructure/miroir` and

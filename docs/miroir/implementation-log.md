@@ -1141,3 +1141,18 @@ Checks: all four maps parse and match their provider vaults, all 22 mise tasks
 validate, five development-launcher tests pass, and 22 dotfiles regressions pass
 (two platform skips). These are reference/documentation changes after the prior
 135-test application run; application code and deployed workloads did not change.
+
+
+## 2026-11-03 — Scoped general reader references
+
+Add a native `paseo-general` fnox profile for the eight provisioned source,
+warehouse and Prefect fields. The repository's mise environment selects it only
+when `PASEO_DATA_SCOPE=general`, preserving explicit profile selection and the
+workstation's default named-vault references. This is an authentication reference
+change; source values, task grants, endpoints and runtime schemas do not change.
+The two missing Miroir installation fields retain their documented prerequisite.
+
+Validation: compare all eight fields from the new item-only agent through native
+fnox with the prior named-vault reader, reporting equality without values. Mise
+task definitions and the five development-launcher tests are also checked. No
+live Miroir server, metadata migration or Prefect operation is started.
