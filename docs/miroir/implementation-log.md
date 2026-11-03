@@ -1105,3 +1105,39 @@ overview responses, created only local metadata and ignored synthetic inherited
 infrastructure settings. The temporary server was stopped and removed. No live
 Proton secret retrieval, infrastructure launch, vault move, mount change or
 deployment was performed.
+
+
+## 2026-11-03 — Complete Proton organization and verify references
+
+The authorized vault migration is complete: machine/source credentials use
+Automation; infrastructure/bootstrap items use Infrastructure; human logins
+remain in Homelab. Update the infrastructure provider and item references without
+changing fields or credential values. Prefect operator authentication differs
+from its human login and remains a separate item. The original env-dlt vault has
+no active items. The existing Infrastructure/postgres-metabase item is preserved.
+
+Live validation resolved 44 existing references across dotfiles, its Sento map,
+home-ops and pipelines through fnox and compared each with direct Pass resolution
+without logging values. The two Miroir installation fields were already absent:
+Infrastructure/miroir must be populated from the existing CNPG password and BWS
+key before infrastructure mode works. They are documented as provisioning
+prerequisites, not reported as verified. No new encryption key was generated.
+
+The 15 moved/renamed items were compared with their original content. The full
+WireGuard note required a verified copy plus recoverable trash of the original
+because pass-cli could read its folder-encrypted item but could not move the key.
+The full and split profiles have different DNS/routing and are both retained.
+Routine runtime tokens remain viewer agents; the temporary regular administrative
+PAT is not installed as a runtime credential.
+
+Older local checkouts have reference-only fnox.local.toml compatibility maps until
+the tracked changes are merged. The pipelines compatibility file explicitly
+preserves the cluster-profile Prefect endpoint; both default lookups and the
+cluster override were checked. Remove compatibility maps after updating tracked
+configuration. The live Paseo token still needs approved viewer grants in the
+new vaults from the account owner; regular scoped PATs cannot manage other tokens.
+
+Checks: all four maps parse and match their provider vaults, all 22 mise tasks
+validate, five development-launcher tests pass, and 22 dotfiles regressions pass
+(two platform skips). These are reference/documentation changes after the prior
+135-test application run; application code and deployed workloads did not change.

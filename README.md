@@ -16,7 +16,7 @@ src/sources/     one dlt source per service (extract only, raw records)
 src/pipelines/   one Prefect @flow per source (+ transform.py: run_dbt)
 dbt/             staging views + mart schemas (music, health, biking, github, browser, crossovers)
 prefect.yaml     deployments: schedules, parameters, env
-fnox.toml        secret references (Proton Pass Automation + env-home-ops infrastructure items)
+fnox.toml        secret references (Proton Pass Automation + Infrastructure)
 mise.toml        tools, shared config, task secret grants; mise.local.toml: machine overrides
 docs/            documentation
 ```
@@ -54,9 +54,10 @@ uv run ruff check src/
 
 Secret values are never committed here. Machine-only source credentials live in
 Proton Pass `Automation`; operator infrastructure references (`prefect`,
-`postgres-metabase`, `miroir`) target `env-home-ops`. Move those items and verify
-token grants before retiring `env-dlt`. They remain copies until operator access
-uses BWS/CNPG directly. References are in `fnox.toml`. Details in
+`postgres-metabase`) now target verified `Infrastructure` items. Permanent token
+grants must follow the moved items. The Miroir installation references remain a
+provisioning prerequisite; see the development runbook. Operator copies remain
+until access uses BWS/CNPG directly. References are in `fnox.toml`. Details in
 [docs/README.md](docs/README.md#secrets-and-config).
 
 Tasks receive only their declared fnox secrets; they are not exported to the shell.

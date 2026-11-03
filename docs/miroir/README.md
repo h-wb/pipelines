@@ -37,10 +37,12 @@ mise run dev:infra -- --config /miroir/data/miroir/miroir.json --artifacts /miro
 
 The task authenticates through the shared `proton-login` template and receives
 only `MIROIR_METADATA__PASSWORD`, `MIROIR_SECRET_KEY`, `PREFECT_API_URL`, and
-`PREFECT_API_AUTH_STRING`. Grant its Proton token the `env-home-ops/miroir` and
-`env-home-ops/prefect` items. Preserve their field names when moving them from
-`env-dlt`. These are still operator copies of BWS/CNPG credentials; relocating
-them does not remove that duplication. The warehouse password and source tokens
+`PREFECT_API_AUTH_STRING`. Grant its Proton token the `Infrastructure/miroir` and
+`Infrastructure/prefect` items. Prefect is moved and verified; the `miroir`
+installation item is still missing. Populate its `metadata-password` from the
+existing CNPG application secret and its `secret-key` from the existing BWS
+installation key before using this mode. The Homelab/Miroir website login is
+a different credential. These remain operator copies of BWS/CNPG credentials. The warehouse password and source tokens
 are not needed by this server task: deployed flow Jobs get their own credentials.
 
 Infrastructure mode requires the existing PostgreSQL metadata settings from
@@ -265,7 +267,7 @@ mise run miroir:refresh    # close unverified runs
 ```
 
 The tasks get the metadata password from the ProtonPass item
-`env-home-ops/miroir/metadata-password` (the app-user password of the
+`Infrastructure/miroir/metadata-password` (the app-user password of the
 postgres-miroir cluster — create the item from the cluster's
 `postgres-miroir-app` secret after bootstrap); the other
 `MIROIR_METADATA__*` parts are non-secret defaults in `mise.toml`.
