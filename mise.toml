@@ -14,6 +14,9 @@ experimental = true
 # gitignored mise.local.toml, without changing the machine's mise environments.
 # mise grants each task only its listed fnox secrets; nothing enters the shell.
 [env]
+# Select the item-scoped reader only on the scoped general host. Preserve an
+# explicitly selected fnox profile and the workstation's default references.
+FNOX_PROFILE = "{{ get_env(name='FNOX_PROFILE', default='paseo-general' if get_env(name='PASEO_DATA_SCOPE', default='') == 'general' else 'default') }}"
 _.python.venv = {path = ".venv", create = true}
 RUNTIME__LOG_LEVEL = "INFO"
 RUNTIME__HTTP_SHOW_ERROR_BODY = "true"
