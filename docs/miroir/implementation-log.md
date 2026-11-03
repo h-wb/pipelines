@@ -1156,3 +1156,11 @@ Validation: compare all eight fields from the new item-only agent through native
 fnox with the prior named-vault reader, reporting equality without values. Mise
 task definitions and the five development-launcher tests are also checked. No
 live Miroir server, metadata migration or Prefect operation is started.
+
+
+The rollout's native mise smoke check also found an older local `cluster`
+profile selection on the provisioned host. Add `paseo-general-cluster`, inheriting
+the item-scoped credentials followed by the existing cluster endpoint overlay.
+Dotfiles selects that combined profile for its managed Paseo checkout; fresh
+worktrees without the host override still use `paseo-general`. Verify source
+credentials plus the unchanged in-cluster Prefect URL through real mise grants.

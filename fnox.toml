@@ -67,3 +67,7 @@ GITHUB__AUTHOR_EMAILS = { provider = "automation", value = "pass://0YnVHZljgLsa-
 DESTINATION__POSTGRES__CREDENTIALS__PASSWORD = { provider = "infra", value = "pass://fVnFraK53dZceOJF9Wfd9vRThlVM7LAv8jQvq9NK9Lx5-7MyKGHKxUDc8C6BAZ01ymA0wimOnIgHj5U_gVcbwg==/a_3kJ_HadR57Z1xqSD0238PKST3dkUBpKgkNd071tg2OGwm_LwrmLX5oAOi7RRxd4MuBxMX4aCqoFZYF7hEgXg==/password" }
 PREFECT_API_URL = { provider = "infra", value = "pass://L-fPPip20ntIct5iFutssziZ9EsJZoyv8SwqYW0w-SqESQhDuH5NtL4cWemkA2dS_Gr6FqHzyP1rI-QLN85H6g==/udTvbY9adtw9RmGK7pT3juI9jTxOzMObSX6-FP3oLFNM2KGIDK6xgcuXB9HjNF11xkDDiqmJergBGCLDmXgIgQ==/api-url" }
 PREFECT_API_AUTH_STRING = { provider = "infra", value = "pass://L-fPPip20ntIct5iFutssziZ9EsJZoyv8SwqYW0w-SqESQhDuH5NtL4cWemkA2dS_Gr6FqHzyP1rI-QLN85H6g==/udTvbY9adtw9RmGK7pT3juI9jTxOzMObSX6-FP3oLFNM2KGIDK6xgcuXB9HjNF11xkDDiqmJergBGCLDmXgIgQ==/api-auth-string" }
+
+# Keep the host's cluster endpoint overlay after selecting item-level grants.
+[profiles.paseo-general-cluster]
+inherits = ["paseo-general", "cluster"]
