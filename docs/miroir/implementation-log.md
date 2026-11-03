@@ -1021,3 +1021,123 @@ RBAC was not changed. The operator UI step requested above was not needed.
 Schema 6 is now deployed. Connector cutovers, new cross-source configuration, managed
 Metabase assets, and installation/restore validation remain separate work. No source
 bindings, legacy schedules, or dashboard definitions were changed during rollout.
+
+
+## 2026-11-02 — Share managed Proton Pass login with dotfiles
+
+The repository's login previously reused any cached Proton session before checking
+its supplied token. Replace that implementation with an extension of dotfiles'
+global `proton-login` mise task template, retaining the existing `dlt` session and
+macOS Keychain service. Operator tasks that request fnox secrets now depend on
+login, so rotation/removal is checked before resolving their task grants.
+
+Validation: with the updated dotfiles as `MISE_CONFIG_DIR`, `mise tasks validate
+--errors-only` passed all 20 tasks and `mise tasks deps miroir:deploy` showed the
+login prerequisite. Shared dotfiles regressions exercise token rotation, expiry,
+removal, rejected credentials, macOS Keychain selection, session isolation and
+ordinary/monorepo task inheritance with fake credentials. No product code, live
+credentials, deployments, data or token grants changed. Update dotfiles before
+using these operator tasks.
+
+
+## 2026-11-02 — Follow credentials moved to Automation
+
+Point the ListenBrainz, Bike Share and GitHub source references at the moved
+Automation items, retaining field names and per-task grants. GitHub uses the
+`github-pipelines` item to distinguish its credential from workstation access.
+Keep the `prefect`, `postgres-metabase` and `miroir` operator references in
+`env-dlt`: their existing BWS/CNPG sources require a separate operator-access
+migration before those copies can be removed. Update setup documentation to
+stop directing new source credentials into the legacy vault.
+
+Validation: TOML parsing and provider/reference consistency checks passed; mise
+validated all 20 tasks with the updated dotfiles template. No live secret fetch,
+pipeline execution, deployment or token-grant change was performed. Agent grants
+must include the moved Automation items before secret-consuming tasks can run.
+
+## 2026-11-02 — Move infrastructure operator copies to env-home-ops, retire env-dlt
+
+The remaining `env-dlt` items (`prefect`, `postgres-metabase`, `miroir`) exist so a
+Paseo worktree or the workstation can run the operator tasks against the existing
+cluster (Prefect API, warehouse and miroir metadata databases, miroir master key) —
+the same dev-mode principle as the Sento project config. They are infrastructure
+credentials, not pipeline source tokens, so they move to the **`env-home-ops`**
+vault, which the Paseo pod token already reads; the workstation `dlt` token needs
+item-level grants on those three items. `fnox.toml` gains an `infra` provider
+(vault `env-home-ops`) for these references, and the legacy `env-dlt` vault is
+retired once the references update. Authoritative sources stay the cluster's:
+BWS items `prefect`/`miroir` and CNPG secrets `postgres-metabase-app`/
+`postgres-miroir-app`; a later migration can point fnox at BWS directly and drop
+the Proton copies entirely.
+
+Validation: TOML parsing and provider/reference consistency checks passed; mise
+validated all tasks with the updated dotfiles template. No live secret fetch,
+pipeline execution, deployment, item move or token-grant change was performed —
+the Proton Pass moves and item-level grants are operator actions listed in PR #3.
+
+
+## 2026-11-03 — Local and infrastructure development launchers
+
+Implement decision 023 with `mise run dev` and `mise run dev:infra`, exposed as
+Paseo `dev`/`infra` service scripts. Both forward assigned host/port arguments to
+the checkout's CLI. Local mode uses its own SQLite, DuckDB, config, artifacts and
+persistent generated credentials under `.miroir/dev/`; inherited installation
+settings do not select an orchestrator or database. Infrastructure mode depends
+on shared Proton login and requests only the metadata password, encryption key
+and Prefect URL/auth. It requires existing installation config, PostgreSQL
+settings, a configured deployment and shared artifacts before starting. Its own
+UI token stays under `.miroir/dev-infra/`; credentials never enter argv or logs.
+
+Keep the infrastructure capability distinct from flow-code development: requested
+Prefect operations execute the configured deployment image. Document that the
+draft general Paseo host's read-only `/data` export is different from Miroir's
+installation data; the `/miroir/data` mount still needs provisioning. Correct
+current docs/comments that assumed item moves or pod-token grants were already
+verified. The Proton operator copies still duplicate their BWS/CNPG sources.
+
+Validation: all 135 unittest tests passed, including five new launcher tests for
+inherited-setting isolation, persistent private credentials, infrastructure
+selection and missing-prerequisite failures. Ruff lint/format and mypy passed for
+the new launcher. All 22 mise tasks validate; `dev:infra -> pass:login` is present,
+and `mise run dev -- --help` forwards arguments without Proton authentication.
+An actual server in a disposable directory returned healthy and authenticated
+overview responses, created only local metadata and ignored synthetic inherited
+infrastructure settings. The temporary server was stopped and removed. No live
+Proton secret retrieval, infrastructure launch, vault move, mount change or
+deployment was performed.
+
+
+## 2026-11-03 — Complete Proton organization and verify references
+
+The authorized vault migration is complete: machine/source credentials use
+Automation; infrastructure/bootstrap items use Infrastructure; human logins
+remain in Homelab. Update the infrastructure provider and item references without
+changing fields or credential values. Prefect operator authentication differs
+from its human login and remains a separate item. The original env-dlt vault has
+no active items. The existing Infrastructure/postgres-metabase item is preserved.
+
+Live validation resolved 44 existing references across dotfiles, its Sento map,
+home-ops and pipelines through fnox and compared each with direct Pass resolution
+without logging values. The two Miroir installation fields were already absent:
+Infrastructure/miroir must be populated from the existing CNPG password and BWS
+key before infrastructure mode works. They are documented as provisioning
+prerequisites, not reported as verified. No new encryption key was generated.
+
+The 15 moved/renamed items were compared with their original content. The full
+WireGuard note required a verified copy plus recoverable trash of the original
+because pass-cli could read its folder-encrypted item but could not move the key.
+The full and split profiles have different DNS/routing and are both retained.
+Routine runtime tokens remain viewer agents; the temporary regular administrative
+PAT is not installed as a runtime credential.
+
+Older local checkouts have reference-only fnox.local.toml compatibility maps until
+the tracked changes are merged. The pipelines compatibility file explicitly
+preserves the cluster-profile Prefect endpoint; both default lookups and the
+cluster override were checked. Remove compatibility maps after updating tracked
+configuration. The live Paseo token still needs approved viewer grants in the
+new vaults from the account owner; regular scoped PATs cannot manage other tokens.
+
+Checks: all four maps parse and match their provider vaults, all 22 mise tasks
+validate, five development-launcher tests pass, and 22 dotfiles regressions pass
+(two platform skips). These are reference/documentation changes after the prior
+135-test application run; application code and deployed workloads did not change.

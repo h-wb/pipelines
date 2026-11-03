@@ -59,9 +59,17 @@ rebuilds its own downstream models (`dbt build --select source:<name>+`);
 
 ## Secrets and config
 
-- Secrets live in the Proton Pass vault **`env-dlt`** (one item per service) and are
-  mapped to env vars in [`fnox.toml`](../fnox.toml) (references only). Mise injects only the
-  keys listed in each task's `secrets = [...]` grant, including warehouse and
+- Machine-only source credentials live in Proton Pass **`Automation`**:
+  `listenbrainz`, `bikeshare`, and `github-pipelines`. References map them to env
+  vars in [`fnox.toml`](../fnox.toml); token grants must include these items.
+  Operator copies for `prefect` and `postgres-metabase` were moved to
+  **`Infrastructure`** and their references verified. Permanent workstation/pod
+  tokens need viewer grants there. They mirror BWS/CNPG until operator tasks read
+  those sources directly. The `miroir` installation item is still unprovisioned;
+  its metadata password and existing encryption key must be supplied before
+  infrastructure development/deployment tasks can use it. New source credentials
+  use Automation. The old `env-dlt` vault has no active items.
+  Mise injects only the keys listed in each task's `secrets = [...]` grant, including warehouse and
   Prefect credentials only where needed.
   Run `mise run pass:login` first (macOS Keychain or Paseo's `PROTON_PASS_TOKEN`).
   `mise secrets ls` lists names and grants without fetching values; ad-hoc
@@ -92,7 +100,8 @@ rebuilds its own downstream models (`dbt build --select source:<name>+`);
 1. `src/sources/<name>.py`: extract only, raw records, merge keys, incremental
    cursor with an overlap. `src/pipelines/<name>.py`: the `@flow`, with
    `full_refresh` using `refresh="drop_data"` (truncate; dbt views depend on the tables).
-2. Secrets: a field in the Proton Pass `env-dlt` vault + a line in `fnox.toml`;
+2. Secrets: reuse or create the service credential in Proton Pass `Automation`
+   and add a reference in `fnox.toml`;
    task secret grants and config in `mise*.toml`; env vars in the deployment block of `prefect.yaml`.
 3. `mise run deploy`, then a first run with `mise run prefect -- deployment run <flow>/<deployment> --watch`.
 4. dbt: raw tables in `dbt/models/staging/_sources.yml`, `stg_<source>__*` views,

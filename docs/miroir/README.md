@@ -11,6 +11,65 @@ flows continue alongside Miroir until each source is explicitly cut over.
 - [Implementation log and next steps](implementation-log.md)
 - [Synthetic example configuration](../../examples/miroir.json)
 
+## Development launchers
+
+```bash
+mise run dev                 # http://127.0.0.1:8765
+mise run dev -- --port 8766  # optional port override
+```
+
+This starts the current checkout with its own empty configuration, SQLite
+metadata, DuckDB warehouse, artifacts and encryption key under gitignored
+`.miroir/dev/`. The generated UI login token is in `.miroir/dev/api-token`; read
+that file locally and paste it into the login page. The key and token are reused
+after restarts, and their files are mode 600 in a mode-700 directory. No Proton
+login or fnox secret fetch is needed. Inherited Miroir, Prefect and Postgres
+destination settings are ignored; the local configuration cannot have a Prefect
+deployment. Add connections through the UI as needed. Restart after code edits.
+
+To run the UI checkout against the **existing installation** instead:
+
+```bash
+mise run dev:infra
+# Or select the installation's mounted paths explicitly:
+mise run dev:infra -- --config /miroir/data/miroir/miroir.json --artifacts /miroir/data/miroir/artifacts
+```
+
+The task authenticates through the shared `proton-login` template and receives
+only `MIROIR_METADATA__PASSWORD`, `MIROIR_SECRET_KEY`, `PREFECT_API_URL`, and
+`PREFECT_API_AUTH_STRING`. Grant its Proton token the `Infrastructure/miroir` and
+`Infrastructure/prefect` items. Prefect is moved and verified; the `miroir`
+installation item is still missing. Populate its `metadata-password` from the
+existing CNPG application secret and its `secret-key` from the existing BWS
+installation key before using this mode. The Homelab/Miroir website login is
+a different credential. These remain operator copies of BWS/CNPG credentials. The warehouse password and source tokens
+are not needed by this server task: deployed flow Jobs get their own credentials.
+
+Infrastructure mode requires the existing PostgreSQL metadata settings from
+`mise.toml`/`mise.local.toml`, an existing config with `deployment.work_pool`, and
+the shared artifact directory. The default config and artifacts paths above
+match the deployed server and Jobs. Mount the installation files with that same
+layout on the development host. The draft general Paseo pod currently mounts
+only `/mnt/tank/shared` at `/data` read-only, so it **does not yet supply this
+Miroir data mount**. Mount provisioning is separate from starting this script.
+On macOS, also configure reachable database/Prefect endpoints. Do not use an
+empty replacement config or a private artifact copy: jobs use the installation's
+shared files. If a config copy is used, keep it synchronized with the worker's
+config; `MIROIR_PREFECT_CONFIG_PATH` selects the worker-visible path (default
+`/miroir/data/miroir/miroir.json`). Missing prerequisites stop startup before a
+database connection, with no fallback to a local installation.
+
+This is live installation access: startup runs the normal metadata migrations,
+UI edits affect the shared database/configuration, and operations submit to the
+configured Prefect pool. Jobs run the deployment's image, **not the checkout's
+Python source**; test flow-code changes with the separate deployment workflow.
+The development server generates its own UI token in `.miroir/dev-infra/api-token`
+and does not request the deployed server's login token.
+
+In Paseo, start service script `dev` or `infra` and open its assigned URL. Both
+delegate to these mise tasks using Paseo's assigned host/port. Worktree setup
+only installs dependencies; neither server starts automatically.
+
 ## Try the first slice
 
 From the repo root:
@@ -208,10 +267,17 @@ mise run miroir:refresh    # close unverified runs
 ```
 
 The tasks get the metadata password from the ProtonPass item
-`env-dlt/miroir/metadata-password` (the app-user password of the
+`Infrastructure/miroir/metadata-password` (the app-user password of the
 postgres-miroir cluster — create the item from the cluster's
 `postgres-miroir-app` secret after bootstrap); the other
 `MIROIR_METADATA__*` parts are non-secret defaults in `mise.toml`.
+
+Operator mise tasks require the installed dotfiles' global `proton-login`
+task template. This repo's `pass:login` extends it with session name `dlt`;
+tasks that request fnox secrets depend on login. The shared implementation
+selects macOS Keychain service `pass-cli-dlt` or the pod's `PROTON_PASS_TOKEN`,
+refreshes rotated/expired sessions, and clears the named cache on missing or
+rejected credentials. It does not alter token grants or deployed flow credentials.
 
 Installation secrets (the master key, Postgres roles, Prefect and Metabase
 credentials) are environment variables provided by whoever deploys. They are not

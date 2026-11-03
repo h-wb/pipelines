@@ -16,7 +16,7 @@ src/sources/     one dlt source per service (extract only, raw records)
 src/pipelines/   one Prefect @flow per source (+ transform.py: run_dbt)
 dbt/             staging views + mart schemas (music, health, biking, github, browser, crossovers)
 prefect.yaml     deployments: schedules, parameters, env
-fnox.toml        secret references (Proton Pass vault "env-dlt")
+fnox.toml        secret references (Proton Pass Automation + Infrastructure)
 mise.toml        tools, shared config, task secret grants; mise.local.toml: machine overrides
 docs/            documentation
 ```
@@ -43,6 +43,8 @@ The data paths default to the Prefect worker's mounts; override them for local i
 ## Common tasks
 
 ```bash
+mise run dev                                      # local Miroir UI, no Proton access
+mise run dev:infra                                # UI against the existing installation (see prerequisites)
 mise run deploy                                   # register all deployments (task-scoped secrets)
 mise run prefect -- deployment run load-github/load_github --watch
 mise run run:listenbrainz                         # run a pipeline locally (see mise.toml for all)
@@ -50,8 +52,19 @@ mise run run:dbt                                  # build + test the dbt models
 uv run ruff check src/
 ```
 
-Secrets are never in files here: add a field to the Proton Pass `env-dlt` vault and a
-reference in `fnox.toml`. Details in [docs/README.md](docs/README.md#secrets-and-config).
+Secret values are never committed here. Machine-only source credentials live in
+Proton Pass `Automation`; operator infrastructure references (`prefect`,
+`postgres-metabase`) now target verified `Infrastructure` items. Permanent token
+grants must follow the moved items. The Miroir installation references remain a
+provisioning prerequisite; see the development runbook. Operator copies remain
+until access uses BWS/CNPG directly. References are in `fnox.toml`. Details in
+[docs/README.md](docs/README.md#secrets-and-config).
 
 Tasks receive only their declared fnox secrets; they are not exported to the shell.
 For an ad-hoc command, use `mise x --secrets KEY -- <command>`.
+
+Paseo exposes `dev` and `infra` as service scripts with assigned ports. Local
+development keeps its state under `.miroir/dev/`; the infrastructure script
+requires the installation config, shared artifacts, and item grants. See
+[development launchers](docs/miroir/README.md#development-launchers) for setup and
+the distinction between running the UI checkout and executing deployed flows.

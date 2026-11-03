@@ -704,3 +704,27 @@ the recorded ingestion time is the safe boundary. Inline child builds inherit th
 parent's backend run for observation without duplicating its unique submission ID.
 Unlinked sources are explicitly excluded from raw-table discovery, even if a table
 exists at the placeholder schema.
+
+## 023 — Explicit local and infrastructure development launchers
+
+Status: accepted, 2026-11-03. Development tooling; no runtime schema change.
+
+`mise run dev` serves the checkout with workspace-local configuration, SQLite
+metadata, DuckDB data, artifacts and generated credentials under `.miroir/dev/`.
+It requests no fnox secrets and ignores inherited Miroir/Prefect installation
+settings. Its configuration cannot select a Prefect deployment.
+
+`mise run dev:infra` serves the checkout against the existing installation. It
+depends on the shared Proton login and requests only the metadata password,
+installation encryption key, and Prefect URL/auth. It requires an existing
+configuration with a deployment and the shared artifact directory; it must not
+create an empty installation or fall back to local execution. Its UI login token
+is local to the development server, independent of the deployed server's token.
+The existing tasks for deployments, workers and legacy pipelines remain unchanged.
+
+Paseo exposes both as named service scripts using its assigned host and port.
+Worktree setup installs dependencies only. Infrastructure mode can change the
+real installation: metadata migrations and UI edits use the shared database,
+and requested operations execute the configured deployed flow image, not the
+checkout's local Python code. Config/artifact mounts and token grants remain
+operator prerequisites; launching a script does not provision them.
