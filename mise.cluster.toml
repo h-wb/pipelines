@@ -1,3 +1,2 @@
-# Loads only with MISE_ENV=cluster (the pods): in-cluster Prefect endpoint (fnox.cluster.toml).
 [secrets.fnox]
 profile = "cluster"
