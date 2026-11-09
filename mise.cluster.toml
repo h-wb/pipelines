@@ -1,0 +1,7 @@
+# Cluster access layer, loaded only when MISE_ENV=cluster (set by the
+# host's conf.d/paseo on the pods; workstations never set it). The
+# provisioned checkout talks to the in-cluster Prefect endpoint
+# (fnox.cluster.toml); every other secret resolves from the base map
+# in fnox.toml.
+[secrets.fnox]
+profile = "cluster"

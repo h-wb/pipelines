@@ -1,6 +1,0 @@
-# Paseo pod overlay, loaded only when MISE_ENV=paseo (set by the host's
-# conf.d/paseo layer; workstations never set it). The provisioned checkout
-# talks to the in-cluster Prefect endpoint (fnox.cluster.toml); every other
-# secret resolves from the base map in fnox.toml.
-[secrets.fnox]
-profile = "cluster"
