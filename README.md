@@ -16,7 +16,7 @@ src/sources/     one dlt source per service (extract only, raw records)
 src/pipelines/   one Prefect @flow per source (+ transform.py: run_dbt)
 dbt/             staging views + mart schemas (music, health, biking, github, browser, crossovers)
 prefect.yaml     deployments: schedules, parameters, env
-fnox.toml        secret references (Proton Pass `Agents General`)
+fnox.toml        secret references (Proton Pass `Automation General`)
 mise.toml        tools, shared config, task secret grants; mise.local.toml: machine overrides
 docs/            documentation
 ```
@@ -53,7 +53,7 @@ uv run ruff check src/
 ```
 
 Secret values are never committed here. Every credential lives in the Proton
-Pass `Agents General` vault. The Miroir installation references remain a
+Pass `Automation General` vault. The Miroir installation references remain a
 provisioning prerequisite; see the development runbook. Operator copies remain
 until access uses BWS/CNPG directly. References are in `fnox.toml`. Details in
 [docs/README.md](docs/README.md#secrets-and-config).
