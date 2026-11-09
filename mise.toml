@@ -14,9 +14,6 @@ experimental = true
 # gitignored mise.local.toml, without changing the machine's mise environments.
 # mise grants each task only its listed fnox secrets; nothing enters the shell.
 [env]
-# Select the item-scoped reader only on the scoped general host. Preserve an
-# explicitly selected fnox profile and the workstation's default references.
-FNOX_PROFILE = "{{ get_env(name='FNOX_PROFILE', default='paseo-general' if get_env(name='PASEO_DATA_SCOPE', default='') == 'general' else 'default') }}"
 _.python.venv = {path = ".venv", create = true}
 RUNTIME__LOG_LEVEL = "INFO"
 RUNTIME__HTTP_SHOW_ERROR_BODY = "true"
@@ -42,10 +39,8 @@ MIROIR_METADATA__USERNAME = "miroir"
 BROWSER_HISTORY__DATA_DIR = "/root/.prefect/data/browser"
 APPLE_HEALTH__DATA_DIR = "/root/.prefect/data/health"
 APPLE_HEALTH__CUTOFF = "2026-06-04"
-# Grant the workstation/pod tokens only the required Automation and
-# Infrastructure items. Both use this repo session (shared by its Paseo
-# worktrees). Item moves are complete; update permanent token viewer grants
-# on these locations. The one-hour organization token is not a runtime token.
+# The workstation and pod tokens read the `Automation General` vault. Both use this
+# repo session (shared by its Paseo worktrees).
 PROTON_PASS_SESSION_DIR = "{{env.HOME}}/.local/state/pass-cli/dlt"
 PROTON_PASS_AGENT_REASON = "dlt fnox"
 

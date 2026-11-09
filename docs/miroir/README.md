@@ -35,17 +35,12 @@ mise run dev:infra
 mise run dev:infra -- --config /miroir/data/miroir/miroir.json --artifacts /miroir/data/miroir/artifacts
 ```
 
-On the scoped general host, mise selects the native fnox `paseo-general`
-profile. It maps the eight provisioned source/warehouse/Prefect fields to
-individual item shares. Workstations retain the default named-vault references;
-`FNOX_PROFILE` can explicitly select another configured profile. The two Miroir
-installation fields remain provisioning prerequisites and are not covered by
-the current general token.
+Every host uses the same `fnox.toml` map, in the `Automation General` vault. The two
+Miroir installation fields remain provisioning prerequisites.
 
 The task authenticates through the shared `proton-login` template and receives
 only `MIROIR_METADATA__PASSWORD`, `MIROIR_SECRET_KEY`, `PREFECT_API_URL`, and
-`PREFECT_API_AUTH_STRING`. Grant its Proton token the `Infrastructure/miroir` and
-`Infrastructure/prefect` items. Prefect is moved and verified; the `miroir`
+`PREFECT_API_AUTH_STRING`. Both live in the `Automation General` vault. The `miroir`
 installation item is still missing. Populate its `metadata-password` from the
 existing CNPG application secret and its `secret-key` from the existing BWS
 installation key before using this mode. The Homelab/Miroir website login is
@@ -274,7 +269,7 @@ mise run miroir:refresh    # close unverified runs
 ```
 
 The tasks get the metadata password from the ProtonPass item
-`Infrastructure/miroir/metadata-password` (the app-user password of the
+`Automation General/miroir/metadata-password` (the app-user password of the
 postgres-miroir cluster — create the item from the cluster's
 `postgres-miroir-app` secret after bootstrap); the other
 `MIROIR_METADATA__*` parts are non-secret defaults in `mise.toml`.
