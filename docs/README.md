@@ -59,7 +59,7 @@ rebuilds its own downstream models (`dbt build --select source:<name>+`);
 
 ## Secrets and config
 
-- Every credential lives in the Proton Pass **`Agents General`** vault: source
+- Every credential lives in the Proton Pass **`Automation General`** vault: source
   tokens (`listenbrainz`, `bikeshare`, `github-pipelines`) and operator copies
   (`prefect`, `postgres-metabase`), which mirror BWS/CNPG until operator tasks
   read those sources directly. References map them to env vars in
@@ -97,7 +97,7 @@ rebuilds its own downstream models (`dbt build --select source:<name>+`);
 1. `src/sources/<name>.py`: extract only, raw records, merge keys, incremental
    cursor with an overlap. `src/pipelines/<name>.py`: the `@flow`, with
    `full_refresh` using `refresh="drop_data"` (truncate; dbt views depend on the tables).
-2. Secrets: reuse or create the service credential in Proton Pass `Agents General`
+2. Secrets: reuse or create the service credential in Proton Pass `Automation General`
    and add a reference in `fnox.toml`;
    task secret grants and config in `mise*.toml`; env vars in the deployment block of `prefect.yaml`.
 3. `mise run deploy`, then a first run with `mise run prefect -- deployment run <flow>/<deployment> --watch`.
