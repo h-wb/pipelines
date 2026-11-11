@@ -1456,3 +1456,18 @@ regression: each closure is a new attempt row, so connection status showed the
 `NeverStarted` closure as the ListenBrainz and Health "last attempt". A request
 that never ran is not something the connection did, so status now skips those
 closures (they stay in the operation history).
+
+
+## 2026-11-11 — Deployed sha-fcde1662 (PR #18)
+
+Set `deployment.image` and applied the four image-only updates, pinned the server
+and worker in home-ops `f0d37b9e1`, and reconciled. The plan is empty; all four
+connections show their last real sync (all succeeded) and none is requested; a
+Bike Share rebuild ran in Job `valiant-finch-dxtxg` on the new image and the
+analysis is `current`. Configuration backup:
+`~/.local/state/miroir/releases/20261111T231311Z/`.
+
+Seen while checking for active runs: eight legacy `local-pool` flow runs have
+been stuck in `Running` since 2025-10 and 2026-07 (six `load-listenbrainz`, one
+`load-apple-health`, one `load-arc-timeline`). They are stale Prefect states, not
+work; cancel them in Prefect when convenient.
