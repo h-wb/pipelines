@@ -130,25 +130,22 @@ deployments clone `main` at run time, so a broken model on `main` is live at onc
 
 ## Known remaining work (2026-10-31)
 
-- Apple Health n8n cutover (decision 009): point Health Auto Export at
-  `POST /api/connections/health/receive` with a connection-specific delivery token
-  (decision 017 is deployed). Folder-free setup and token management are live;
-  real phone delivery is verified. Metadata schema 6 requires updating the server,
-  worker, and flow-run image together.
-- Legacy cutover (2026-11-11): GitHub, ListenBrainz and Bike Share run on
-  Miroir, bound to `github_data`, `listenbrainz_data` and `bikeshare_data`;
-  legacy `load-github`, `load-listenbrainz` and `load-bikeshare` are paused,
-  delete them after a few clean nights. The old `ws_8_personal_listenbrainz`
-  schema is unused and can be dropped. Next: browser history, which needs
-  snapshot delivery first. Delete the stale `workspace-k8s` Prefect pool;
-  eventually retire `local-pool`.
+- Legacy cutover (2026-11-11): GitHub, ListenBrainz, Bike Share and Health run
+  on Miroir, bound to `github_data`, `listenbrainz_data`, `bikeshare_data` and
+  `apple_health_data` (the phone posts to the receiving URL); legacy
+  `load-github`, `load-listenbrainz`, `load-bikeshare` and `load-apple-health`
+  are paused, delete them after a few clean nights. Disable the n8n Health
+  workflow. The old `ws_8_personal_listenbrainz` and `ws_8_personal_health`
+  schemas are unused and can be dropped. Left: browser history (needs snapshot
+  delivery; the legacy flow reads an empty scratch folder), then retire
+  `local-pool` with `run_dbt`.
 - Cloud blockers (decision-adjacent, from the OSS+hosted analysis):
   per-tenant key separation, artifact storage abstraction (NFS paths are
   absolute on purpose today — they must resolve identically everywhere),
   multi-tenant metadata partitioning, accounts/OIDC.
 - Cosmetic: generated dataset bindings still use the `ws_` prefix (pre-rename
-  abbreviation). Bindings derive at parse time and the live Health data sits in
-  that schema, so pin an explicit binding before renaming.
+  abbreviation). Every live connection now has an explicit binding, so renaming
+  it only affects new connections.
 - Audit leftovers (2026-11-11 log entry): GitHub date windows can miss late
   pushes/merges; browser rows keyed by profile-local SQLite IDs; Health units
   assumed, not read; `put_secret` cross-process race.

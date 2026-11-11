@@ -27,27 +27,6 @@ pull:
     script: uv pip install .
 
 deployments:
-- name: load_apple_health
-  version: null
-  tags: []
-  description: null
-  schedule:
-    cron: '0 0 * * 0'
-  flow_name: load_apple_health
-  entrypoint: src/pipelines/apple_health.py:load_apple_health
-  parameters: {}
-  # n8n starts a run per Auto Export file; exports arriving together queue up
-  concurrency_limit:
-    limit: 1
-    collision_strategy: ENQUEUE
-  work_pool:
-    <<: *default_work_pool
-    job_variables:
-      env:
-        <<: *base_env
-        APPLE_HEALTH__DATA_DIR: "{{ $APPLE_HEALTH__DATA_DIR }}"
-        APPLE_HEALTH__CUTOFF: "{{ $APPLE_HEALTH__CUTOFF }}"
-
 - name: run_dbt
   version: null
   tags: []
