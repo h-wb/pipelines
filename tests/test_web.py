@@ -478,6 +478,17 @@ class WebTests(WebFixture):
         stored = [p for p in (self.root / "artifacts").rglob("*") if p.is_file()]
         self.assertEqual(stored, [])
 
+    def test_an_oversized_form_upload_is_refused_before_it_is_parsed(self):
+        self.login()
+        with patch("starlette.requests.Request.form") as parse:
+            response = self.client.post(
+                "/connections/health/upload",
+                files={"file": ("big.json", b"x" * (4096 + 1024 * 1024 + 1))},
+            )
+        self.assertEqual(response.status_code, 413)
+        parse.assert_not_called()
+        self.assertEqual(self.service.artifacts("health"), [])
+
     def test_form_upload_escapes_file_names_and_offers_replay(self):
         self.login()
         response = self.client.post(
