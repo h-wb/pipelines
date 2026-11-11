@@ -75,7 +75,6 @@ secrets = [
   "LISTENBRAINZ__ACCESS_TOKEN",
   "BIKESHARE__MEMBER_ID",
   "BIKESHARE__AUTHORIZATION_TOKEN",
-  "GITHUB__ACCESS_TOKEN",
 ]
 run = "prefect deploy --all --prefect-file prefect.yaml"
 

@@ -1316,3 +1316,35 @@ Left as found: eight operations recorded before this release without any attempt
 count as requested and keep those pages refreshing; the release stops new ones
 but does not close old ones. The legacy GitHub load and nightly dbt pick up the
 repaired model from `main` at their next runs (01:00 and 03:00 UTC).
+
+
+## 2026-11-11 — GitHub cut over to Miroir (decision 021)
+
+The first legacy connector moved to Miroir with its history in place.
+
+- Inventory: legacy `load-github` ran nightly at 01:00 UTC into pipeline
+  `github` / dataset `github_data`; its last run failed (the deleted-branch 404
+  fixed by #8), so the committed cursor was the 2026-11-10 run.
+- Paused `load-github` in Prefect (its queued runs were dropped; nothing was
+  running) before any Miroir run. Saved the configuration under
+  `~/.local/state/miroir/releases/20261111T170103Z/`.
+- Added connection `github` (user `h-wb`) with an explicit binding to
+  `github`/`github_data`, the same 01:00 UTC schedule, and its analysis in
+  `America/Toronto` with the author emails from the existing Pass item as a
+  parameter. The token is in Miroir's encrypted store; the check verified the
+  account. Applying created `sync-connection/personal-github` on
+  `sha-49bd0d3b…`.
+- First sync (flow run `tacky-tarantula`): ingestion and the GitHub analysis
+  build (12 data tests, including uniqueness of commit URLs) succeeded in 6m17s,
+  against 3–4.5 minutes for recent legacy nightlies over a shorter window. A
+  run that lost the cursor would refetch every commit since account creation
+  (hours, rate-limited), so the legacy dlt state carried over.
+- `load_github` is removed from `prefect.yaml` so `mise run deploy` cannot
+  recreate it; the deploy task no longer receives the GitHub token. The paused
+  Prefect deployment stays as a rollback path. The legacy nightly `run_dbt` keeps
+  building the `github.*` reporting tables from `github_data`, so existing
+  dashboards keep updating; the analysis writes its own `miroir_github_…` schema.
+
+Not checked: warehouse row counts. This agent does not read the Metabase
+warehouse; compare `github_data` counts in Metabase if wanted. Rollback: pause
+`personal-github`, resume `load-github`.
