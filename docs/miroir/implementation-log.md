@@ -1377,3 +1377,28 @@ resumes the legacy cursor.
 Not done: the old `ws_8_personal_listenbrainz` schema is left in the warehouse
 (nothing reads it; drop it when convenient). Rollback: pause
 `personal-listenbrainz`, resume `load-listenbrainz`.
+
+
+## 2026-11-11 — Bike Share cut over to Miroir (decision 021)
+
+Legacy `load-bikeshare` loaded `bikeshare_data` nightly at 00:00 UTC by
+appending the newest page of rentals, with TLS verification disabled and no HTTP
+status check (an expired token would have "completed" with no rows). Both
+sources use source `bikeshare`, resource `trips`, cursor `sd` (initial 0) and key
+`rental_id`, so the bound connection resumes the legacy cursor; the new one
+merges on `rental_id`, so even a lost cursor would only re-read history.
+
+- Paused `load-bikeshare` (last run completed 2026-11-11 00:00; queued runs
+  dropped). Saved the configuration under
+  `~/.local/state/miroir/releases/20261111T214958Z/`.
+- Added connection `bikeshare` bound to `bikeshare`/`bikeshare_data`, on the
+  legacy schedule (00:00 UTC), analysis in `America/Toronto`. Its member ID and
+  token are in Miroir's encrypted store (from the existing Pass items). The
+  check passed with certificate verification enabled, so `verify_tls` stays on.
+- First sync (flow run for `personal-bikeshare`): ingestion and the biking
+  analysis build succeeded.
+- `load_bikeshare` is removed from `prefect.yaml`, and the deploy task no
+  longer receives the Bike Share credentials. The paused deployment stays as a
+  rollback path; the legacy nightly `run_dbt` keeps building `biking.*`.
+
+Rollback: pause `personal-bikeshare`, resume `load-bikeshare`.

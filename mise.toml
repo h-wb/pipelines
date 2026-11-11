@@ -72,8 +72,6 @@ secrets = [
   "PREFECT_API_URL",
   "PREFECT_API_AUTH_STRING",
   "GITHUB__AUTHOR_EMAILS",
-  "BIKESHARE__MEMBER_ID",
-  "BIKESHARE__AUTHORIZATION_TOKEN",
 ]
 run = "prefect deploy --all --prefect-file prefect.yaml"
 

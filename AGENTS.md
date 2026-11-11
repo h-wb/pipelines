@@ -135,12 +135,13 @@ deployments clone `main` at run time, so a broken model on `main` is live at onc
   (decision 017 is deployed). Folder-free setup and token management are live;
   real phone delivery is verified. Metadata schema 6 requires updating the server,
   worker, and flow-run image together.
-- Legacy cutover (2026-11-11): GitHub and ListenBrainz run on Miroir, bound
-  to `github_data` and `listenbrainz_data`; legacy `load-github` and
-  `load-listenbrainz` are paused, delete them after a few clean nights. The
-  old `ws_8_personal_listenbrainz` schema is unused and can be dropped. Next:
-  Bike Share; browser history needs snapshot delivery first. Delete the stale
-  `workspace-k8s` Prefect pool; eventually retire `local-pool`.
+- Legacy cutover (2026-11-11): GitHub, ListenBrainz and Bike Share run on
+  Miroir, bound to `github_data`, `listenbrainz_data` and `bikeshare_data`;
+  legacy `load-github`, `load-listenbrainz` and `load-bikeshare` are paused,
+  delete them after a few clean nights. The old `ws_8_personal_listenbrainz`
+  schema is unused and can be dropped. Next: browser history, which needs
+  snapshot delivery first. Delete the stale `workspace-k8s` Prefect pool;
+  eventually retire `local-pool`.
 - Cloud blockers (decision-adjacent, from the OSS+hosted analysis):
   per-tenant key separation, artifact storage abstraction (NFS paths are
   absolute on purpose today — they must resolve identically everywhere),
