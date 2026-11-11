@@ -7,6 +7,7 @@ an implemented miroir execution service or artifact inbox.
 
 import copy
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -211,30 +212,34 @@ class ReferenceSourceTests(unittest.TestCase):
             ):
                 self.pipeline(connection, "second").run(source)
 
-    def bikeshare(self):
+    def api_connections(self):
         secret = {"provider": "env", "key": "UNUSED"}
+        music = example()["connections"][0]
+        code = {
+            "id": "code",
+            "integration": "github",
+            "settings": {"username": "octo-cat"},
+            "credentials": {"access_token": secret},
+            "resources": ["repos"],
+        }
+        rides = {
+            "id": "rides",
+            "integration": "bikeshare",
+            "settings": {},
+            "credentials": {"member_id": secret, "authorization_token": secret},
+        }
         return parse_miroir(
             json.dumps(
                 {
                     "schema_version": 1,
                     "id": "tests",
-                    "connections": [
-                        {
-                            "id": "rides",
-                            "integration": "bikeshare",
-                            "settings": {},
-                            "credentials": {
-                                "member_id": secret,
-                                "authorization_token": secret,
-                            },
-                        }
-                    ],
+                    "connections": [music, code, rides],
                 }
             )
-        ).connections[0]
+        ).connections
 
     def test_bikeshare_first_run_reads_every_page(self):
-        connection = self.bikeshare()
+        connection = self.api_connections()[2]
         # Newest first, as the API serves them: more than two first-run pages.
         trips = [
             {"rentalId": n, "sd": 1_700_000_000_000 + n * 60_000}
@@ -271,6 +276,54 @@ class ReferenceSourceTests(unittest.TestCase):
                 self.pipeline(connection).run(source)
         self.assertEqual(self.count(connection, "trips"), 1110)
         self.assertEqual(offsets, [0, 50])
+
+    def test_api_fetches_retry_server_errors_and_time_out(self):
+        bodies = {
+            "/1/user/example_user/listens": {
+                "payload": {
+                    "listens": [{"listened_at": 1710000000, "recording_msid": "m"}]
+                }
+            },
+            "/user": {"login": "octo-cat", "created_at": "2020-01-01T00:00:00Z"},
+            "/user/repos": [{"id": 1, "full_name": "octo-cat/r"}],
+            "/mobile/v1/tor/rental/closed": {
+                "rentals": {"closed": [{"rentalId": 1, "sd": 1}]}
+            },
+        }
+        failed, timeouts = set(), set()
+
+        def respond(session, request, **kwargs):
+            path = urlsplit(request.url).path
+            body = bodies[path]  # dlt's own telemetry (path "/") fails here
+            timeouts.add(kwargs.get("timeout"))
+            response = requests.Response()
+            response.request = request
+            response.url = request.url
+            response.headers["Content-Type"] = "application/json"
+            # Every endpoint is unavailable once before it answers.
+            response.status_code = 200 if path in failed else 503
+            response._content = json.dumps(body).encode()
+            failed.add(path)
+            return dispatch_hook("response", request.hooks, response, **kwargs)
+
+        credentials = {
+            "listenbrainz": {"access_token": "t"},
+            "github": {"access_token": "t"},
+            "bikeshare": {"member_id": "m", "authorization_token": "t"},
+        }
+        with (
+            patch.object(requests.Session, "send", respond),
+            patch.dict(os.environ, {"RUNTIME__REQUEST_BACKOFF_FACTOR": "0"}),
+        ):
+            for connection, table in zip(
+                self.api_connections(), ("listens", "repos", "trips"), strict=True
+            ):
+                name = connection.integration.name
+                with open_fetch(connection, credentials[name]) as source:
+                    self.pipeline(connection).run(source)
+                self.assertEqual(self.count(connection, table), 1, name)
+        self.assertEqual(failed, set(bodies))
+        self.assertEqual(timeouts, {60})
 
     def test_source_requires_explicit_credentials(self):
         connection = parse_miroir(json.dumps(example())).connections[0]
