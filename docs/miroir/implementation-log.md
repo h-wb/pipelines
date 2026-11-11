@@ -1164,3 +1164,32 @@ the item-scoped credentials followed by the existing cluster endpoint overlay.
 Dotfiles selects that combined profile for its managed Paseo checkout; fresh
 worktrees without the host override still use `paseo-general`. Verify source
 credentials plus the unchanged in-cluster Prefect URL through real mise grants.
+
+
+## 2026-11-11 — Repair the GitHub commits model; skip what is deleted mid-run; CI runs the suite
+
+PR #8 deduplicated the `repos` input of `github_commits` but put `optional_input`,
+which expands to a whole `select`, directly after `from`. Postgres rejects it
+(`syntax error at or near "select"`) in both Miroir and legacy builds, so every
+GitHub model build since that merge fails, including the legacy nightly
+`load_github` refresh and `run_dbt`, which clone `main` at run time. Two of the
+seven Postgres/dbt tests failed on `main`; CI only built the image.
+
+- The model reads the input as a subquery. The GitHub Postgres scenario adds a
+  stale and a recreated row for one repo: commits are not duplicated and the
+  newest row decides `is_fork_repo`.
+- The deleted-branch fix generalises: a repo, branch or commit that returns 404
+  after being listed is skipped by every repo-level resource (commits, pull
+  requests, issues, comments, releases, external commits), in the connector and
+  in the legacy source the nightly load still runs. Other errors still fail the
+  run. A reference test drives the real source through a fake transport (with
+  the response hooks dlt raises from) for a deleted repo, branch and commit, and
+  checks that a 403 still fails.
+- `.github/workflows/test.yml` runs ruff, ruff format and mypy on the maintained
+  slice and the full suite, with the runner's Postgres for the dbt scenarios, on
+  pull requests and `main`.
+
+Validation: all 136 tests pass locally (Postgres 17.11), ruff and mypy are clean
+on the slice, and the legacy source was exercised with the same fake transport.
+No image, deployment or live configuration changed. The `sha-da77141…` image
+carries the broken model and must not be rolled out.

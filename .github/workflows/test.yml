@@ -1,0 +1,46 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint, types and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Legacy src/pipelines/*.py and src/sources/ have pre-existing findings.
+      SLICE: src/core src/adapters src/integrations src/analyses src/cli src/web src/pipelines/miroir.py
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.12" # the runtime image's Python
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --locked
+
+      - name: Lint
+        run: |
+          uv run --locked ruff check $SLICE tests scripts
+          uv run --locked ruff format --check $SLICE tests scripts
+
+      - name: Types
+        run: uv run --locked mypy --follow-imports=silent $SLICE
+
+      - name: Tests
+        run: |
+          export MIROIR_TEST_POSTGRES_BIN="$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -n1)"
+          uv run --locked python -m unittest discover -s tests
