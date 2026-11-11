@@ -151,6 +151,40 @@ class ConnectorContractTests(unittest.TestCase):
                 check(settings, {"access_token": "t"}), "GitHub account access verified"
             )
 
+    def test_checks_fail_readably_on_unexpected_bodies(self):
+        music = {
+            "id": "music",
+            "integration": "listenbrainz",
+            "settings": {"username": "me", "start_date": "2020-01-01T00:00:00Z"},
+            "credentials": {"access_token": SECRET},
+        }
+        rides = {
+            "id": "rides",
+            "integration": "bikeshare",
+            "settings": {},
+            "credentials": {"member_id": SECRET, "authorization_token": SECRET},
+        }
+        credentials = {
+            "access_token": "t",
+            "member_id": "m",
+            "authorization_token": "t",
+        }
+        for connection in parse(music, github(), rides).connections:
+            definition = connection.integration
+            assert definition.check is not None
+            # ListenBrainz answers clients it suspects with an HTML page and 200.
+            for body in (b"<html>Are you a bot?</html>", b"[]"):
+                response = requests.Response()
+                response.status_code = 200
+                response._content = body
+                with (
+                    self.subTest(definition.name, body=body),
+                    patch("requests.get", return_value=response),
+                ):
+                    with self.assertRaisesRegex(CheckFailed, "unexpected") as caught:
+                        definition.check(connection.settings, credentials)
+                    self.assertFalse(caught.exception.rejected)
+
 
 class BrowserSnapshotTests(unittest.TestCase):
     def setUp(self):
