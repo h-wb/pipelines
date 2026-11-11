@@ -47,6 +47,7 @@ class WebFixture(unittest.TestCase):
         self.addCleanup(self.store.engine.dispose)
         self.store.migrate()
         self.executed = []
+        self.transform = None
         self.service = MiroirService(
             self.config_path,
             self.store,
@@ -74,6 +75,7 @@ class WebFixture(unittest.TestCase):
                 {"access_token": "fake"} if c.config.credentials else {}
             ),
             pipelines_dir=str(self.root / "state"),
+            transform=self.transform,
         )
 
     def login(self):
