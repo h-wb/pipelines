@@ -325,6 +325,37 @@ class ReferenceSourceTests(unittest.TestCase):
         self.assertEqual(failed, set(bodies))
         self.assertEqual(timeouts, {60})
 
+    def test_listenbrainz_full_page_within_one_second_fails_instead_of_looping(self):
+        from src.integrations.listenbrainz.source import PAGE_SIZE
+
+        connection = self.api_connections()[0]
+        listens = [
+            {"listened_at": 1710000000, "recording_msid": str(n)}
+            for n in range(PAGE_SIZE)
+        ]
+        min_ts = []
+
+        def respond(session, request, **kwargs):
+            min_ts.append(parse_qs(urlsplit(request.url).query)["min_ts"][0])
+            if len(min_ts) > 3:
+                raise RuntimeError("requested the same page again")
+            response = requests.Response()
+            response.status_code = 200
+            response.request = request
+            response.url = request.url
+            response.headers["Content-Type"] = "application/json"
+            response._content = json.dumps({"payload": {"listens": listens}}).encode()
+            return response
+
+        with (
+            patch.object(requests.Session, "send", respond),
+            patch("src.integrations.listenbrainz.source.PAGE_PAUSE_S", 0),
+            self.assertRaisesRegex(Exception, "did not advance"),
+            open_fetch(connection, {"access_token": "t"}) as source,
+        ):
+            self.pipeline(connection).run(source)
+        self.assertEqual(min_ts, ["1577836799", "1709999999"])
+
     def test_source_requires_explicit_credentials(self):
         connection = parse_miroir(json.dumps(example())).connections[0]
         with self.assertRaises(ValueError), open_fetch(connection, {}):
