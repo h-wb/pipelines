@@ -739,8 +739,9 @@ a stored copy that retention removed stays removed. A scan cannot tell bytes tha
 came back from bytes that never left, and treating presence as arrival made
 `keep_last` keep files in name order and kept "last received" from ever going
 stale. Resending the same bytes through upload or the receiving URL is a
-deliberate arrival and still restores a removed copy. Retention keeps the most
-recently arrived folder files.
+deliberate arrival and still restores a removed copy, and so does a scan when
+the file must be read again (a new Health cutoff or parser version) rather than
+refusing it on every sync. Retention keeps the most recently arrived folder files.
 
 Submitting an operation that the executor refuses closes it with a `blocked`
 attempt (`SubmitFailed`), so nothing stays requested without a run to observe.

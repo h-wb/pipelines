@@ -46,11 +46,11 @@ class FolderSyncTests(unittest.TestCase):
         self.store.migrate()
         self.builds = []
 
-    def configure(self, **folder):
+    def configure(self, cutoff=CUTOFF, **folder):
         connection = {
             "id": "health",
             "integration": "apple_health",
-            "settings": {"cutoff": CUTOFF},
+            "settings": {"cutoff": cutoff},
             "folder": {"path": str(self.inbox), **folder},
         }
         self.miroir = parse_miroir(
@@ -220,6 +220,28 @@ class FolderSyncTests(unittest.TestCase):
         self.assertEqual(
             self.store.get_artifact(self.miroir.id, old["id"])["last_received_at"],
             old["last_received_at"],
+        )
+
+    def test_removed_copies_are_read_again_when_the_cutoff_changes(self):
+        self.configure(keep_last=1)
+        self.write("a.json", ("2026-06-05", 1))
+        self.write("b.json", ("2026-06-06", 2))
+        self.sync()
+        removed = [
+            a
+            for a in self.store.list_artifacts(self.miroir.id, "health")
+            if a["removed_at"] is not None
+        ]
+        self.assertEqual(len(removed), 1)
+        # A new cutoff changes every file's import, so both are read again.
+        self.configure(cutoff="2026-06-01", keep_last=1)
+        changed = self.sync()
+        self.assertEqual(changed.ingestion, "succeeded")
+        self.assertEqual(len(self.children(changed.operation_id)), 2)
+        # Then the folder is settled again.
+        again = self.sync()
+        self.assertEqual(
+            (again.ingestion, again.transformation), ("not_run", "not_run")
         )
 
     def test_missing_folder_fails_the_sync_readably(self):

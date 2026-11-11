@@ -1258,12 +1258,27 @@ could not be reproduced, or that need a design decision, are listed at the end.
   yearly workout count are null when their raw table is absent and zero only when
   it exists without rows (decision 020). Legacy builds are unchanged.
 
+### Review follow-ups
+
+An independent review of the combined diff found two regressions it introduced,
+both reproduced before fixing. A scan reused a removed copy even when its file
+had to be read again (new cutoff or parser version), so every later sync failed
+with "Retention removed the stored copy"; it now restores the copy from the
+folder in that case. The setup page filtered a 20-row window, so a first scan of
+20+ files hid the sync behind its children; the newest request is now queried
+directly. Also: identical bytes arriving together (now possible within one
+process, since submission left the event loop) re-read the winning row instead
+of raising `IntegrityError`, and an intact stored copy is no longer replaced
+under a reader, only a damaged one. Prefect 4xx answers stay "unavailable"
+(503): they reflect the server's configuration, which a sender cannot fix but an
+operator can, after which a resend succeeds.
+
 ### Validation
 
-Ruff, ruff format and mypy are clean on the maintained slice. All 158 tests pass
+Ruff, ruff format and mypy are clean on the maintained slice. All 161 tests pass
 locally with Postgres 17.11 (136 before this batch), including the temporary
-Prefect API and Postgres/dbt scenarios; the new CI workflow ran the suite on
-PR #9. No image, deployment, live configuration or data changed.
+Prefect API and Postgres/dbt scenarios; CI ran the suite on PRs #9 and #10. No
+image, deployment, live configuration or data changed.
 
 ### Rollout notes and remaining work
 
@@ -1273,5 +1288,5 @@ Apply clears it. Browser and crossover dashboards show blanks instead of zeros
 where those tables were never delivered. Not changed here: GitHub windows by
 commit/author date can miss branches pushed or PRs merged more than three days
 late; browser rows are keyed by profile-local SQLite IDs; Health energy/distance
-units are assumed rather than read from the export; `register_artifact` and
-`put_secret` can race into a raw `IntegrityError` across processes.
+units are assumed rather than read from the export; `put_secret` can race into
+a raw `IntegrityError` across processes.

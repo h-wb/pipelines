@@ -62,6 +62,32 @@ class SubmitFailureTests(WebFixture):
         )
 
 
+class LatestRequestTests(WebFixture):
+    def test_a_backlog_of_child_imports_does_not_hide_the_sync(self):
+        miroir = self.service.miroir()
+        health = next(c for c in miroir.connections if c.config.id == "health")
+
+        def record(**values):
+            return self.store.create_operation(
+                miroir_id=miroir.id,
+                connection_id="health",
+                integration=health.integration.name,
+                origin="local",
+                pipeline_name=health.binding.pipeline_name,
+                dataset_name=health.binding.dataset_name,
+                config_revision=health.revision,
+                code_revision="test",
+                **values,
+            )
+
+        sync = record(kind="sync")
+        for _ in range(25):
+            record(kind="import", parent_operation_id=sync.id)
+        record(kind="models", analysis_id="health", parent_operation_id=sync.id)
+        self.assertEqual(self.service.latest_request("health")["id"], sync.id)
+        self.assertIsNone(self.service.latest_request("health", "webhook"))
+
+
 class CheckFailureTests(WebFixture):
     def test_unexpected_check_errors_are_recorded_and_redacted(self):
         def resolver():
@@ -98,10 +124,46 @@ class SmallCoreTests(unittest.TestCase):
         self.assertIsNone(failure_kind(error(403, **{"X-RateLimit-Remaining": "0"})))
         self.assertIsNone(failure_kind(error(403, **{"Retry-After": "60"})))
 
+    def test_identical_bytes_arriving_together_register_once(self):
+        import sqlalchemy as sa
+
+        from src.core.operations import MetadataStore
+
+        store = MetadataStore(f"sqlite:///{self.root / 'meta.sqlite'}")
+        self.addCleanup(store.engine.dispose)
+        store.migrate()
+        values = {
+            "miroir_id": "m",
+            "connection_id": "c",
+            "sha256": "0" * 64,
+            "size": 2,
+            "input_format": "f",
+            "options": "{}",
+            "origin": "webhook",
+            "original_name": "export.json",
+            "storage_path": "/x",
+            "retention": "keep",
+        }
+        original = MetadataStore._register_artifact
+        raced = []
+
+        def racing(self, values):
+            if not raced:  # the other request inserts between our read and write
+                raced.append(original(self, dict(values)))
+                raise sa.exc.IntegrityError("INSERT", {}, Exception("duplicate"))
+            return original(self, values)
+
+        with patch.object(MetadataStore, "_register_artifact", racing):
+            artifact, created = store.register_artifact(**values)
+        self.assertEqual((artifact["id"], created), (raced[0][0]["id"], False))
+
     def test_a_damaged_stored_copy_is_replaced_by_the_same_bytes(self):
         source = self.root / "export.json"
         source.write_text("{}")
         stored = receive_file(source, self.root / "artifacts", "m", "c").path
+        inode = stored.stat().st_ino
+        receive_file(source, self.root / "artifacts", "m", "c")
+        self.assertEqual(stored.stat().st_ino, inode)  # intact: left for its readers
         os.chmod(stored, 0o640)
         stored.write_text("damaged")
         again = receive_file(source, self.root / "artifacts", "m", "c")

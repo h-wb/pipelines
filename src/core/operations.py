@@ -629,8 +629,14 @@ class MetadataStore:
         limit: int = 20,
         *,
         analysis_id: str | None = None,
+        requests_only: bool = False,
+        origin: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Newest operations first, each with its attempts (oldest first)."""
+        """Newest operations first, each with its attempts (oldest first).
+
+        `requests_only` leaves out child imports and analysis builds, which
+        report under the sync or import that started them.
+        """
         with self.engine.connect() as db:
             rows = db.execute(
                 operations.select()
@@ -642,6 +648,13 @@ class MetadataStore:
                     operations.c.analysis_id == analysis_id
                     if analysis_id is not None
                     else sa.true(),
+                    sa.and_(
+                        operations.c.parent_operation_id.is_(None),
+                        operations.c.kind != "models",
+                    )
+                    if requests_only
+                    else sa.true(),
+                    operations.c.origin == origin if origin is not None else sa.true(),
                 )
                 .order_by(operations.c.created_at.desc())
                 .limit(limit)
@@ -978,6 +991,13 @@ class MetadataStore:
         them with different import options is refused: options decide which
         rows the file contributes.
         """
+        try:
+            return self._register_artifact(values)
+        except sa.exc.IntegrityError:
+            # The same bytes arrived concurrently; the other insert won.
+            return self._register_artifact(values)
+
+    def _register_artifact(self, values: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         scope = sa.and_(
             artifacts.c.miroir_id == values["miroir_id"],
             artifacts.c.connection_id == values["connection_id"],
