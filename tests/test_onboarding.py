@@ -121,6 +121,33 @@ class OnboardingTests(WebFixture):
         self.assertIn("Waiting for your first automatic export", waiting.text)
         self.assertNotIn("imported successfully", waiting.text)
 
+    def test_setup_shows_success_when_the_import_also_builds_its_analysis(self):
+        self.transform = lambda plan: None  # imports start child builds, as deployed
+        created = self.add_form("upload")
+        self.client.post(
+            "/connections/new_health/upload",
+            files={"file": ("export.json", json.dumps(export(("2026-06-05", 1))))},
+            data={"option.role": "ongoing", "import_now": "true"},
+        )
+        latest = self.service.connection("new_health")["operations"][0]
+        self.assertEqual(latest["kind"], "models")
+        setup = self.client.get(created.headers["location"])
+        self.assertIn("Your data was imported successfully", setup.text)
+        self.assertNotIn('http-equiv="refresh"', setup.text)
+        enabled = self.client.post(
+            "/connections/new_health/setup", data={"method": "webhook"}
+        )
+        token = re.search(r'value="Bearer ([^"]+)"', enabled.text)[1]
+        self.client.post(
+            "/api/connections/new_health/receive",
+            headers={"Authorization": f"Bearer {token}"},
+            content=json.dumps(export(("2026-06-06", 2))),
+        )
+        complete = self.client.get("/connections/new_health/setup?method=webhook")
+        self.assertIn(
+            "An automatic export was received and imported successfully", complete.text
+        )
+
     def test_setup_failure_is_retryable_and_scopes_execution_to_one_connection(self):
         self.add_form("webhook")
         backend = Mock()

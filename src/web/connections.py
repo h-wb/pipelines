@@ -113,10 +113,13 @@ def connection_pages(service: MiroirService, page: Page) -> APIRouter:
     ) -> HTMLResponse:
         view = service.connection_settings(connection_id)
         selected = service.setup_method(view["integration"]["name"], method)
+        # Child imports and analysis builds report under the request that started them.
         operations = [
             operation
             for operation in view["connection"]["operations"]
-            if selected["id"] != "webhook" or operation["origin"] == "webhook"
+            if operation["kind"] != "models"
+            and not operation["parent_operation_id"]
+            and (selected["id"] != "webhook" or operation["origin"] == "webhook")
         ]
         latest = operations[0] if operations else None
         attempt = latest["attempts"][-1] if latest and latest["attempts"] else None
