@@ -176,6 +176,21 @@ class BrowserSnapshotTests(unittest.TestCase):
             with self.assertRaises(InvalidArtifact):
                 self.validate(path)
 
+    def test_truncated_or_corrupt_gzip_snapshots_are_rejected(self):
+        compressed = gzip.compress(places(self.root / "places.sqlite").read_bytes())
+        for name, data in (
+            ("half-written", compressed[: len(compressed) // 2]),
+            (
+                "corrupt",
+                compressed[:10] + bytes(len(compressed) - 18) + compressed[-8:],
+            ),
+            ("bad-checksum", compressed[:-8] + bytes(8)),
+        ):
+            path = self.root / f"{name}.sqlite.gz"
+            path.write_bytes(data)
+            with self.subTest(name), self.assertRaises(InvalidArtifact):
+                self.validate(path)
+
     def test_snapshots_take_no_import_options(self):
         miroir = parse(
             {"id": "browsing", "integration": "browser_history", "settings": {}}
