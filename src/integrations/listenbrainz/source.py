@@ -41,7 +41,7 @@ class ListenBrainzPaginator(BasePaginator):
             self._has_next_page = False
             return
         next_min_ts = max(listen["listened_at"] for listen in listens) - 1
-        if next_min_ts < self._min_ts:
+        if next_min_ts <= self._min_ts:
             raise RuntimeError(
                 f"ListenBrainz page did not advance past min_ts={self._min_ts}"
             )
