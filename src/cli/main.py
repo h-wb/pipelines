@@ -254,6 +254,7 @@ def _orchestrator(args: argparse.Namespace, store: Any, miroir: Any) -> Any:
 def _orchestrate(
     args: argparse.Namespace, miroir: Any, store: Any, secrets: Any
 ) -> int:
+    from src.core.operations import OperationError
     from src.core.service import MiroirService
 
     store.migrate()
@@ -268,13 +269,17 @@ def _orchestrate(
     service = MiroirService(
         args.config, store, Path(DEFAULT_ARTIFACTS), orchestrator, secrets, orchestrator
     )
-    if args.command == "refresh":
-        return _print(service.refresh())
-    if args.command == "models":
-        return _print({"operation_id": service.request_models(args.analysis)})
-    if args.action == "plan":
-        return _print(service.deployments_plan())
-    return _print({"applied": service.deployments_apply()})
+    try:
+        if args.command == "refresh":
+            return _print(service.refresh())
+        if args.command == "models":
+            return _print({"operation_id": service.request_models(args.analysis)})
+        if args.action == "plan":
+            return _print(service.deployments_plan())
+        return _print({"applied": service.deployments_apply()})
+    except (ConfigurationError, OperationError) as error:
+        print(str(error), file=sys.stderr)
+        return 1
 
 
 def _credentials(args: argparse.Namespace, store: Any, secrets: Any) -> int:
