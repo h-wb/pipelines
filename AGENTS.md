@@ -130,25 +130,24 @@ deployments clone `main` at run time, so a broken model on `main` is live at onc
 
 ## Known remaining work (2026-10-31)
 
-- Add a schedule to the ListenBrainz connection (cron in config → Apply
-  deployments). First sync already succeeded end to end.
 - Apple Health n8n cutover (decision 009): point Health Auto Export at
   `POST /api/connections/health/receive` with a connection-specific delivery token
   (decision 017 is deployed). Folder-free setup and token management are live;
   real phone delivery is verified. Metadata schema 6 requires updating the server,
   worker, and flow-run image together.
-- Legacy cutover: GitHub is done (2026-11-11: connection `github` bound to
-  `github`/`github_data`; legacy `load-github` paused, delete it after a few
-  clean nights). Next: map ListenBrainz to `listenbrainz_data` the same way,
-  then Bike Share; browser history needs snapshot delivery first. Delete the
-  stale `workspace-k8s` Prefect pool; eventually retire `local-pool`.
+- Legacy cutover (2026-11-11): GitHub and ListenBrainz run on Miroir, bound
+  to `github_data` and `listenbrainz_data`; legacy `load-github` and
+  `load-listenbrainz` are paused, delete them after a few clean nights. The
+  old `ws_8_personal_listenbrainz` schema is unused and can be dropped. Next:
+  Bike Share; browser history needs snapshot delivery first. Delete the stale
+  `workspace-k8s` Prefect pool; eventually retire `local-pool`.
 - Cloud blockers (decision-adjacent, from the OSS+hosted analysis):
   per-tenant key separation, artifact storage abstraction (NFS paths are
   absolute on purpose today — they must resolve identically everywhere),
   multi-tenant metadata partitioning, accounts/OIDC.
 - Cosmetic: generated dataset bindings still use the `ws_` prefix (pre-rename
-  abbreviation). Bindings derive at parse time and the live ListenBrainz and
-  Health data sits in those schemas, so pin explicit bindings before renaming.
+  abbreviation). Bindings derive at parse time and the live Health data sits in
+  that schema, so pin an explicit binding before renaming.
 - Audit leftovers (2026-11-11 log entry): GitHub date windows can miss late
   pushes/merges; browser rows keyed by profile-local SQLite IDs; Health units
   assumed, not read; `put_secret` cross-process race.

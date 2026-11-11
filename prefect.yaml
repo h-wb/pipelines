@@ -27,24 +27,6 @@ pull:
     script: uv pip install .
 
 deployments:
-- name: load_listenbrainz
-  version: null
-  tags: []
-  description: null
-  schedule:
-    cron: '0 0 * * *'
-  flow_name: load_listenbrainz
-  entrypoint: src/pipelines/listenbrainz.py:load_listenbrainz
-  parameters: {}
-  work_pool:
-    <<: *default_work_pool
-    job_variables:
-      env:
-        <<: *base_env
-        LISTENBRAINZ__USERNAME: "{{ $LISTENBRAINZ__USERNAME }}"
-        LISTENBRAINZ__ACCESS_TOKEN: "{{ $LISTENBRAINZ__ACCESS_TOKEN }}"
-        LISTENBRAINZ__START_DATE: "{{ $LISTENBRAINZ__START_DATE }}"
-
 - name: load_apple_health
   version: null
   tags: []
