@@ -16,6 +16,8 @@ from src.core.config import ResolvedConnection, ResolvedMiroir
 from src.core.operations import MetadataStore, OperationError
 
 FLOW_NAME = "sync-connection"
+# Prefect queues overlapping runs of one connection.
+CONCURRENCY_LIMIT = 1
 
 
 def _readable_errors(function: Callable[..., Any]) -> Callable[..., Any]:
@@ -67,6 +69,7 @@ class DeploymentSpec:
             "work_pool": self.work_pool,
             "image": self.image,
             "job_variables": self.job_variables,
+            "concurrency_limit": CONCURRENCY_LIMIT,
         }
 
 
@@ -155,21 +158,27 @@ class PrefectOrchestrator:
             )
         result = {}
         for deployment in deployments:
-            crons = [
+            # Non-cron schedules are never ours, so any of them is drift.
+            schedules = [
                 (s.schedule.cron, s.schedule.timezone)
-                for s in deployment.schedules
                 if isinstance(s.schedule, CronSchedule)
+                else s.schedule.model_dump(mode="json", exclude_none=True)
+                for s in deployment.schedules
             ]
             variables = dict(deployment.job_variables or {})
             image = variables.pop("image", None)
+            limit = deployment.global_concurrency_limit
             result[deployment.name] = {
                 "id": str(deployment.id),
                 "comparable": {
                     "parameters": dict(deployment.parameters or {}),
-                    "schedule": crons[0] if len(crons) == 1 else (crons or None),
+                    "schedule": schedules[0]
+                    if len(schedules) == 1
+                    else (schedules or None),
                     "work_pool": deployment.work_pool_name,
                     "image": image,
                     "job_variables": variables,
+                    "concurrency_limit": limit.limit if limit else None,
                 },
             }
         return result
@@ -236,7 +245,7 @@ class PrefectOrchestrator:
                     else [],
                     work_pool_name=spec.work_pool,
                     job_variables=spec.job_variables,
-                    concurrency_limit=1,  # Prefect queues overlapping runs of a connection
+                    concurrency_limit=CONCURRENCY_LIMIT,
                     tags=["miroir", self._tag(miroir)],
                 )
             )
