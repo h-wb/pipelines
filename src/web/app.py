@@ -21,7 +21,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.templating import Jinja2Templates
 
 from src.core.config import ConfigurationConflict, ConfigurationError
-from src.core.operations import OperationError
+from src.core.operations import OperationError, OrchestratorUnavailable
 from src.core.secrets import SecretKeyError, SecretResolutionError
 from src.core.service import MiroirService
 from src.integrations.validation import InvalidArtifact
@@ -60,6 +60,23 @@ class UploadTooLarge(ValueError):
 
 class Unauthorized(Exception):
     pass
+
+
+def error_status(error: Exception) -> int:
+    """HTTP status of a product error. 503 asks clients to retry later."""
+    from src.core.runner import AlreadyImported
+
+    if isinstance(error, (ConfigurationConflict, AlreadyImported)):
+        return 409
+    if isinstance(error, UploadTooLarge):
+        return 413
+    # Services may re-raise an outage with context (`raise ... from`).
+    cause: BaseException | None = error
+    while cause is not None:
+        if isinstance(cause, OrchestratorUnavailable):
+            return 503
+        cause = cause.__cause__
+    return 400
 
 
 def create_app(
@@ -108,13 +125,7 @@ def create_app(
         return await call_next(request)
 
     async def known_error(request: Request, error: Exception) -> Response:
-        from src.core.runner import AlreadyImported
-
-        status = 400
-        if isinstance(error, (ConfigurationConflict, AlreadyImported)):
-            status = 409
-        elif isinstance(error, UploadTooLarge):
-            status = 413
+        status = error_status(error)
         if request.url.path.startswith("/api/"):
             return JSONResponse({"error": str(error)}, status_code=status)
         return templates.TemplateResponse(
