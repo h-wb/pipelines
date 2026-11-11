@@ -1290,3 +1290,29 @@ commit/author date can miss branches pushed or PRs merged more than three days
 late; browser rows are keyed by profile-local SQLite IDs; Health energy/distance
 units are assumed rather than read from the export; `put_secret` can race into
 a raw `IntegrityError` across processes.
+
+
+## 2026-11-11 — Deployed sha-49bd0d3b (PRs #9 and #11)
+
+Before: the server and worker ran `sha-da771418…` (home-ops `e3291d602`, pinned
+this morning for PR #8, whose `github_commits` model Postgres rejects), while the
+live configuration and both Prefect deployments still ran `sha-43f2838e…`. No
+Miroir runs were active; Miroir has no GitHub connection, and no legacy run
+started while `main` carried the broken model. No metadata schema change.
+
+- Saved the configuration, overview, plan and analyses under
+  `~/.local/state/miroir/releases/20261111T162743Z/` (private permissions).
+- Set `deployment.image` to `sha-49bd0d3b8ac74e5a585dc99f74793c2792a2fca6`
+  through the API and applied the two image-only deployment updates.
+- Home-ops `436c98e85` pins the server and worker; Flux applied it (Helm
+  releases miroir v16 and prefect v60 ready, both pods on the new image).
+- The new server's plan, which now also compares concurrency limits and every
+  schedule, is empty. Model-only rebuilds of both analyses ran in Jobs
+  `aloof-bobcat-bvwqk` and `humorous-ladybug-pkv6g` on the new image: ingestion
+  `not_run`, models `succeeded`, both analyses `current`.
+
+Left as found: eight operations recorded before this release without any attempt
+(a ListenBrainz sync from 2026-10-29 and seven older Health operations) still
+count as requested and keep those pages refreshing; the release stops new ones
+but does not close old ones. The legacy GitHub load and nightly dbt pick up the
+repaired model from `main` at their next runs (01:00 and 03:00 UTC).
