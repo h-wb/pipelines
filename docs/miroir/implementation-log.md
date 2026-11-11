@@ -1429,3 +1429,23 @@ merge keys, and file imports carry no cursor.
 Left for the operator: disable the n8n Health workflow; drop the unused
 `ws_8_personal_health` schema. Rollback: unbind `health` (its generated schema is
 untouched) and resume `load-apple-health`.
+
+
+## 2026-11-11 — Refresh closes requests that never got a run
+
+Eight operations recorded before the audit release had no flow run and no
+attempt (a ListenBrainz sync from 2026-10-29 whose submission failed, and seven
+older Health requests). The release stopped new ones, but `observe` only sees
+operations with a backend run, so nothing closed these: they counted as
+requested forever and kept the overview and connection pages auto-refreshing.
+
+- `refresh` first closes requests older than an hour with no backend run (their
+  own or their parent's) and no attempt, recording a `blocked` attempt
+  (`NeverStarted`), then observes as before. Recent requests, queued flow runs
+  and children of a run are untouched.
+- `put_secret` retries once after a unique-key conflict, so a credential set
+  concurrently ends as an update instead of a raw `IntegrityError` (the last
+  open race from the audit).
+
+Validation: ruff, ruff format and mypy clean on the slice; 163 tests pass,
+including both new cases.

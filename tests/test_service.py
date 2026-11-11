@@ -88,6 +88,47 @@ class LatestRequestTests(WebFixture):
         self.assertIsNone(self.service.latest_request("health", "webhook"))
 
 
+class NeverStartedTests(WebFixture):
+    def test_refresh_closes_old_requests_that_never_got_a_run(self):
+        from datetime import datetime, timedelta, timezone
+
+        miroir = self.service.miroir()
+        music = next(c for c in miroir.connections if c.config.id == "music")
+        old = datetime.now(timezone.utc) - timedelta(hours=2)
+
+        def record(**values):
+            return self.store.create_operation(
+                miroir_id=miroir.id,
+                connection_id="music",
+                integration=music.integration.name,
+                kind="sync",
+                origin="request",
+                pipeline_name=music.binding.pipeline_name,
+                dataset_name=music.binding.dataset_name,
+                config_revision=music.revision,
+                code_revision="test",
+                **values,
+            )
+
+        stuck = record(created_at=old)
+        recent = record()
+        running = record(created_at=old, backend_run_id="run-1")
+        child = record(created_at=old, parent_operation_id=running.id)
+        self.assertEqual(
+            self.store.connection_status(miroir.id, "music")["requested_not_started"], 4
+        )
+        self.service.orchestrator = SimpleNamespace(observe=lambda miroir: [])
+        closed = self.service.refresh()
+        self.assertEqual([c["operation_id"] for c in closed], [stuck.id])
+        attempt = self.store.attempts(stuck.id)[-1]
+        self.assertEqual(
+            (attempt["ingestion"], attempt["error_type"]), ("blocked", "NeverStarted")
+        )
+        for untouched in (recent, running, child):
+            self.assertEqual(self.store.attempts(untouched.id), [])
+        self.assertEqual(self.service.refresh(), [])
+
+
 class CheckFailureTests(WebFixture):
     def test_unexpected_check_errors_are_recorded_and_redacted(self):
         def resolver():
@@ -156,6 +197,27 @@ class SmallCoreTests(unittest.TestCase):
         with patch.object(MetadataStore, "_register_artifact", racing):
             artifact, created = store.register_artifact(**values)
         self.assertEqual((artifact["id"], created), (raced[0][0]["id"], False))
+
+    def test_a_secret_set_concurrently_ends_as_the_later_value(self):
+        import sqlalchemy as sa
+
+        from src.core.operations import MetadataStore
+
+        store = MetadataStore(f"sqlite:///{self.root / 'secrets.sqlite'}")
+        self.addCleanup(store.engine.dispose)
+        store.migrate()
+        original = MetadataStore._put_secret
+        raced = []
+
+        def racing(self, *args):
+            if not raced:  # another request inserts first
+                raced.append(original(self, "m", "c", "token", b"other"))
+                raise sa.exc.IntegrityError("INSERT", {}, Exception("duplicate"))
+            return original(self, *args)
+
+        with patch.object(MetadataStore, "_put_secret", racing):
+            store.put_secret("m", "c", "token", b"mine")
+        self.assertEqual(store.get_secret("m", "c", "token"), b"mine")
 
     def test_a_damaged_stored_copy_is_replaced_by_the_same_bytes(self):
         source = self.root / "export.json"

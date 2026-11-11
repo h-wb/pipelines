@@ -44,7 +44,7 @@ Miroir (decision 014); history keeps its own words.
 - `src/analyses/catalog.py` — analysis packages (typed input roles, dbt selector,
   outputs, parameters, version); top-level config analyses link connections to
   those roles. Integrations recommend a default package by ID (decision 022).
-- `tests/` — unittest; no pytest. 161 tests, ~155s, include four against a real
+- `tests/` — unittest; no pytest. 163 tests, ~160s, include four against a real
   temporary Prefect API (`prefect_test_harness`), CLI subprocess tests, and seven
   disposable Postgres/dbt scenarios (set `MIROIR_TEST_POSTGRES_BIN` to the bin
   directory of an installed Postgres, or put `initdb`/`pg_ctl` on PATH; in this
@@ -148,4 +148,4 @@ deployments clone `main` at run time, so a broken model on `main` is live at onc
   it only affects new connections.
 - Audit leftovers (2026-11-11 log entry): GitHub date windows can miss late
   pushes/merges; browser rows keyed by profile-local SQLite IDs; Health units
-  assumed, not read; `put_secret` cross-process race.
+  assumed, not read.

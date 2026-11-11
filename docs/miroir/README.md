@@ -246,7 +246,9 @@ Each connection gets one deployment of `sync_connection`
 edits in Prefect show as drift; `apply` performs them. With the pool configured,
 `serve` submits requested syncs as Prefect flow runs (idempotent on the operation
 ID) instead of subprocesses. `refresh` closes attempts whose flow run ended
-without recording an outcome: crashed becomes `lost`, cancelled `cancelled`.
+without recording an outcome: crashed becomes `lost`, cancelled `cancelled`. It
+also closes requests that never got a run after an hour (no flow run, no
+attempt) as `blocked` with `NeverStarted`, so they stop showing as requested.
 
 On the cluster this is deployed (decisions 012, 015): the image
 `ghcr.io/h-wb/pipelines` is built in CI from `uv.lock` (Python 3.12, Prefect
