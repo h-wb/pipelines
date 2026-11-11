@@ -147,6 +147,15 @@ class PrefectAdapterTests(unittest.TestCase):
         )
         self.converge(hourly)
 
+        # Prefect updates slugged schedules in place; apply still removes them.
+        with get_client(sync_client=True) as client:
+            client._client.post(
+                f"/deployments/{health}/schedules",
+                json=[{"schedule": {"interval": 3600}, "active": True, "slug": "hand"}],
+            ).raise_for_status()
+        self.assertEqual(len(self.orchestrator.plan(hourly)), 1)
+        self.converge(hourly)
+
         # ...and a removed connection is a delete.
         removed = miroir(
             schedule={"cron": "0 * * * *", "timezone": "Europe/Paris"}, drop_health=True
