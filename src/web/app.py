@@ -79,6 +79,13 @@ def error_status(error: Exception) -> int:
     return 400
 
 
+async def json_body(request: Request) -> Any:
+    try:
+        return await request.json()
+    except ValueError:  # also UnicodeDecodeError
+        raise OperationError("The request body must be valid JSON") from None
+
+
 def create_app(
     service: MiroirService, token: str, max_upload_bytes: int = DEFAULT_MAX_UPLOAD
 ) -> FastAPI:
@@ -217,7 +224,7 @@ def create_app(
 
     @app.post("/api/analyses", status_code=201)
     async def api_create_analysis(request: Request) -> dict:
-        body = await request.json()
+        body = await json_body(request)
         if not isinstance(body, dict) or not isinstance(body.get("inputs"), dict):
             raise OperationError("Expected {id, package, inputs, timezone}")
         analysis_id = service.create_analysis(
@@ -231,7 +238,7 @@ def create_app(
 
     @app.put("/api/analyses/{analysis_id}")
     async def api_update_analysis(request: Request, analysis_id: str) -> dict:
-        values = await request.json()
+        values = await json_body(request)
         allowed = {"timezone", "parameters", "inputs", "dashboards"}
         if not isinstance(values, dict) or set(values) - allowed:
             raise OperationError(f"Expected an object with {sorted(allowed)}")
@@ -337,7 +344,7 @@ def create_app(
     @app.post("/api/connections", status_code=201)
     async def api_create_connection(request: Request) -> dict:
         """Body: {"integration", "id", "settings": {...}, "credentials": {name: value}}."""
-        body = await request.json()
+        body = await json_body(request)
         if not isinstance(body, dict):
             raise OperationError("Expected a JSON object")
         connection_id = service.create_connection(
@@ -353,7 +360,7 @@ def create_app(
     async def api_save_connection_settings(
         request: Request, connection_id: str
     ) -> dict:
-        settings = await request.json()
+        settings = await json_body(request)
         if not isinstance(settings, dict):
             raise OperationError("Expected a settings object")
         service.update_connection_settings(
@@ -371,7 +378,7 @@ def create_app(
         request: Request, connection_id: str, name: str
     ) -> Response:
         """Body: {"value": "..."}. The value is never returned by any endpoint."""
-        body = await request.json()
+        body = await json_body(request)
         value = body.get("value") if isinstance(body, dict) else None
         if not isinstance(value, str):
             raise OperationError('Expected {"value": "..."}')
@@ -415,7 +422,10 @@ def create_app(
             raise OperationError(
                 "If-Match with the file_revision you edited is required"
             )
-        text = (await request.body()).decode("utf-8")
+        try:
+            text = (await request.body()).decode("utf-8")
+        except UnicodeDecodeError:
+            raise OperationError("The configuration must be UTF-8 text") from None
         miroir = service.save_configuration(text, expected)
         return {"saved": True, "revision": miroir.revision}
 
