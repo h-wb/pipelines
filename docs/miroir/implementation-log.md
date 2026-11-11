@@ -1348,3 +1348,32 @@ The first legacy connector moved to Miroir with its history in place.
 Not checked: warehouse row counts. This agent does not read the Metabase
 warehouse; compare `github_data` counts in Metabase if wanted. Rollback: pause
 `personal-github`, resume `load-github`.
+
+
+## 2026-11-11 — ListenBrainz cut over to Miroir (decision 021)
+
+The existing Miroir connection `listenbrainz` loaded its own generated schema
+`ws_8_personal_listenbrainz` (from a 2026-10-01 start date, no schedule) while
+legacy `load-listenbrainz` filled `listenbrainz_data` nightly at 00:00 UTC. Both
+sources use source `listenbrainz`, resource `listens`, key
+`(listened_at, recording_msid)` and cursor `listened_at`, so a binding change
+resumes the legacy cursor.
+
+- Paused `load-listenbrainz` (last run completed 2026-11-11 00:00; its queued
+  runs were dropped). Saved the configuration under
+  `~/.local/state/miroir/releases/20261111T205618Z/`.
+- Bound the connection to `listenbrainz`/`listenbrainz_data`, set its
+  `start_date` to the legacy one (2019-06-11), and gave it the legacy schedule
+  (00:00 UTC). The plan was a schedule-only update of `personal-listenbrainz`.
+- First bound sync (flow run `beautiful-dragon`): ingestion and the music
+  analysis build succeeded; the whole run took 9.3 s. With a 2019 start date, a
+  lost cursor would have re-read six years at 1.5 s per 1,000-listen page, so the
+  legacy state carried over. The analysis now reads the full legacy history.
+- `load_listenbrainz` is removed from `prefect.yaml`, and the deploy task no
+  longer receives the ListenBrainz token. The paused deployment stays as a
+  rollback path; the legacy nightly `run_dbt` keeps building `music.*` from
+  `listenbrainz_data`.
+
+Not done: the old `ws_8_personal_listenbrainz` schema is left in the warehouse
+(nothing reads it; drop it when convenient). Rollback: pause
+`personal-listenbrainz`, resume `load-listenbrainz`.
