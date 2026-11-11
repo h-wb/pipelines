@@ -136,9 +136,21 @@ def github_source(
                         break
                 yield from page[0]["items"]
 
-    def commit_with_stats(repo: str, sha: str) -> Dict[str, Any]:
-        """Single-commit endpoint: the list endpoints have no line stats."""
+    def pages(path: str, **kwargs: Any) -> Iterator[Any]:
+        """`client.paginate`, ending quietly on 404: a repo or branch listed
+        earlier in the run can be deleted before it is read."""
+        try:
+            yield from client.paginate(path, **kwargs)
+        except HTTPError as e:
+            if e.response is None or e.response.status_code != 404:
+                raise
+
+    def commit_with_stats(repo: str, sha: str) -> Optional[Dict[str, Any]]:
+        """Single-commit endpoint: the list endpoints have no line stats.
+        None when the commit is gone (its branch or repo was deleted mid-run)."""
         response = client.get(f"/repos/{repo}/commits/{sha}")
+        if response.status_code == 404:
+            return None
         response.raise_for_status()
         commit = response.json()
         commit.pop("files", None)  # per-file patches: the full diff, far too big
@@ -213,22 +225,17 @@ def github_source(
         start = _iso(since(first=repo_start))
         for repo in owned_repos():
             try:
-                branches = [b["name"] for page in client.paginate(f"/repos/{repo}/branches", params={"per_page": 100}) for b in page]
+                branches = [b["name"] for page in pages(f"/repos/{repo}/branches", params={"per_page": 100}) for b in page]
             except HTTPError as e:
                 if e.response is not None and e.response.status_code == 409:
                     continue  # empty repository
                 raise
             seen = set()  # a commit shows up on every branch that contains it
             for branch in branches:
-                try:
-                    for page in client.paginate(f"/repos/{repo}/commits", params={"sha": branch, "since": start, "per_page": 100}):
-                        new = [c["sha"] for c in page if c["sha"] not in seen]
-                        seen.update(new)
-                        yield [commit_with_stats(repo, sha) for sha in new]
-                except HTTPError as e:
-                    if e.response is not None and e.response.status_code == 404:
-                        continue  # branch deleted between listing and reading it
-                    raise
+                for page in pages(f"/repos/{repo}/commits", params={"sha": branch, "since": start, "per_page": 100}):
+                    new = [c["sha"] for c in page if c["sha"] not in seen]
+                    seen.update(new)
+                    yield [c for c in (commit_with_stats(repo, sha) for sha in new) if c is not None]
         mark(run_started)
 
     @dlt.resource(write_disposition="merge", primary_key="html_url")
@@ -238,7 +245,7 @@ def github_source(
         for repo in owned_repos():
             # no `since` on this endpoint: walk newest-updated first, stop past the window
             params = {"state": "all", "sort": "updated", "direction": "desc", "per_page": 100}
-            for page in client.paginate(f"/repos/{repo}/pulls", params=params):
+            for page in pages(f"/repos/{repo}/pulls", params=params):
                 fresh = [p for p in page if pendulum.parse(p["updated_at"]) >= start]
                 yield fresh
                 if len(fresh) < len(page):
@@ -251,7 +258,7 @@ def github_source(
         run_started = pendulum.now("UTC")
         params = {"state": "all", "since": _iso(since(first=repo_start)), "per_page": 100}
         for repo in owned_repos():
-            for page in client.paginate(f"/repos/{repo}/issues", params=params):
+            for page in pages(f"/repos/{repo}/issues", params=params):
                 yield page
         mark(run_started)
 
@@ -260,7 +267,7 @@ def github_source(
         run_started = pendulum.now("UTC")
         params = {"since": _iso(since(first=repo_start)), "sort": "updated", "direction": "asc", "per_page": 100}
         for repo in owned_repos():
-            for page in client.paginate(f"/repos/{repo}/issues/comments", params=params):
+            for page in pages(f"/repos/{repo}/issues/comments", params=params):
                 yield page
         mark(run_started)
 
@@ -268,7 +275,7 @@ def github_source(
     def releases() -> TDataItems:
         # small enough to re-read in full every night
         for repo in owned_repos():
-            for page in client.paginate(f"/repos/{repo}/releases", params={"per_page": 100}):
+            for page in pages(f"/repos/{repo}/releases", params={"per_page": 100}):
                 yield page
 
     # --- my activity in other people's repos (search) ------------------------------
@@ -280,7 +287,9 @@ def github_source(
         # the search only indexes default branches
         run_started = pendulum.now("UTC")
         for c in search("/search/commits", external, "author-date", since(), run_started):
-            yield commit_with_stats(c["repository"]["full_name"], c["sha"])
+            commit = commit_with_stats(c["repository"]["full_name"], c["sha"])
+            if commit is not None:
+                yield commit
         mark(run_started)
 
     @dlt.resource(write_disposition="merge", primary_key="html_url")

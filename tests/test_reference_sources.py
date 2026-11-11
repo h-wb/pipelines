@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlsplit
 import dlt
 import duckdb
 import requests
+from requests.hooks import dispatch_hook
 
 from src.core.config import parse_miroir
 from src.integrations.sources import open_fetch, open_import
@@ -138,6 +139,77 @@ class ReferenceSourceTests(unittest.TestCase):
                 f'SELECT DISTINCT source FROM "{connection.binding.dataset_name}".metrics'
             ).fetchall()
         self.assertEqual(sources, [("unknown",)])
+
+    def test_github_skips_repos_branches_and_commits_deleted_mid_run(self):
+        connection = parse_miroir(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "id": "tests",
+                    "connections": [
+                        {
+                            "id": "code",
+                            "integration": "github",
+                            "settings": {"username": "octo-cat"},
+                            "credentials": {
+                                "access_token": {"provider": "env", "key": "UNUSED"}
+                            },
+                            "resources": ["commits"],
+                        }
+                    ],
+                }
+            )
+        ).connections[0]
+        live = "/repos/octo-cat/live"
+        routes = {
+            "/user": {"login": "octo-cat", "created_at": "2020-01-01T00:00:00Z"},
+            "/user/repos": [
+                {"full_name": "octo-cat/gone"},
+                {"full_name": "octo-cat/live"},
+            ],
+            f"{live}/branches": [{"name": n} for n in ("main", "merged", "pruned")],
+            f"{live}/commits?main": [{"sha": "a"}],
+            f"{live}/commits?pruned": [{"sha": "b"}],
+            f"{live}/commits/a": {
+                "sha": "a",
+                "html_url": "https://github.com/octo-cat/live/commit/a",
+                "files": [{"patch": "the whole diff"}],
+            },
+        }
+        failing: dict[str, int] = {}
+
+        def respond(session, request, **kwargs):
+            parsed = urlsplit(request.url)
+            branch = parse_qs(parsed.query).get("sha")
+            key = parsed.path + (f"?{branch[0]}" if branch else "")
+            response = requests.Response()
+            response.request = request
+            response.url = request.url
+            response.headers["Content-Type"] = "application/json"
+            response.status_code = failing.get(key, 200 if key in routes else 404)
+            response._content = json.dumps(routes.get(key, {})).encode()
+            # Session.send runs the response hooks, where dlt raises on errors.
+            return dispatch_hook("response", request.hooks, response, **kwargs)
+
+        with patch.object(requests.Session, "send", respond):
+            with open_fetch(connection, {"access_token": "t"}) as source:
+                self.pipeline(connection).run(source)
+            with duckdb.connect(str(self.database)) as db:
+                rows = db.execute(
+                    f'SELECT * FROM "{connection.binding.dataset_name}".commits'
+                )
+                columns = [c[0] for c in rows.description]
+                self.assertEqual(
+                    [r[columns.index("sha")] for r in rows.fetchall()], ["a"]
+                )
+            self.assertFalse(any(c.startswith("files") for c in columns))
+            # Anything other than "gone" still fails the run.
+            failing[f"{live}/commits?main"] = 403
+            with (
+                self.assertRaisesRegex(Exception, "403"),
+                open_fetch(connection, {"access_token": "t"}) as source,
+            ):
+                self.pipeline(connection, "second").run(source)
 
     def test_source_requires_explicit_credentials(self):
         connection = parse_miroir(json.dumps(example())).connections[0]
