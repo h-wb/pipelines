@@ -1449,3 +1449,10 @@ requested forever and kept the overview and connection pages auto-refreshing.
 
 Validation: ruff, ruff format and mypy clean on the slice; 163 tests pass,
 including both new cases.
+
+Deployed as `sha-7bf62e9a…` (home-ops `f86e060b7`); the plan stayed empty and
+`refresh` closed exactly the eight requests. It also exposed a status
+regression: each closure is a new attempt row, so connection status showed the
+`NeverStarted` closure as the ListenBrainz and Health "last attempt". A request
+that never ran is not something the connection did, so status now skips those
+closures (they stay in the operation history).

@@ -483,11 +483,19 @@ class MetadataStore:
         joined = attempts.join(operations)
         with self.engine.connect() as db:
             # A folder sync's child imports finish before the sync records its
-            # outcome; the sync itself is what the connection did.
+            # outcome; the sync itself is what the connection did. A request
+            # closed because it never ran is not something it did either.
             latest = db.execute(
                 sa.select(attempts, operations.c.origin, operations.c.backend_run_id)
                 .select_from(joined)
-                .where(scope, operations.c.parent_operation_id.is_(None))
+                .where(
+                    scope,
+                    operations.c.parent_operation_id.is_(None),
+                    sa.or_(
+                        attempts.c.error_type.is_(None),
+                        attempts.c.error_type != "NeverStarted",
+                    ),
+                )
                 .order_by(attempts.c.id.desc())
                 .limit(1)
             ).first()
