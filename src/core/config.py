@@ -4,11 +4,12 @@ import fcntl
 import hashlib
 import json
 import os
+import stat
 import tempfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal
-from urllib.parse import quote_plus
+from urllib.parse import quote
 
 from pydantic import (
     Field,
@@ -47,8 +48,9 @@ def metadata_url() -> str | None:
     database = os.environ.get("MIROIR_METADATA__DATABASE") or username
     # psycopg2 (the driver dlt already ships): SQLAlchemy's bare `postgresql://`
     # resolves to psycopg 3, which is not installed.
+    # quote, not quote_plus: SQLAlchemy decodes with unquote, so `+` would stay.
     return (
-        f"postgresql+psycopg2://{quote_plus(username)}:{quote_plus(password)}"
+        f"postgresql+psycopg2://{quote(username, safe='')}:{quote(password, safe='')}"
         f"@{host}:{port}/{database}"
     )
 
@@ -620,6 +622,8 @@ def save_miroir(path: Path, text: str, expected_revision: str) -> ResolvedMiroir
             )
         handle, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
         try:
+            if path.exists():  # mkstemp creates 0600; keep the file readable as it was
+                os.chmod(temporary, stat.S_IMODE(path.stat().st_mode))
             with os.fdopen(handle, "w", encoding="utf-8") as target:
                 target.write(text)
                 target.flush()
