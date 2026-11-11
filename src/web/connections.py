@@ -15,6 +15,7 @@ from src.core.config import ConfigurationConflict, ConfigurationError
 from src.core.operations import OperationError
 from src.core.secrets import SecretResolutionError
 from src.core.service import MiroirService
+from src.web.app import error_status
 
 Page = Callable[..., HTMLResponse]
 
@@ -213,7 +214,7 @@ def connection_pages(service: MiroirService, page: Page) -> APIRouter:
             )
         except OperationError as error:
             response = setup_page(request, connection_id, method, error=str(error))
-            response.status_code = 400
+            response.status_code = error_status(error)
             return response
 
     @router.get("/connections/{connection_id}/settings", response_class=HTMLResponse)
@@ -293,7 +294,7 @@ def connection_pages(service: MiroirService, page: Page) -> APIRouter:
             return setup_page(request, connection_id, "webhook", delivery_token=token)
         except OperationError as error:
             response = setup_page(request, connection_id, "webhook", error=str(error))
-            response.status_code = 400
+            response.status_code = error_status(error)
             return response
 
     @router.post("/connections/{connection_id}/delivery-token/revoke")

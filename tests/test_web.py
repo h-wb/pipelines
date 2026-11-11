@@ -11,14 +11,14 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import dlt
 import requests
 from fastapi.testclient import TestClient
 
 from src.core.config import load_miroir
-from src.core.operations import MetadataStore, OperationError
+from src.core.operations import MetadataStore, OperationError, OrchestratorUnavailable
 from src.core.runner import execute_operation
 from src.core.service import InlineExecutor, MiroirService, SubprocessExecutor
 from src.web.app import SESSION_COOKIE, create_app
@@ -375,6 +375,41 @@ class WebTests(WebFixture):
             "/api/connections/folder_health/sync", headers=BEARER
         )
         self.assertEqual(response.status_code, 202)
+
+    def test_unavailable_execution_is_503_and_a_resent_export_imports(self):
+        headers = self.delivery_headers()
+        url = "/api/connections/health/receive"
+        body = json.dumps(export(("2026-06-05", 1)))
+        working = self.service.executor
+        self.service.executor = Mock()
+        self.service.executor.submit.side_effect = OrchestratorUnavailable(
+            "Execution is unavailable; try again."
+        )
+        refused = self.client.post(url, content=body, headers=headers)
+        self.assertEqual(refused.status_code, 503)
+        self.assertIn("try again", refused.json()["error"])
+        self.assertEqual(len(self.service.artifacts("health")), 1)
+        self.service.executor = working
+        resent = self.client.post(url, content=body, headers=headers)
+        self.assertEqual(resent.status_code, 200)
+        self.assertFalse(resent.json()["new"])
+        imported = self.store.attempts(resent.json()["operation_id"])
+        self.assertEqual(imported[0]["ingestion"], "succeeded")
+        # Preparing execution wraps the adapter's error; it is still retryable.
+        self.service.orchestrator = Mock()
+        self.service.orchestrator.plan.side_effect = OrchestratorUnavailable(
+            "Execution is unavailable; try again."
+        )
+        self.assertEqual(
+            self.client.post("/api/connections/music/sync", headers=BEARER).status_code,
+            503,
+        )
+        self.login()
+        page = self.client.post("/connections/music/sync")
+        self.assertEqual(page.status_code, 503)
+        self.assertIn("Your connection is saved", page.text)
+        setup = self.client.post("/connections/health/setup", data={"method": "upload"})
+        self.assertEqual(setup.status_code, 503)
 
     def test_receive_rejects_bad_auth_invalid_json_and_oversized_files(self):
         url = "/api/connections/health/receive"
