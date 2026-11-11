@@ -19,6 +19,7 @@ from urllib.parse import urlsplit
 from fastapi import FastAPI, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 
 from src.core.config import ConfigurationConflict, ConfigurationError
 from src.core.operations import OperationError, OrchestratorUnavailable
@@ -29,6 +30,7 @@ from src.integrations.validation import InvalidArtifact
 SESSION_COOKIE = "miroir_session"
 DEFAULT_MAX_UPLOAD = 512 * 1024 * 1024
 CHUNK = 1024 * 1024
+MULTIPART_SLACK = 1024 * 1024  # form fields and part headers around the file
 # Query parameters of the upload API that are not import options.
 UPLOAD_PARAMETERS = {"import", "name", "format"}
 
@@ -111,6 +113,17 @@ def create_app(
             and urlsplit(origin).netloc != request.url.netloc
         ):
             raise Unauthorized
+
+    @app.middleware("http")
+    async def limit_body(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        # A multipart upload is spooled to disk before its handler can check it.
+        declared = request.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > max_upload_bytes + MULTIPART_SLACK:
+            message = f"Upload exceeds {max_upload_bytes} bytes"
+            return JSONResponse({"error": message}, status_code=413)
+        return await call_next(request)
 
     @app.middleware("http")
     async def require_login(
@@ -281,7 +294,8 @@ def create_app(
             if key not in UPLOAD_PARAMETERS
         }
         path = await save_stream(request.stream(), staging)
-        result = submit(
+        result = await run_in_threadpool(
+            submit,
             connection_id,
             path,
             options,
@@ -299,7 +313,8 @@ def create_app(
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         path = await save_stream(request.stream(), staging)
         try:
-            result = service.submit_file(
+            result = await run_in_threadpool(
+                service.submit_file,
                 connection_id,
                 path,
                 # Received files take the format's default import options.
@@ -508,7 +523,8 @@ def create_app(
             if key.startswith("option.")
         }
         path = await save_stream(upload_chunks(file), staging)
-        result = submit(
+        result = await run_in_threadpool(
+            submit,
             connection_id,
             path,
             options,

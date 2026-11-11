@@ -10,6 +10,7 @@ from typing import Any
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from starlette.concurrency import run_in_threadpool
 
 from src.core.config import ConfigurationConflict, ConfigurationError
 from src.core.operations import OperationError
@@ -132,7 +133,7 @@ def connection_pages(service: MiroirService, page: Page) -> APIRouter:
             )
             response.status_code = 400
             return response
-        service.check_connection(connection_id)
+        await run_in_threadpool(service.check_connection, connection_id)
         return RedirectResponse(
             f"/connections/{connection_id}/setup?method={selected['id']}",
             status_code=303,
@@ -245,7 +246,7 @@ def connection_pages(service: MiroirService, page: Page) -> APIRouter:
                 409 if isinstance(error, ConfigurationConflict) else 400
             )
             return response
-        service.check_connection(connection_id)
+        await run_in_threadpool(service.check_connection, connection_id)
         return back(connection_id, "saved")
 
     @router.post("/connections/{connection_id}/folder")
@@ -266,7 +267,7 @@ def connection_pages(service: MiroirService, page: Page) -> APIRouter:
                 409 if isinstance(error, ConfigurationConflict) else 400
             )
             return response
-        service.check_connection(connection_id)
+        await run_in_threadpool(service.check_connection, connection_id)
         return back(connection_id, "saved")
 
     @router.post("/connections/{connection_id}/credentials/{name}")
