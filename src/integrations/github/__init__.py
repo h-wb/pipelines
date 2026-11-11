@@ -26,11 +26,11 @@ class GitHubSettings(StrictModel):
 
 @contextmanager
 def open_fetch(settings: Any, credentials: dict[str, str]) -> Iterator[Any]:
-    import requests
+    from dlt.sources.helpers.requests import Client
 
     from src.integrations.github.source import github_source
 
-    with requests.Session() as session:
+    with Client(raise_for_status=False).session as session:
         yield github_source(
             username=settings.username,
             access_token=credentials["access_token"],
