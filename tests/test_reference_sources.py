@@ -211,6 +211,67 @@ class ReferenceSourceTests(unittest.TestCase):
             ):
                 self.pipeline(connection, "second").run(source)
 
+    def bikeshare(self):
+        secret = {"provider": "env", "key": "UNUSED"}
+        return parse_miroir(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "id": "tests",
+                    "connections": [
+                        {
+                            "id": "rides",
+                            "integration": "bikeshare",
+                            "settings": {},
+                            "credentials": {
+                                "member_id": secret,
+                                "authorization_token": secret,
+                            },
+                        }
+                    ],
+                }
+            )
+        ).connections[0]
+
+    def test_bikeshare_first_run_reads_every_page(self):
+        connection = self.bikeshare()
+        # Newest first, as the API serves them: more than two first-run pages.
+        trips = [
+            {"rentalId": n, "sd": 1_700_000_000_000 + n * 60_000}
+            for n in range(1100, 0, -1)
+        ]
+
+        offsets = []
+
+        def respond(session, request, **kwargs):
+            query = parse_qs(urlsplit(request.url).query)
+            offset, size = int(query["pageOffset"][0]), int(query["pageSize"][0])
+            offsets.append(offset)
+            response = requests.Response()
+            response.status_code = 200
+            response.request = request
+            response.url = request.url
+            response.headers["Content-Type"] = "application/json"
+            page = trips[offset : offset + size]
+            response._content = json.dumps({"rentals": {"closed": page}}).encode()
+            return response
+
+        credentials = {"member_id": "m", "authorization_token": "t"}
+        with patch.object(requests.Session, "send", respond):
+            with open_fetch(connection, credentials) as source:
+                self.pipeline(connection).run(source)
+            self.assertEqual(self.count(connection, "trips"), 1100)
+            # Later runs still stop after the first page wholly before the cursor.
+            trips[:0] = [
+                {"rentalId": n, "sd": 1_700_000_000_000 + n * 60_000}
+                for n in range(1110, 1100, -1)
+            ]
+            offsets.clear()
+            with open_fetch(connection, credentials) as source:
+                self.pipeline(connection).run(source)
+        self.assertEqual(self.count(connection, "trips"), 1110)
+        self.assertEqual(offsets, [0, 50])
+
     def test_source_requires_explicit_credentials(self):
         connection = parse_miroir(json.dumps(example())).connections[0]
         with self.assertRaises(ValueError), open_fetch(connection, {}):

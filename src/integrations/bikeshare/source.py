@@ -84,9 +84,10 @@ def bikeshare(
                 if len(trips_data) < page_size:
                     break
                 # Do not assume all records in an API page are sorted. Stop only
-                # after reading a whole page older than the committed boundary.
-                if sd.last_value and all(
-                    trip["sd"] < sd.last_value for trip in trips_data
+                # after reading a whole page older than the committed boundary
+                # (start_value: dlt advances last_value as pages are processed).
+                if sd.start_value and all(
+                    trip["sd"] < sd.start_value for trip in trips_data
                 ):
                     break
                 offset += page_size
