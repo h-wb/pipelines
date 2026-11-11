@@ -423,6 +423,24 @@ def _print(result: Any) -> int:
     return 0
 
 
+def _absolute_sqlite(url: str) -> str:
+    """The URL with a relative SQLite file resolved from this working directory."""
+    from sqlalchemy.engine import make_url
+
+    parsed = make_url(url)
+    path = parsed.database
+    if (
+        parsed.get_backend_name() != "sqlite"
+        or not path
+        or path == ":memory:"
+        or Path(path).is_absolute()
+    ):
+        return url
+    return parsed.set(database=str(Path(path).resolve())).render_as_string(
+        hide_password=False
+    )
+
+
 def _serve(args: argparse.Namespace, miroir: Any, store: Any, secrets: Any) -> int:
     import uvicorn
 
@@ -448,7 +466,7 @@ def _serve(args: argparse.Namespace, miroir: Any, store: Any, secrets: Any) -> i
             "--artifacts",
             str(args.artifacts.resolve()),
             "--metadata",
-            args.metadata,
+            _absolute_sqlite(args.metadata),
         ]
     )
     if secrets is None:
