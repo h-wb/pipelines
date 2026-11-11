@@ -110,6 +110,11 @@ class NeverStartedTests(WebFixture):
                 **values,
             )
 
+        synced = record(created_at=old)
+        attempt, _ = self.store.start_attempt(synced.id, "running")
+        self.store.update_attempt(
+            attempt, ingestion="succeeded", transformation="skipped"
+        )
         stuck = record(created_at=old)
         recent = record()
         running = record(created_at=old, backend_run_id="run-1")
@@ -127,6 +132,11 @@ class NeverStartedTests(WebFixture):
         for untouched in (recent, running, child):
             self.assertEqual(self.store.attempts(untouched.id), [])
         self.assertEqual(self.service.refresh(), [])
+        # The connection's last attempt is still the sync that ran.
+        last = self.store.connection_status(miroir.id, "music")["last_attempt"]
+        self.assertEqual(
+            (last["operation_id"], last["ingestion"]), (synced.id, "succeeded")
+        )
 
 
 class CheckFailureTests(WebFixture):
