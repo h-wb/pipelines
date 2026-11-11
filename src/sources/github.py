@@ -220,10 +220,15 @@ def github_source(
                 raise
             seen = set()  # a commit shows up on every branch that contains it
             for branch in branches:
-                for page in client.paginate(f"/repos/{repo}/commits", params={"sha": branch, "since": start, "per_page": 100}):
-                    new = [c["sha"] for c in page if c["sha"] not in seen]
-                    seen.update(new)
-                    yield [commit_with_stats(repo, sha) for sha in new]
+                try:
+                    for page in client.paginate(f"/repos/{repo}/commits", params={"sha": branch, "since": start, "per_page": 100}):
+                        new = [c["sha"] for c in page if c["sha"] not in seen]
+                        seen.update(new)
+                        yield [commit_with_stats(repo, sha) for sha in new]
+                except HTTPError as e:
+                    if e.response is not None and e.response.status_code == 404:
+                        continue  # branch deleted between listing and reading it
+                    raise
         mark(run_started)
 
     @dlt.resource(write_disposition="merge", primary_key="html_url")

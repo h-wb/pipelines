@@ -4,7 +4,12 @@
 -- or my name on commits made without an email. Forks carry upstream history: filter
 -- on is_fork_repo and not is_mine to drop it.
 with repos as (
-    {{ optional_input('github', 'repos', {'full_name': 'text', 'fork': 'boolean'}, ['full_name']) }}
+    -- dlt merges repos on `id`, so a repo deleted and recreated under the same
+    -- full_name leaves a stale row behind; joining both would duplicate every
+    -- commit of that repo. Keep one row per full_name, preferring the newest id.
+    select distinct on (full_name) full_name, fork
+    from {{ optional_input('github', 'repos', {'id': 'bigint', 'full_name': 'text', 'fork': 'boolean'}, ['full_name']) }}
+    order by full_name, id desc nulls last
 )
 select
     c.*,
