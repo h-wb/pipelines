@@ -8,7 +8,9 @@ with repos as (
     -- full_name leaves a stale row behind; joining both would duplicate every
     -- commit of that repo. Keep one row per full_name, preferring the newest id.
     select distinct on (full_name) full_name, fork
-    from {{ optional_input('github', 'repos', {'id': 'bigint', 'full_name': 'text', 'fork': 'boolean'}, ['full_name']) }}
+    from (
+        {{ optional_input('github', 'repos', {'id': 'bigint', 'full_name': 'text', 'fork': 'boolean'}, ['full_name']) }}
+    ) as raw_repos
     order by full_name, id desc nulls last
 )
 select

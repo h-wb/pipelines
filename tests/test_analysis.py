@@ -532,14 +532,21 @@ class DbtPostgresTests(unittest.TestCase):
             "('https://github.com/octo-cat/r/commit/a', 'a', 'me@example.org', now()), "
             "('https://github.com/octo-cat/r/commit/b', 'b', 'o''brien@x.org', now())"
         )
+        # A repo deleted and recreated under the same name keeps its stale row
+        # (dlt merges on id); the newest one decides, without duplicating commits.
+        self.query(
+            f"create table {raw}.repos (id bigint, full_name text, fork boolean); "
+            f"insert into {raw}.repos values (1, 'octo-cat/r', true), (2, 'octo-cat/r', false)"
+        )
         plan = analysis_plan(self.configuration([github]).analyses[0])
         build_connection_models(plan)
         commits = plan.relations[0]
         self.assertEqual(
             self.query(
-                f"select sha, is_mine, is_external_repo from {commits} order by sha"
+                f"select sha, is_mine, is_external_repo, is_fork_repo from {commits} "
+                "order by sha"
             ),
-            [("a", True, False), ("b", False, False)],
+            [("a", True, False, False), ("b", False, False, False)],
         )
 
     def test_browser_snapshot_import_builds_without_interaction_tables(self):
