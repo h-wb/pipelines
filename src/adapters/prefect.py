@@ -252,6 +252,8 @@ class PrefectOrchestrator:
                     client.delete_deployment(uuid.UUID(change["id"]))
                 continue
             spec = desired[change["deployment"]]
+            if change["action"] == "update":
+                self._drop_slugged_schedules(spec.name)
             deployment = _sync(
                 sync_connection.to_deployment(
                     name=spec.name,
@@ -266,6 +268,17 @@ class PrefectOrchestrator:
                 )
             )
             _sync(deployment.apply(work_pool_name=spec.work_pool, image=spec.image))
+
+    def _drop_slugged_schedules(self, name: str) -> None:
+        """Prefect updates slugged schedules in place instead of replacing them
+        (and refuses an unslugged replacement), so hand-added ones would stay."""
+        from prefect import get_client
+
+        with get_client(sync_client=True) as client:
+            deployment = client.read_deployment_by_name(f"{FLOW_NAME}/{name}")
+            for schedule in deployment.schedules:
+                if schedule.slug is not None:
+                    client.delete_deployment_schedule(deployment.id, schedule.id)
 
     # ---- Execution --------------------------------------------------------------
 
