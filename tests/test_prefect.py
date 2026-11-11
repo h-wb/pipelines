@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 from src.adapters.prefect import PrefectOrchestrator
 from src.cli.main import main
-from src.core.config import ConfigurationError, parse_miroir
+from src.core.config import ConfigurationError, load_miroir, parse_miroir
 from src.core.operations import MetadataStore, OperationError, OrchestratorUnavailable
 from src.core.runner import request_sync
 from src.core.service import MiroirService
@@ -398,6 +398,32 @@ class OrchestrationCliTests(unittest.TestCase):
                 with redirect_stderr(io.StringIO()) as err:
                     self.assertEqual(main([*self.base, *command, *self.metadata]), 2)
                 self.assertIn("deployment.work_pool", err.getvalue())
+
+    def test_orchestrator_command_errors_are_messages_not_tracebacks(self):
+        from prefect.settings import PREFECT_API_URL, temporary_settings
+
+        store = MetadataStore(self.metadata[1])
+        self.addCleanup(store.engine.dispose)
+        store.migrate()
+        ws = load_miroir(self.config)
+        unverified = request_sync(ws, "music", store=store, origin="request")
+        store.bind_backend_run(unverified.id, str(uuid.uuid4()))
+        store.start_attempt(unverified.id, "running")
+        with (
+            patch.dict(os.environ, {"MIROIR_PREFECT_POOL": POOL}),
+            temporary_settings({PREFECT_API_URL: closed_api()}),
+        ):
+            for command, message in (
+                (["models", "nope"], "Unknown analysis"),
+                (["deployments", "plan"], "try again"),
+                (["deployments", "apply"], "try again"),
+                (["refresh"], "try again"),
+            ):
+                with self.subTest(command=command):
+                    with redirect_stderr(io.StringIO()) as err:
+                        code = main([*self.base, *command, *self.metadata])
+                    self.assertEqual(code, 1)
+                    self.assertIn(message, err.getvalue())
 
     def test_credential_commands_work_without_the_orchestrator(self):
         # Regression: the orchestrator wiring once moved `check`'s import away.
