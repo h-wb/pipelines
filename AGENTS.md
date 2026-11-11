@@ -64,7 +64,9 @@ mise run prefect -- <cmd> # prefect CLI with cluster credentials
 
 Lint/mypy the *slice* (`src/core src/adapters src/integrations src/analyses src/cli
 src/web src/pipelines/miroir.py tests`) — legacy `src/pipelines/*.py` have pre-existing
-findings. Secrets for mise tasks come from ProtonPass via fnox
+findings. CI (`.github/workflows/test.yml`) runs the same lint, format check, mypy
+and the full suite on pull requests and `main`; `image.yml` only builds. Legacy
+deployments clone `main` at run time, so a broken model on `main` is live at once. Secrets for mise tasks come from ProtonPass via fnox
 (`mise run pass:login`); grants are per task in `mise.toml`/`fnox.toml`.
 
 ## The deployed system (home-ops cluster, `automation` namespace)
@@ -143,4 +145,5 @@ findings. Secrets for mise tasks come from ProtonPass via fnox
   absolute on purpose today — they must resolve identically everywhere),
   multi-tenant metadata partitioning, accounts/OIDC.
 - Cosmetic: generated dataset bindings still use the `ws_` prefix (pre-rename
-  abbreviation); free to change while no data depends on it.
+  abbreviation). Bindings derive at parse time and the live ListenBrainz and
+  Health data sits in those schemas, so pin explicit bindings before renaming.

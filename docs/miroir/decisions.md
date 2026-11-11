@@ -728,3 +728,19 @@ real installation: metadata migrations and UI edits use the shared database,
 and requested operations execute the configured deployed flow image, not the
 checkout's local Python code. Config/artifact mounts and token grants remain
 operator prerequisites; launching a script does not provision them.
+
+## 024 — A file still in a watched folder is not a new arrival
+
+Status: accepted, 2026-11-11. Refines 021's folder retention.
+
+A scan hashes each matching file in place. Content the connection already has is
+reused as it stands: it is not copied again, its delivery time does not move, and
+a stored copy that retention removed stays removed. A scan cannot tell bytes that
+came back from bytes that never left, and treating presence as arrival made
+`keep_last` keep files in name order and kept "last received" from ever going
+stale. Resending the same bytes through upload or the receiving URL is a
+deliberate arrival and still restores a removed copy. Retention keeps the most
+recently arrived folder files.
+
+Submitting an operation that the executor refuses closes it with a `blocked`
+attempt (`SubmitFailed`), so nothing stays requested without a run to observe.
