@@ -116,8 +116,10 @@ bytes map to their existing artifact), imports each pending file as its own impo
 operation linked to the sync, and builds each linked analysis once. A scan that finds
 nothing new loads and builds nothing. Folder files keep the latest `keep_last`
 stored copies (`null` keeps all); older imported copies are removed, their receipts
-and history kept, and replaying them is refused until the file arrives again. A
-pre-021 `settings.data_dir` is read as a folder.
+and history kept, and replaying them is refused until the same bytes are sent again
+by upload or the receiving URL. A file that stays in the folder is not re-copied or
+re-dated by later scans (decision 024). A pre-021 `settings.data_dir` is read as a
+folder.
 
 ### Running a connection and reading its status
 
