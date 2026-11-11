@@ -45,11 +45,9 @@ def receive_file(
             target.flush()
             os.fsync(target.fileno())
         final = directory / digest.hexdigest()
-        if final.exists():
-            os.unlink(temporary)
-        else:
-            os.replace(temporary, final)
-            os.chmod(final, 0o440)
+        # Replace even an existing copy: it may be damaged; these bytes are verified.
+        os.replace(temporary, final)
+        os.chmod(final, 0o440)
     except BaseException:
         if os.path.exists(temporary):
             os.unlink(temporary)
@@ -103,12 +101,14 @@ def submit_artifact(
     )
 
 
-def stored_copy_is_intact(artifact: dict[str, Any]) -> bool:
-    path = Path(artifact["storage_path"])
-    if not path.is_file():
-        return False
+def file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as reader:
         while chunk := reader.read(CHUNK):
             digest.update(chunk)
-    return bool(digest.hexdigest() == artifact["sha256"])
+    return digest.hexdigest()
+
+
+def stored_copy_is_intact(artifact: dict[str, Any]) -> bool:
+    path = Path(artifact["storage_path"])
+    return path.is_file() and file_sha256(path) == artifact["sha256"]

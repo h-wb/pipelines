@@ -95,6 +95,12 @@ def redact(error: BaseException, secrets: list[str]) -> tuple[str, str]:
     return f"{kind.__module__}.{kind.__qualname__}"[:200], message[:MAX_ERROR_LENGTH]
 
 
+def _rate_limited(response: Any) -> bool:
+    """GitHub answers an exhausted rate limit with 403, not 429."""
+    headers = getattr(response, "headers", None) or {}
+    return headers.get("x-ratelimit-remaining") == "0" or "retry-after" in headers
+
+
 def failure_kind(error: BaseException) -> str | None:
     """Classify a failure from its exception chain (dlt wraps source errors)."""
     from src.core.secrets import SecretKeyError, SecretResolutionError
@@ -106,7 +112,9 @@ def failure_kind(error: BaseException) -> str | None:
         if isinstance(current, (SecretResolutionError, SecretKeyError)):
             return "credentials_missing"
         response = getattr(current, "response", None)
-        if getattr(response, "status_code", None) in (401, 403):
+        if getattr(response, "status_code", None) in (401, 403) and not _rate_limited(
+            response
+        ):
             return "credentials_rejected"
         current = (
             current.__cause__
@@ -414,8 +422,10 @@ def collect_folder(
 
     Returns (artifacts, rejected file names). Unchanged files map to their
     existing artifact; invalid files are skipped and reported, never stored.
+    A file still in the folder is not a new arrival: its artifact is neither
+    copied again nor re-dated, and a copy retention removed stays removed.
     """
-    from src.core.artifacts import submit_artifact
+    from src.core.artifacts import file_sha256, submit_artifact
     from src.integrations.validation import InvalidArtifact
 
     folder = connection.config.folder
@@ -426,6 +436,18 @@ def collect_folder(
     collected, rejected = [], []
     for path in sorted(p for p in root.glob(folder.pattern) if p.is_file()):
         origin: ArtifactOrigin = "folder"
+        try:
+            known = store.find_artifact(
+                miroir.id, connection.config.id, file_sha256(path)
+            )
+        except OSError:
+            rejected.append(path.name)
+            continue
+        if known is not None and (
+            known["removed_at"] is not None or Path(known["storage_path"]).is_file()
+        ):
+            collected.append(known)
+            continue
         try:
             artifact, _ = submit_artifact(
                 miroir,

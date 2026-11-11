@@ -359,8 +359,27 @@ class MiroirService:
         operation = request_sync(
             self.miroir(), connection_id, store=self.store, origin=origin
         )
-        self.executor.submit(operation.id)
+        self._submit(operation.id)
         return operation.id
+
+    def _submit(self, operation_id: str) -> None:
+        """Hand a recorded operation to the executor. If that fails, close it
+        with a `blocked` attempt so it does not look requested forever."""
+        from src.core.runner import MAX_ERROR_LENGTH
+
+        try:
+            self.executor.submit(operation_id)
+        except Exception as error:
+            attempt, _ = self.store.start_attempt(operation_id, "blocked")
+            self.store.update_attempt(
+                attempt,
+                error_type="SubmitFailed",
+                error_message=str(error)[:MAX_ERROR_LENGTH],
+            )
+            if isinstance(error, OperationError):
+                raise
+            log.exception("Submitting operation %s failed", operation_id)
+            raise OperationError(f"Could not start the run: {error}") from error
 
     def submit_file(
         self,
@@ -479,18 +498,21 @@ class MiroirService:
             origin=origin,
             replay=replay,
         )
-        self.executor.submit(operation.id)
+        self._submit(operation.id)
         return operation.id
 
     def request_models(self, analysis_id: str) -> str:
+        from src.core.analysis import find_analysis
         from src.core.runner import request_models
 
         miroir = self.miroir()
+        # Rebuilds run through the first linked input's deployment (runner).
+        linked = next(iter(find_analysis(miroir, analysis_id).inputs.values()))
+        self.prepare_connection(linked.config.id)
         operation = request_models(
             miroir, analysis_id, store=self.store, origin="request"
         )
-        self.prepare_connection(operation.connection_id)
-        self.executor.submit(operation.id)
+        self._submit(operation.id)
         return operation.id
 
     def configuration(self) -> dict[str, Any]:
@@ -753,7 +775,11 @@ class MiroirService:
             message = str(error)
         except CheckFailed as error:
             message, rejected = str(error), error.rejected
-        for value in credentials.values():
+        except Exception as error:  # noqa: BLE001 - recorded as a failed check
+            # Type only: the message may carry a credential until redacted below.
+            log.warning("Check of %s failed: %s", connection_id, type(error).__name__)
+            message = f"The check could not complete ({type(error).__name__}): {error}"
+        for value in sorted(credentials.values(), key=len, reverse=True):
             message = message.replace(value, "***")
         self.store.record_check(miroir.id, connection_id, ok, rejected, message)
         return {"ok": ok, "rejected": rejected, "message": message}
