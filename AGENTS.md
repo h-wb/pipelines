@@ -139,6 +139,8 @@ deployments clone `main` at run time, so a broken model on `main` is live at onc
   schemas are unused and can be dropped. Left: browser history (needs snapshot
   delivery; the legacy flow reads an empty scratch folder), then retire
   `local-pool` with `run_dbt`.
+- Eight legacy `local-pool` flow runs are stuck in `Running` in Prefect since
+  2025-10/2026-07 (stale states, not work); cancel them.
 - Cloud blockers (decision-adjacent, from the OSS+hosted analysis):
   per-tenant key separation, artifact storage abstraction (NFS paths are
   absolute on purpose today — they must resolve identically everywhere),
