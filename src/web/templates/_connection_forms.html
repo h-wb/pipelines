@@ -2,7 +2,15 @@
 {% for name in names %}
 {% set prop = integration.settings_schema.properties[name] %}
 <label>{{ prop.title or name }}
-  <input name="setting.{{ name }}" {% if name in integration.settings_schema.get("required", []) or name in required_extra %}required{% endif %} value="{{ values.get(name) or '' }}">
+  {% if prop.type == 'boolean' %}
+  {% set value = values.get(name, prop.default) %}
+  <select name="setting.{{ name }}">
+    <option value="true"{% if value is sameas true %} selected{% endif %}>Yes</option>
+    <option value="false"{% if value is sameas false %} selected{% endif %}>No</option>
+  </select>
+  {% else %}
+  <input name="setting.{{ name }}" {% if name in integration.settings_schema.get("required", []) or name in required_extra %}required{% endif %} value="{{ '' if values.get(name) is none else values.get(name) }}">
+  {% endif %}
   {% if prop.description %}<span class="muted">{{ prop.description }}</span>{% endif %}
 </label>
 {% endfor %}

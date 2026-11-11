@@ -19,6 +19,34 @@ from src.core.service import MiroirService
 Page = Callable[..., HTMLResponse]
 
 
+def _typed(prop: dict[str, Any], value: str) -> Any:
+    """Form text as its JSON-schema type; unparsable text is left to validation."""
+    types = {
+        prop.get("type"),
+        *(option.get("type") for option in prop.get("anyOf", [])),
+    }
+    if "boolean" in types and value in ("true", "false"):
+        return value == "true"
+    for kind, parse in (("integer", int), ("number", float)):
+        if kind in types:
+            try:
+                return parse(value)
+            except ValueError:
+                pass
+    return value
+
+
+def _settings(form: Any, schema: dict[str, Any]) -> dict[str, Any]:
+    """Submitted `setting.*` fields, typed; an empty field is None."""
+    properties = schema.get("properties", {})
+    values: dict[str, Any] = {}
+    for key, value in form.items():
+        if key.startswith("setting."):
+            name, text = key.removeprefix("setting."), str(value)
+            values[name] = _typed(properties.get(name, {}), text) if text else None
+    return values
+
+
 def connection_pages(service: MiroirService, page: Page) -> APIRouter:
     router = APIRouter()
 
@@ -67,10 +95,15 @@ def connection_pages(service: MiroirService, page: Page) -> APIRouter:
         integration = str(form.get("integration", ""))
         connection_id = str(form.get("id", ""))
         method = str(form.get("method", ""))
+        definition = next(
+            (i for i in service.integrations() if i["name"] == integration), None
+        )
         settings = {
-            key.removeprefix("setting."): str(value)
-            for key, value in form.items()
-            if key.startswith("setting.") and str(value) != ""
+            name: value
+            for name, value in _settings(
+                form, definition["settings_schema"] if definition else {}
+            ).items()
+            if value is not None
         }
         credentials = {
             key.removeprefix("credential."): str(value)
@@ -195,11 +228,8 @@ def connection_pages(service: MiroirService, page: Page) -> APIRouter:
     @router.post("/connections/{connection_id}/settings")
     async def save_settings(request: Request, connection_id: str) -> Response:
         form = await request.form()
-        values = {
-            key.removeprefix("setting."): str(value) or None
-            for key, value in form.items()
-            if key.startswith("setting.")
-        }
+        integration = service.connection_settings(connection_id)["integration"]
+        values = _settings(form, integration["settings_schema"])
         revision = str(form.get("file_revision", ""))
         try:
             service.update_connection_settings(connection_id, values, revision)

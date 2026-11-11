@@ -148,6 +148,55 @@ class OnboardingTests(WebFixture):
             "An automatic export was received and imported successfully", complete.text
         )
 
+    def test_boolean_settings_are_saved_as_booleans_and_shown_when_false(self):
+        from cryptography.fernet import Fernet
+
+        from src.core.secrets import SecretBox, SecretStore
+
+        key = Fernet.generate_key().decode()
+        self.service.secrets = SecretStore(self.store, SecretBox.from_keys(key))
+
+        def saved():
+            raw = json.loads(self.config_path.read_text())
+            return next(c for c in raw["connections"] if c["id"] == "bikes")["settings"]
+
+        form = self.client.get("/connections/new?integration=bikeshare")
+        self.assertIn('<option value="true" selected>', form.text)
+        created = self.client.post(
+            "/connections/new",
+            data={
+                "integration": "bikeshare",
+                "id": "bikes",
+                "method": "api",
+                "setting.verify_tls": "false",
+                "credential.member_id": "1",
+                "credential.authorization_token": "token",
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(created.status_code, 303)
+        self.assertEqual(saved(), {"verify_tls": False})
+        page = self.client.get("/connections/bikes/settings")
+        self.assertIn('<option value="false" selected>', page.text)
+        # Saving the page unchanged keeps false; switching it on stores a boolean.
+        for value, expected in (("false", False), ("true", True)):
+            revision = self.service.connection_settings("bikes")["file_revision"]
+            response = self.client.post(
+                "/connections/bikes/settings",
+                data={"file_revision": revision, "setting.verify_tls": value},
+                follow_redirects=False,
+            )
+            self.assertEqual(response.status_code, 303)
+            self.assertEqual(saved(), {"verify_tls": expected})
+        page = self.client.get("/connections/bikes/settings")
+        self.assertIn('<option value="true" selected>', page.text)
+        # No bundled integration has numeric settings yet; they follow the schema too.
+        from src.web.connections import _typed
+
+        self.assertEqual(_typed({"type": "integer"}, "0"), 0)
+        self.assertEqual(_typed({"anyOf": [{"type": "number"}, {}]}, "1.5"), 1.5)
+        self.assertEqual(_typed({"type": "integer"}, "True"), "True")
+
     def test_setup_failure_is_retryable_and_scopes_execution_to_one_connection(self):
         self.add_form("webhook")
         backend = Mock()
