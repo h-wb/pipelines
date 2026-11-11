@@ -10,6 +10,7 @@ import tempfile
 import unittest
 import uuid
 from contextlib import redirect_stderr, redirect_stdout
+from datetime import timedelta
 from pathlib import Path
 
 from src.adapters.prefect import PrefectOrchestrator
@@ -109,6 +110,29 @@ class PrefectAdapterTests(unittest.TestCase):
         self.assertEqual(
             (drift["deployment"], list(drift["changes"])),
             ("personal-health", ["parameters"]),
+        )
+        self.converge(hourly)
+
+        # ...as are a raised concurrency limit and hand-added non-cron schedules.
+        from prefect.client.schemas.schedules import IntervalSchedule
+
+        interval = [(IntervalSchedule(interval=timedelta(hours=1)), True)]
+        with get_client(sync_client=True) as client:
+            health = uuid.UUID(actual["personal-health"]["id"])
+            client.update_deployment(health, DeploymentUpdate(concurrency_limit=5))
+            client.create_deployment_schedules(health, interval)
+            music = uuid.UUID(actual["personal-music"]["id"])
+            client.create_deployment_schedules(music, interval)
+        drift = {c["deployment"]: c["changes"] for c in self.orchestrator.plan(hourly)}
+        self.assertEqual(
+            {name: sorted(changes) for name, changes in drift.items()},
+            {
+                "personal-health": ["concurrency_limit", "schedule"],
+                "personal-music": ["schedule"],
+            },
+        )
+        self.assertEqual(
+            drift["personal-health"]["concurrency_limit"], {"have": 5, "want": 1}
         )
         self.converge(hourly)
 
