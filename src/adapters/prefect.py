@@ -24,6 +24,7 @@ def _readable_errors(function: Callable[..., Any]) -> Callable[..., Any]:
     @wraps(function)
     def call(*args: Any, **kwargs: Any) -> Any:
         import httpx
+        from prefect.deployments.runner import DeploymentApplyError
         from prefect.exceptions import ObjectNotFound
 
         try:
@@ -32,6 +33,9 @@ def _readable_errors(function: Callable[..., Any]) -> Callable[..., Any]:
             raise OperationError(
                 "Execution work pool is unavailable; check the runtime configuration and try again."
             ) from error
+        except DeploymentApplyError as error:
+            # Creating a deployment wraps Prefect's answer (e.g. a missing work pool).
+            raise OperationError(f"Prefect rejected the deployment: {error}") from error
         except httpx.HTTPError as error:
             raise OperationError(
                 "Execution is unavailable; check the Prefect service and credentials, then try again."

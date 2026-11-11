@@ -255,6 +255,16 @@ class PrefectAdapterTests(unittest.TestCase):
         )
         self.assertEqual(self.orchestrator.observe(ws), [])  # already closed
 
+    def test_a_deployment_prefect_rejects_on_create_is_a_readable_error(self):
+        raw = example()
+        raw["id"] = "rejected"
+        ws = parse_miroir(json.dumps(raw))
+        missing = PrefectOrchestrator(self.store, "missing-pool", "/miroir.json")
+        with self.assertRaisesRegex(
+            OperationError, 'Work pool "missing-pool" not found'
+        ):
+            missing.apply(ws, missing.plan(ws))
+
     def test_schedules_are_validated(self):
         for bad in (
             {"cron": "every day"},
