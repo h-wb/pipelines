@@ -730,6 +730,15 @@ class MetadataStore:
     def put_secret(
         self, miroir_id: str, connection_id: str, name: str, ciphertext: bytes
     ) -> None:
+        try:
+            self._put_secret(miroir_id, connection_id, name, ciphertext)
+        except sa.exc.IntegrityError:
+            # Set concurrently; the other insert won, so this becomes an update.
+            self._put_secret(miroir_id, connection_id, name, ciphertext)
+
+    def _put_secret(
+        self, miroir_id: str, connection_id: str, name: str, ciphertext: bytes
+    ) -> None:
         key = {
             "miroir_id": miroir_id,
             "connection_id": connection_id,
@@ -875,6 +884,52 @@ class MetadataStore:
             return {"state": "unknown", "message": None, "at": None, "source": None}
         at, state, message, source = max(evidence, key=lambda item: item[0])
         return {"state": state, "message": message, "at": _iso(at), "source": source}
+
+    def close_never_started(
+        self, miroir_id: str, before: datetime
+    ) -> list[dict[str, Any]]:
+        """Close requests created before `before` that never got a run.
+
+        No backend run (its own or its parent's) and no attempt: a submission
+        that failed before refused submissions were recorded, or a child import
+        whose parent never reached it. Nothing would ever close them otherwise.
+        """
+        parent = operations.alias("parent")
+        backend = sa.func.coalesce(operations.c.backend_run_id, parent.c.backend_run_id)
+        with self.engine.connect() as db:
+            rows = db.execute(
+                sa.select(operations.c.id, operations.c.created_at)
+                .select_from(
+                    operations.outerjoin(
+                        parent, operations.c.parent_operation_id == parent.c.id
+                    ).outerjoin(attempts, attempts.c.operation_id == operations.c.id)
+                )
+                .where(
+                    operations.c.miroir_id == miroir_id,
+                    backend.is_(None),
+                    attempts.c.id.is_(None),
+                )
+            ).all()
+        closed = []
+        for row in rows:
+            if _utc(row.created_at) >= before:
+                continue  # may still be on its way to an executor
+            attempt, _ = self.start_attempt(row.id, "blocked")
+            self.update_attempt(
+                attempt,
+                error_type="NeverStarted",
+                error_message="No run was started for this request; request it again",
+            )
+            closed.append(
+                {
+                    "operation_id": row.id,
+                    "attempt_id": attempt,
+                    "backend_run_id": None,
+                    "outcome": "blocked",
+                    "state": "never started",
+                }
+            )
+        return closed
 
     def unverified(self, miroir_id: str) -> list[dict[str, Any]]:
         """Submitted work whose outcome only the orchestrator knows.

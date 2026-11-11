@@ -14,6 +14,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -29,6 +30,8 @@ from src.core.operations import ArtifactOrigin, MetadataStore, OperationError
 from src.core.secrets import SecretResolutionError, SecretStore, make_resolver
 
 REPO = Path(__file__).resolve().parents[2]
+# A request with no run after this long was never handed to an executor.
+NEVER_STARTED_AFTER = timedelta(hours=1)
 log = logging.getLogger(__name__)
 
 
@@ -849,8 +852,15 @@ class MiroirService:
         return list(changes)
 
     def refresh(self) -> list[dict[str, Any]]:
-        """Reconcile unverified runs with the orchestrator."""
-        return list(self._orchestrator().observe(self.miroir()))
+        """Close requests that never got a run, then reconcile unverified runs
+        with the orchestrator."""
+        from datetime import datetime, timezone
+
+        orchestrator = self._orchestrator()
+        miroir = self.miroir()
+        before = datetime.now(timezone.utc) - NEVER_STARTED_AFTER
+        closed = self.store.close_never_started(miroir.id, before)
+        return closed + list(orchestrator.observe(miroir))
 
 
 def _check_folder(connection: ResolvedConnection) -> str:
