@@ -10,13 +10,43 @@ from typing import Any
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from starlette.concurrency import run_in_threadpool
 
 from src.core.config import ConfigurationConflict, ConfigurationError
 from src.core.operations import OperationError
 from src.core.secrets import SecretResolutionError
 from src.core.service import MiroirService
+from src.web.app import error_status
 
 Page = Callable[..., HTMLResponse]
+
+
+def _typed(prop: dict[str, Any], value: str) -> Any:
+    """Form text as its JSON-schema type; unparsable text is left to validation."""
+    types = {
+        prop.get("type"),
+        *(option.get("type") for option in prop.get("anyOf", [])),
+    }
+    if "boolean" in types and value in ("true", "false"):
+        return value == "true"
+    for kind, parse in (("integer", int), ("number", float)):
+        if kind in types:
+            try:
+                return parse(value)
+            except ValueError:
+                pass
+    return value
+
+
+def _settings(form: Any, schema: dict[str, Any]) -> dict[str, Any]:
+    """Submitted `setting.*` fields, typed; an empty field is None."""
+    properties = schema.get("properties", {})
+    values: dict[str, Any] = {}
+    for key, value in form.items():
+        if key.startswith("setting."):
+            name, text = key.removeprefix("setting."), str(value)
+            values[name] = _typed(properties.get(name, {}), text) if text else None
+    return values
 
 
 def connection_pages(service: MiroirService, page: Page) -> APIRouter:
@@ -67,10 +97,15 @@ def connection_pages(service: MiroirService, page: Page) -> APIRouter:
         integration = str(form.get("integration", ""))
         connection_id = str(form.get("id", ""))
         method = str(form.get("method", ""))
+        definition = next(
+            (i for i in service.integrations() if i["name"] == integration), None
+        )
         settings = {
-            key.removeprefix("setting."): str(value)
-            for key, value in form.items()
-            if key.startswith("setting.") and str(value) != ""
+            name: value
+            for name, value in _settings(
+                form, definition["settings_schema"] if definition else {}
+            ).items()
+            if value is not None
         }
         credentials = {
             key.removeprefix("credential."): str(value)
@@ -98,7 +133,7 @@ def connection_pages(service: MiroirService, page: Page) -> APIRouter:
             )
             response.status_code = 400
             return response
-        service.check_connection(connection_id)
+        await run_in_threadpool(service.check_connection, connection_id)
         return RedirectResponse(
             f"/connections/{connection_id}/setup?method={selected['id']}",
             status_code=303,
@@ -113,12 +148,9 @@ def connection_pages(service: MiroirService, page: Page) -> APIRouter:
     ) -> HTMLResponse:
         view = service.connection_settings(connection_id)
         selected = service.setup_method(view["integration"]["name"], method)
-        operations = [
-            operation
-            for operation in view["connection"]["operations"]
-            if selected["id"] != "webhook" or operation["origin"] == "webhook"
-        ]
-        latest = operations[0] if operations else None
+        latest = service.latest_request(
+            connection_id, "webhook" if selected["id"] == "webhook" else None
+        )
         attempt = latest["attempts"][-1] if latest and latest["attempts"] else None
         response = page(
             request,
@@ -177,7 +209,7 @@ def connection_pages(service: MiroirService, page: Page) -> APIRouter:
             )
         except OperationError as error:
             response = setup_page(request, connection_id, method, error=str(error))
-            response.status_code = 400
+            response.status_code = error_status(error)
             return response
 
     @router.get("/connections/{connection_id}/settings", response_class=HTMLResponse)
@@ -192,11 +224,8 @@ def connection_pages(service: MiroirService, page: Page) -> APIRouter:
     @router.post("/connections/{connection_id}/settings")
     async def save_settings(request: Request, connection_id: str) -> Response:
         form = await request.form()
-        values = {
-            key.removeprefix("setting."): str(value) or None
-            for key, value in form.items()
-            if key.startswith("setting.")
-        }
+        integration = service.connection_settings(connection_id)["integration"]
+        values = _settings(form, integration["settings_schema"])
         revision = str(form.get("file_revision", ""))
         try:
             service.update_connection_settings(connection_id, values, revision)
@@ -211,7 +240,7 @@ def connection_pages(service: MiroirService, page: Page) -> APIRouter:
                 409 if isinstance(error, ConfigurationConflict) else 400
             )
             return response
-        service.check_connection(connection_id)
+        await run_in_threadpool(service.check_connection, connection_id)
         return back(connection_id, "saved")
 
     @router.post("/connections/{connection_id}/folder")
@@ -232,7 +261,7 @@ def connection_pages(service: MiroirService, page: Page) -> APIRouter:
                 409 if isinstance(error, ConfigurationConflict) else 400
             )
             return response
-        service.check_connection(connection_id)
+        await run_in_threadpool(service.check_connection, connection_id)
         return back(connection_id, "saved")
 
     @router.post("/connections/{connection_id}/credentials/{name}")
@@ -260,7 +289,7 @@ def connection_pages(service: MiroirService, page: Page) -> APIRouter:
             return setup_page(request, connection_id, "webhook", delivery_token=token)
         except OperationError as error:
             response = setup_page(request, connection_id, "webhook", error=str(error))
-            response.status_code = 400
+            response.status_code = error_status(error)
             return response
 
     @router.post("/connections/{connection_id}/delivery-token/revoke")

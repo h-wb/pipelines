@@ -1,4 +1,4 @@
--- One row per day across every source. Unlinked optional inputs are unknown (null).
+-- One row per day across every source. Unlinked inputs and absent tables are unknown (null).
 select
     d.day,
     d.steps,
@@ -13,7 +13,7 @@ select
     {{ if_linked('music', 'coalesce(l.late_listens, 0)', 'bigint') }} as late_listens,
     {{ if_linked('biking', 'coalesce(r.rides, 0)', 'bigint') }} as rides,
     {{ if_linked('biking', 'coalesce(r.ride_min, 0)', 'numeric') }} as ride_min,
-    coalesce(w.workout_min, 0) as workout_min
+    {{ if_present('apple_health', 'workouts', 'coalesce(w.workout_min, 0)', 'double precision') }} as workout_min
 from {{ ref('daily_summary') }} d
 left join (
     select day, count(*) as listens, count(*) filter (where hour < 5) as late_listens

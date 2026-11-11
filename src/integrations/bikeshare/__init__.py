@@ -26,11 +26,11 @@ class BikeShareSettings(StrictModel):
 
 @contextmanager
 def open_fetch(settings: Any, credentials: dict[str, str]) -> Iterator[Any]:
-    import requests
+    from dlt.sources.helpers.requests import Client
 
     from src.integrations.bikeshare.source import bikeshare
 
-    with requests.Session() as session:
+    with Client(raise_for_status=False).session as session:
         session.verify = settings.verify_tls
         yield bikeshare(
             member_id=credentials["member_id"],

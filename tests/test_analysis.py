@@ -450,13 +450,17 @@ class DbtPostgresTests(unittest.TestCase):
         plan = analysis_plan(miroir.analyses[0])
         build_connection_models(plan)
         daily, listens, rides, nights, _, years = plan.relations
+        # The health export had no workouts table: workouts are unknown, not zero.
         self.assertEqual(
-            self.query(f"select steps, listens, rides, ride_min from {daily}"),
-            [(123, None, None, None)],
+            self.query(
+                f"select steps, listens, rides, ride_min, workout_min from {daily}"
+            ),
+            [(123, None, None, None, None)],
         )
         self.assertEqual(self.query(f"select late_listening from {nights}"), [(None,)])
         self.assertEqual(
-            self.query(f"select artists, rides from {years}"), [(None, None)]
+            self.query(f"select artists, rides, workouts from {years}"),
+            [(None, None, None)],
         )
         self.assertEqual(self.query(f"select count(*) from {listens}"), [(0,)])
         self.assertEqual(self.query(f"select count(*) from {rides}"), [(0,)])
@@ -473,18 +477,27 @@ class DbtPostgresTests(unittest.TestCase):
             "(extract(epoch from '2026-10-29 00:59:00+00'::timestamptz) * 1000)::bigint, "
             "(extract(epoch from '2026-10-29 01:20:00+00'::timestamptz) * 1000)::bigint)"
         )
+        self.query(
+            f"create table {health_schema}.workouts (id text, start text); "
+            f"insert into {health_schema}.workouts values "
+            "('earlier', '2025-06-01 12:00:00 -0400')"
+        )
         linked = analysis_plan(parse_miroir(json.dumps(raw)).analyses[0])
         self.assertEqual(plan.relations, linked.relations)
         self.assertNotEqual(plan.receipt, linked.receipt)
         build_connection_models(linked)
         self.assertEqual(
-            self.query(f"select listens, late_listens, rides from {daily}"),
-            [(1, 1, 1)],
+            self.query(
+                f"select listens, late_listens, rides, workout_min from {daily}"
+            ),
+            [(1, 1, 1, 0)],
         )
         self.assertEqual(
             self.query(f"select artist from {listens}"), [("Linked artist",)]
         )
-        self.assertEqual(self.query(f"select artists, rides from {years}"), [(1, 1)])
+        self.assertEqual(
+            self.query(f"select artists, rides, workouts from {years}"), [(1, 1, 0)]
+        )
 
     def migrated(self):
         secret = {"provider": "env", "key": "UNUSED"}
@@ -520,17 +533,27 @@ class DbtPostgresTests(unittest.TestCase):
     def test_github_identity_comes_from_the_connection_and_analysis(self):
         github = self.migrated()[0]
         github["id"] = "code_identity"  # its own namespace; the database is shared
+        # GitHub logins are case-insensitive; the API reports the canonical case.
+        github["settings"]["username"] = "Octo-Cat"
         connection = self.configuration([github]).connections[0]
         raw = connection.binding.dataset_name
         self.query(
             f"create schema {raw}; create table {raw}.commits "
             "(html_url text, sha text, commit__author__email text, "
-            "commit__author__date timestamptz)"
+            "author__login text, commit__author__date timestamptz)"
         )
         self.query(
             f"insert into {raw}.commits values "
-            "('https://github.com/octo-cat/r/commit/a', 'a', 'me@example.org', now()), "
-            "('https://github.com/octo-cat/r/commit/b', 'b', 'o''brien@x.org', now())"
+            "('https://github.com/octo-cat/r/commit/a', 'a', 'me@example.org', null, now()), "
+            "('https://github.com/octo-cat/r/commit/b', 'b', 'o''brien@x.org', null, now()), "
+            "('https://github.com/octo-cat/r/commit/c', 'c', 'x@y.org', 'octo-cat', now())"
+        )
+        self.query(
+            f"create table {raw}.issues (html_url text, user__login text, "
+            "created_at timestamptz); "
+            f"insert into {raw}.issues values "
+            "('https://github.com/octo-cat/r/issues/1', 'octo-cat', now()), "
+            "('https://github.com/other/r/issues/2', 'other', now())"
         )
         # A repo deleted and recreated under the same name keeps its stale row
         # (dlt merges on id); the newest one decides, without duplicating commits.
@@ -540,13 +563,21 @@ class DbtPostgresTests(unittest.TestCase):
         )
         plan = analysis_plan(self.configuration([github]).analyses[0])
         build_connection_models(plan)
-        commits = plan.relations[0]
+        commits, _, issues = plan.relations[:3]
         self.assertEqual(
             self.query(
                 f"select sha, is_mine, is_external_repo, is_fork_repo from {commits} "
                 "order by sha"
             ),
-            [("a", True, False, False), ("b", False, False, False)],
+            [
+                ("a", True, False, False),
+                ("b", False, False, False),
+                ("c", True, False, False),
+            ],
+        )
+        self.assertEqual(
+            self.query(f"select is_mine, is_external_repo from {issues} order by url"),
+            [(True, False), (False, True)],
         )
 
     def test_browser_snapshot_import_builds_without_interaction_tables(self):
@@ -583,14 +614,24 @@ class DbtPostgresTests(unittest.TestCase):
             miroir, "browsing", artifact["id"], origin="local", **self.execution
         )
         self.assertEqual(outcome.transformation, "succeeded")
-        visits, daily = analysis_plan(miroir.analyses[2]).relations
+        plan = analysis_plan(miroir.analyses[2])
+        visits, daily = plan.relations
         self.assertEqual(
             self.query(
                 f"select visit_type, is_navigation from {visits} order by visit_id"
             ),
             [("link", True), ("reload", False)],
         )
-        self.assertEqual(
-            self.query(f"select domain, visits, view_minutes from {daily}"),
-            [("example.org", 1, 0)],
+        measures = (
+            "select domain, visits, view_minutes, typing_minutes, key_presses "
+            f"from {daily}"
         )
+        # Without the interaction table, time spent is unknown, not zero.
+        self.assertEqual(self.query(measures), [("example.org", 1, None, None, None)])
+        # With it, a site with no interactions that day spent no time.
+        self.query(
+            f"create table {connection.binding.dataset_name}.zen_places_metadata "
+            "(id bigint, place_id bigint)"
+        )
+        build_connection_models(plan)
+        self.assertEqual(self.query(measures), [("example.org", 1, 0, 0, 0)])

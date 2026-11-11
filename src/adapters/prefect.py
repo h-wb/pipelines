@@ -13,15 +13,25 @@ from functools import wraps
 from typing import Any
 
 from src.core.config import ResolvedConnection, ResolvedMiroir
-from src.core.operations import MetadataStore, OperationError
+from src.core.operations import MetadataStore, OperationError, OrchestratorUnavailable
 
 FLOW_NAME = "sync-connection"
+# Prefect queues overlapping runs of one connection.
+CONCURRENCY_LIMIT = 1
+UNAVAILABLE = (
+    "Execution is unavailable; check the Prefect service and credentials,"
+    " then try again."
+)
 
 
 def _readable_errors(function: Callable[..., Any]) -> Callable[..., Any]:
+    """Prefect failures as product errors; an unreachable or refusing Prefect is
+    OrchestratorUnavailable, so callers can ask to try again later."""
+
     @wraps(function)
     def call(*args: Any, **kwargs: Any) -> Any:
         import httpx
+        from prefect.deployments.runner import DeploymentApplyError
         from prefect.exceptions import ObjectNotFound
 
         try:
@@ -30,10 +40,18 @@ def _readable_errors(function: Callable[..., Any]) -> Callable[..., Any]:
             raise OperationError(
                 "Execution work pool is unavailable; check the runtime configuration and try again."
             ) from error
-        except httpx.HTTPError as error:
-            raise OperationError(
-                "Execution is unavailable; check the Prefect service and credentials, then try again."
+        except DeploymentApplyError as error:
+            if isinstance(error.__cause__, httpx.TransportError):
+                raise OrchestratorUnavailable(UNAVAILABLE) from error
+            # Creating a deployment wraps Prefect's answer (e.g. a missing work pool).
+            raise OperationError(f"Prefect rejected the deployment: {error}") from error
+        except httpx.HTTPStatusError as error:
+            raise OrchestratorUnavailable(
+                f"Prefect refused the request ({error.response.status_code}): check"
+                " the Prefect service and the server's credentials, then try again."
             ) from error
+        except httpx.HTTPError as error:
+            raise OrchestratorUnavailable(UNAVAILABLE) from error
 
     return call
 
@@ -67,6 +85,7 @@ class DeploymentSpec:
             "work_pool": self.work_pool,
             "image": self.image,
             "job_variables": self.job_variables,
+            "concurrency_limit": CONCURRENCY_LIMIT,
         }
 
 
@@ -155,21 +174,27 @@ class PrefectOrchestrator:
             )
         result = {}
         for deployment in deployments:
-            crons = [
+            # Non-cron schedules are never ours, so any of them is drift.
+            schedules = [
                 (s.schedule.cron, s.schedule.timezone)
-                for s in deployment.schedules
                 if isinstance(s.schedule, CronSchedule)
+                else s.schedule.model_dump(mode="json", exclude_none=True)
+                for s in deployment.schedules
             ]
             variables = dict(deployment.job_variables or {})
             image = variables.pop("image", None)
+            limit = deployment.global_concurrency_limit
             result[deployment.name] = {
                 "id": str(deployment.id),
                 "comparable": {
                     "parameters": dict(deployment.parameters or {}),
-                    "schedule": crons[0] if len(crons) == 1 else (crons or None),
+                    "schedule": schedules[0]
+                    if len(schedules) == 1
+                    else (schedules or None),
                     "work_pool": deployment.work_pool_name,
                     "image": image,
                     "job_variables": variables,
+                    "concurrency_limit": limit.limit if limit else None,
                 },
             }
         return result
@@ -227,6 +252,8 @@ class PrefectOrchestrator:
                     client.delete_deployment(uuid.UUID(change["id"]))
                 continue
             spec = desired[change["deployment"]]
+            if change["action"] == "update":
+                self._drop_slugged_schedules(spec.name)
             deployment = _sync(
                 sync_connection.to_deployment(
                     name=spec.name,
@@ -236,21 +263,32 @@ class PrefectOrchestrator:
                     else [],
                     work_pool_name=spec.work_pool,
                     job_variables=spec.job_variables,
-                    concurrency_limit=1,  # Prefect queues overlapping runs of a connection
+                    concurrency_limit=CONCURRENCY_LIMIT,
                     tags=["miroir", self._tag(miroir)],
                 )
             )
             _sync(deployment.apply(work_pool_name=spec.work_pool, image=spec.image))
 
+    def _drop_slugged_schedules(self, name: str) -> None:
+        """Prefect updates slugged schedules in place instead of replacing them
+        (and refuses an unslugged replacement), so hand-added ones would stay."""
+        from prefect import get_client
+
+        with get_client(sync_client=True) as client:
+            deployment = client.read_deployment_by_name(f"{FLOW_NAME}/{name}")
+            for schedule in deployment.schedules:
+                if schedule.slug is not None:
+                    client.delete_deployment_schedule(deployment.id, schedule.id)
+
     # ---- Execution --------------------------------------------------------------
 
+    @_readable_errors
     def submit(self, operation_id: str) -> None:
         """Start the connection's deployment for a requested operation.
 
         The operation ID is the idempotency key: resubmitting after a timeout or
         crash returns the existing flow run instead of starting another.
         """
-        import httpx
         from prefect.deployments import run_deployment
         from prefect.exceptions import ObjectNotFound
 
@@ -274,14 +312,9 @@ class PrefectOrchestrator:
                 f"Deployment {name} does not exist. Apply the deployments first"
                 " (Apply deployments in the interface, or `miroir:deploy`)."
             ) from error
-        except httpx.HTTPStatusError as error:
-            raise OperationError(
-                "Prefect refused the request"
-                f" ({error.response.status_code}): check the server's Prefect"
-                " credentials."
-            ) from error
         self.store.bind_backend_run(operation.id, str(flow_run.id))
 
+    @_readable_errors
     def observe(self, miroir: ResolvedMiroir) -> list[dict[str, Any]]:
         """Close attempts whose flow run ended without recording an outcome."""
         from prefect import get_client

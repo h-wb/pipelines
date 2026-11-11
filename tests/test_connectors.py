@@ -151,6 +151,40 @@ class ConnectorContractTests(unittest.TestCase):
                 check(settings, {"access_token": "t"}), "GitHub account access verified"
             )
 
+    def test_checks_fail_readably_on_unexpected_bodies(self):
+        music = {
+            "id": "music",
+            "integration": "listenbrainz",
+            "settings": {"username": "me", "start_date": "2020-01-01T00:00:00Z"},
+            "credentials": {"access_token": SECRET},
+        }
+        rides = {
+            "id": "rides",
+            "integration": "bikeshare",
+            "settings": {},
+            "credentials": {"member_id": SECRET, "authorization_token": SECRET},
+        }
+        credentials = {
+            "access_token": "t",
+            "member_id": "m",
+            "authorization_token": "t",
+        }
+        for connection in parse(music, github(), rides).connections:
+            definition = connection.integration
+            assert definition.check is not None
+            # ListenBrainz answers clients it suspects with an HTML page and 200.
+            for body in (b"<html>Are you a bot?</html>", b"[]"):
+                response = requests.Response()
+                response.status_code = 200
+                response._content = body
+                with (
+                    self.subTest(definition.name, body=body),
+                    patch("requests.get", return_value=response),
+                ):
+                    with self.assertRaisesRegex(CheckFailed, "unexpected") as caught:
+                        definition.check(connection.settings, credentials)
+                    self.assertFalse(caught.exception.rejected)
+
 
 class BrowserSnapshotTests(unittest.TestCase):
     def setUp(self):
@@ -174,6 +208,21 @@ class BrowserSnapshotTests(unittest.TestCase):
             db.execute("create table moz_places (id integer primary key)")
         for path in (text, other):
             with self.assertRaises(InvalidArtifact):
+                self.validate(path)
+
+    def test_truncated_or_corrupt_gzip_snapshots_are_rejected(self):
+        compressed = gzip.compress(places(self.root / "places.sqlite").read_bytes())
+        for name, data in (
+            ("half-written", compressed[: len(compressed) // 2]),
+            (
+                "corrupt",
+                compressed[:10] + bytes(len(compressed) - 18) + compressed[-8:],
+            ),
+            ("bad-checksum", compressed[:-8] + bytes(8)),
+        ):
+            path = self.root / f"{name}.sqlite.gz"
+            path.write_bytes(data)
+            with self.subTest(name), self.assertRaises(InvalidArtifact):
                 self.validate(path)
 
     def test_snapshots_take_no_import_options(self):

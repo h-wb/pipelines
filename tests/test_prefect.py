@@ -10,17 +10,29 @@ import tempfile
 import unittest
 import uuid
 from contextlib import redirect_stderr, redirect_stdout
+from datetime import timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from src.adapters.prefect import PrefectOrchestrator
 from src.cli.main import main
-from src.core.config import ConfigurationError, parse_miroir
-from src.core.operations import MetadataStore, OperationError
+from src.core.config import ConfigurationError, load_miroir, parse_miroir
+from src.core.operations import MetadataStore, OperationError, OrchestratorUnavailable
 from src.core.runner import request_sync
 from src.core.service import MiroirService
 from tests.test_miroir import example
 
 POOL = "test-pool"
+
+
+def closed_api() -> str:
+    """A Prefect API URL nothing listens on."""
+    import socket
+
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    return f"http://127.0.0.1:{port}/api"
 
 
 def miroir(schedule=None, drop_health=False, deployment=None):
@@ -110,6 +122,38 @@ class PrefectAdapterTests(unittest.TestCase):
             (drift["deployment"], list(drift["changes"])),
             ("personal-health", ["parameters"]),
         )
+        self.converge(hourly)
+
+        # ...as are a raised concurrency limit and hand-added non-cron schedules.
+        from prefect.client.schemas.schedules import IntervalSchedule
+
+        interval = [(IntervalSchedule(interval=timedelta(hours=1)), True)]
+        with get_client(sync_client=True) as client:
+            health = uuid.UUID(actual["personal-health"]["id"])
+            client.update_deployment(health, DeploymentUpdate(concurrency_limit=5))
+            client.create_deployment_schedules(health, interval)
+            music = uuid.UUID(actual["personal-music"]["id"])
+            client.create_deployment_schedules(music, interval)
+        drift = {c["deployment"]: c["changes"] for c in self.orchestrator.plan(hourly)}
+        self.assertEqual(
+            {name: sorted(changes) for name, changes in drift.items()},
+            {
+                "personal-health": ["concurrency_limit", "schedule"],
+                "personal-music": ["schedule"],
+            },
+        )
+        self.assertEqual(
+            drift["personal-health"]["concurrency_limit"], {"have": 5, "want": 1}
+        )
+        self.converge(hourly)
+
+        # Prefect updates slugged schedules in place; apply still removes them.
+        with get_client(sync_client=True) as client:
+            client._client.post(
+                f"/deployments/{health}/schedules",
+                json=[{"schedule": {"interval": 3600}, "active": True, "slug": "hand"}],
+            ).raise_for_status()
+        self.assertEqual(len(self.orchestrator.plan(hourly)), 1)
         self.converge(hourly)
 
         # ...and a removed connection is a delete.
@@ -231,6 +275,43 @@ class PrefectAdapterTests(unittest.TestCase):
         )
         self.assertEqual(self.orchestrator.observe(ws), [])  # already closed
 
+    def test_a_deployment_prefect_rejects_on_create_is_a_readable_error(self):
+        raw = example()
+        raw["id"] = "rejected"
+        ws = parse_miroir(json.dumps(raw))
+        missing = PrefectOrchestrator(self.store, "missing-pool", "/miroir.json")
+        with self.assertRaisesRegex(
+            OperationError, 'Work pool "missing-pool" not found'
+        ):
+            missing.apply(ws, missing.plan(ws))
+
+    def test_unreachable_or_refusing_prefect_is_unavailable(self):
+        import httpx
+        from prefect.settings import PREFECT_API_URL, temporary_settings
+
+        ws = miroir()
+        operation = request_sync(ws, "music", store=self.store, origin="request")
+        with temporary_settings({PREFECT_API_URL: closed_api()}):
+            for call in (
+                lambda: self.orchestrator.submit(operation.id),
+                lambda: self.orchestrator.plan(ws),
+            ):
+                with self.assertRaisesRegex(OrchestratorUnavailable, "try again"):
+                    call()
+            self.store.bind_backend_run(operation.id, str(uuid.uuid4()))
+            self.store.start_attempt(operation.id, "running")
+            with self.assertRaisesRegex(OrchestratorUnavailable, "try again"):
+                self.orchestrator.observe(ws)
+        request = httpx.Request("POST", "http://prefect/api")
+        refused = httpx.HTTPStatusError(
+            "refused", request=request, response=httpx.Response(401, request=request)
+        )
+        with (
+            patch("prefect.deployments.run_deployment", side_effect=refused),
+            self.assertRaisesRegex(OrchestratorUnavailable, "401"),
+        ):
+            self.orchestrator.submit(operation.id)
+
     def test_schedules_are_validated(self):
         for bad in (
             {"cron": "every day"},
@@ -326,6 +407,32 @@ class OrchestrationCliTests(unittest.TestCase):
                 with redirect_stderr(io.StringIO()) as err:
                     self.assertEqual(main([*self.base, *command, *self.metadata]), 2)
                 self.assertIn("deployment.work_pool", err.getvalue())
+
+    def test_orchestrator_command_errors_are_messages_not_tracebacks(self):
+        from prefect.settings import PREFECT_API_URL, temporary_settings
+
+        store = MetadataStore(self.metadata[1])
+        self.addCleanup(store.engine.dispose)
+        store.migrate()
+        ws = load_miroir(self.config)
+        unverified = request_sync(ws, "music", store=store, origin="request")
+        store.bind_backend_run(unverified.id, str(uuid.uuid4()))
+        store.start_attempt(unverified.id, "running")
+        with (
+            patch.dict(os.environ, {"MIROIR_PREFECT_POOL": POOL}),
+            temporary_settings({PREFECT_API_URL: closed_api()}),
+        ):
+            for command, message in (
+                (["models", "nope"], "Unknown analysis"),
+                (["deployments", "plan"], "try again"),
+                (["deployments", "apply"], "try again"),
+                (["refresh"], "try again"),
+            ):
+                with self.subTest(command=command):
+                    with redirect_stderr(io.StringIO()) as err:
+                        code = main([*self.base, *command, *self.metadata])
+                    self.assertEqual(code, 1)
+                    self.assertIn(message, err.getvalue())
 
     def test_credential_commands_work_without_the_orchestrator(self):
         # Regression: the orchestrator wiring once moved `check`'s import away.

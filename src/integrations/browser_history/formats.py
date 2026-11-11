@@ -3,6 +3,7 @@
 import gzip
 import sqlite3
 import tempfile
+import zlib
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -32,12 +33,15 @@ def open_snapshot(path: Path) -> Iterator[Path]:
             compressed = raw.read(2) == b"\x1f\x8b"
         opener = gzip.open if compressed else open
         size = 0
-        with opener(path, "rb") as source, target.open("wb") as output:
-            while chunk := source.read(1024 * 1024):
-                size += len(chunk)
-                if size > MAX_SNAPSHOT_BYTES:
-                    raise ValueError("Snapshot exceeds uncompressed size limit")
-                output.write(chunk)
+        try:
+            with opener(path, "rb") as source, target.open("wb") as output:
+                while chunk := source.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > MAX_SNAPSHOT_BYTES:
+                        raise ValueError("Snapshot exceeds uncompressed size limit")
+                    output.write(chunk)
+        except (EOFError, zlib.error) as error:
+            raise ValueError("Incomplete or corrupt gzip snapshot") from error
         try:
             db = readonly(target)
             try:

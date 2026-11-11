@@ -8,6 +8,7 @@ and records per-stage outcomes, so status can tell ingestion and analysis apart.
 import fcntl
 import hashlib
 import json
+import logging
 import time
 import uuid
 from collections.abc import Iterator
@@ -22,6 +23,8 @@ import sqlalchemy as sa
 SCHEMA_VERSION = 6
 POSTGRES_SCHEMA = "miroir_meta"
 LOCK_POLL_SECONDS = 1.0
+
+log = logging.getLogger(__name__)
 
 
 Origin = Literal["local", "request", "prefect", "webhook"]
@@ -167,6 +170,10 @@ class OperationError(RuntimeError):
     """An operation cannot be registered, adopted, or started."""
 
 
+class OrchestratorUnavailable(OperationError):
+    """The orchestrator cannot be reached or refused the call; retrying later may work."""
+
+
 class ConnectionBusy(OperationError):
     """Another execution holds the connection's dlt state."""
 
@@ -220,6 +227,11 @@ class MetadataStore:
         postgres = self.engine.dialect.name == "postgresql"
         with self.engine.begin() as db:
             if postgres:
+                # Server, worker and flow runs all migrate on start; one at a time.
+                db.execute(
+                    sa.text("SELECT pg_advisory_xact_lock(:key)"),
+                    {"key": _lock_key("schema-migration")},
+                )
                 db.execute(sa.text(f"CREATE SCHEMA IF NOT EXISTS {POSTGRES_SCHEMA}"))
             existing = sa.inspect(db).has_table(
                 "schema_info", schema=POSTGRES_SCHEMA if postgres else None
@@ -470,10 +482,12 @@ class MetadataStore:
         )
         joined = attempts.join(operations)
         with self.engine.connect() as db:
+            # A folder sync's child imports finish before the sync records its
+            # outcome; the sync itself is what the connection did.
             latest = db.execute(
                 sa.select(attempts, operations.c.origin, operations.c.backend_run_id)
                 .select_from(joined)
-                .where(scope)
+                .where(scope, operations.c.parent_operation_id.is_(None))
                 .order_by(attempts.c.id.desc())
                 .limit(1)
             ).first()
@@ -615,8 +629,14 @@ class MetadataStore:
         limit: int = 20,
         *,
         analysis_id: str | None = None,
+        requests_only: bool = False,
+        origin: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Newest operations first, each with its attempts (oldest first)."""
+        """Newest operations first, each with its attempts (oldest first).
+
+        `requests_only` leaves out child imports and analysis builds, which
+        report under the sync or import that started them.
+        """
         with self.engine.connect() as db:
             rows = db.execute(
                 operations.select()
@@ -628,6 +648,13 @@ class MetadataStore:
                     operations.c.analysis_id == analysis_id
                     if analysis_id is not None
                     else sa.true(),
+                    sa.and_(
+                        operations.c.parent_operation_id.is_(None),
+                        operations.c.kind != "models",
+                    )
+                    if requests_only
+                    else sa.true(),
+                    operations.c.origin == origin if origin is not None else sa.true(),
                 )
                 .order_by(operations.c.created_at.desc())
                 .limit(limit)
@@ -964,6 +991,13 @@ class MetadataStore:
         them with different import options is refused: options decide which
         rows the file contributes.
         """
+        try:
+            return self._register_artifact(values)
+        except sa.exc.IntegrityError:
+            # The same bytes arrived concurrently; the other insert won.
+            return self._register_artifact(values)
+
+    def _register_artifact(self, values: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         scope = sa.and_(
             artifacts.c.miroir_id == values["miroir_id"],
             artifacts.c.connection_id == values["connection_id"],
@@ -997,6 +1031,20 @@ class MetadataStore:
                 created = False
         artifact = _artifact(row)
         return artifact, created
+
+    def find_artifact(
+        self, miroir_id: str, connection_id: str, sha256: str
+    ) -> dict[str, Any] | None:
+        """The connection's artifact with these bytes, if any."""
+        with self.engine.connect() as db:
+            row = db.execute(
+                artifacts.select().where(
+                    artifacts.c.miroir_id == miroir_id,
+                    artifacts.c.connection_id == connection_id,
+                    artifacts.c.sha256 == sha256,
+                )
+            ).first()
+        return None if row is None else _artifact(row)
 
     def get_artifact(self, miroir_id: str, artifact_id: str) -> dict[str, Any]:
         with self.engine.connect() as db:
@@ -1072,9 +1120,10 @@ class MetadataStore:
             return True
 
         if self.engine.dialect.name == "postgresql":
-            digest = hashlib.sha256(f"miroir:{pipeline_name}".encode()).digest()
-            key = int.from_bytes(digest[:8], "big", signed=True)
+            key = _lock_key(pipeline_name)
             with self.engine.connect() as db:
+                # A session lock needs no transaction left idle for the whole run.
+                db.execution_options(isolation_level="AUTOCOMMIT")
                 while not db.execute(
                     sa.text("SELECT pg_try_advisory_lock(:key)"), {"key": key}
                 ).scalar():
@@ -1083,8 +1132,14 @@ class MetadataStore:
                 try:
                     yield
                 finally:
-                    db.execute(sa.text("SELECT pg_advisory_unlock(:key)"), {"key": key})
-                    db.commit()
+                    try:
+                        db.execute(
+                            sa.text("SELECT pg_advisory_unlock(:key)"), {"key": key}
+                        )
+                    except sa.exc.DBAPIError:
+                        # The session ended, which released the lock; the
+                        # outcome is already recorded and must stand.
+                        log.warning("Lost the lock session for %s", pipeline_name)
             return
         database = self.url.database
         if not database or database == ":memory:":
@@ -1103,6 +1158,11 @@ class MetadataStore:
                 yield
             finally:
                 fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def _lock_key(name: str) -> int:
+    digest = hashlib.sha256(f"miroir:{name}".encode()).digest()
+    return int.from_bytes(digest[:8], "big", signed=True)
 
 
 def _utc(value: datetime) -> datetime:

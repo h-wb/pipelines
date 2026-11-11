@@ -9,6 +9,7 @@ from pathlib import Path
 import dlt
 import duckdb
 
+from src.core.artifacts import submit_artifact
 from src.core.config import ConfigurationError, parse_miroir
 from src.core.operations import MetadataStore, OperationError
 from src.core.runner import IngestionFailed, import_artifact, run_connection
@@ -45,11 +46,11 @@ class FolderSyncTests(unittest.TestCase):
         self.store.migrate()
         self.builds = []
 
-    def configure(self, **folder):
+    def configure(self, cutoff=CUTOFF, **folder):
         connection = {
             "id": "health",
             "integration": "apple_health",
-            "settings": {"cutoff": CUTOFF},
+            "settings": {"cutoff": cutoff},
             "folder": {"path": str(self.inbox), **folder},
         }
         self.miroir = parse_miroir(
@@ -103,6 +104,12 @@ class FolderSyncTests(unittest.TestCase):
             (outcome.ingestion, outcome.transformation), ("succeeded", "succeeded")
         )
         self.assertEqual(len(self.builds), 1)
+        # Status describes the sync, not its last child import.
+        last = self.store.connection_status(self.miroir.id, "health")["last_attempt"]
+        self.assertEqual(
+            (last["operation_id"], last["transformation"]),
+            (outcome.operation_id, "succeeded"),
+        )
         # Folder options apply to every file: historical keeps rows before the cutoff.
         self.assertEqual([qty for _, qty in self.metrics()], [1, 2])
         children = self.children(outcome.operation_id)
@@ -170,12 +177,72 @@ class FolderSyncTests(unittest.TestCase):
                 replay=True,
                 **self.execution(),
             )
-        # The same bytes arriving again restore the stored copy.
+        # A scan cannot tell bytes that came back from bytes that never left:
+        # it leaves the removed copy and its delivery time alone.
         self.write("export.json", ("2026-06-05", 1))
         self.sync()
-        restored = self.store.get_artifact(self.miroir.id, old["id"])
+        scanned = self.store.get_artifact(self.miroir.id, old["id"])
+        self.assertIsNotNone(scanned["removed_at"])
+        self.assertEqual(scanned["last_received_at"], old["last_received_at"])
+        # Sending the same bytes again restores the stored copy.
+        restored, created = submit_artifact(
+            self.miroir,
+            self.miroir.connections[0],
+            self.inbox / "export.json",
+            {"role": "ongoing"},
+            store=self.store,
+            root=self.root / "artifacts",
+        )
+        self.assertEqual((restored["id"], created), (old["id"], False))
         self.assertIsNone(restored["removed_at"])
         self.assertTrue(Path(restored["storage_path"]).exists())
+
+    def test_scans_keep_the_newest_files_and_leave_delivery_time_alone(self):
+        self.configure(keep_last=1)
+        self.write("z-old.json", ("2026-06-05", 1))
+        self.sync()
+        (old,) = self.store.list_artifacts(self.miroir.id, "health")
+        self.write("a-new.json", ("2026-06-06", 2))
+        self.sync()
+        stored = {
+            a["original_name"]: a
+            for a in self.store.list_artifacts(self.miroir.id, "health")
+        }
+        # Name order is not arrival order: the newer file keeps its copy.
+        self.assertIsNone(stored["a-new.json"]["removed_at"])
+        self.assertIsNotNone(stored["z-old.json"]["removed_at"])
+        self.assertTrue(Path(stored["a-new.json"]["storage_path"]).exists())
+        received = self.store.last_artifact_received(self.miroir.id, "health")
+        self.sync()
+        self.assertEqual(
+            self.store.last_artifact_received(self.miroir.id, "health"), received
+        )
+        self.assertEqual(
+            self.store.get_artifact(self.miroir.id, old["id"])["last_received_at"],
+            old["last_received_at"],
+        )
+
+    def test_removed_copies_are_read_again_when_the_cutoff_changes(self):
+        self.configure(keep_last=1)
+        self.write("a.json", ("2026-06-05", 1))
+        self.write("b.json", ("2026-06-06", 2))
+        self.sync()
+        removed = [
+            a
+            for a in self.store.list_artifacts(self.miroir.id, "health")
+            if a["removed_at"] is not None
+        ]
+        self.assertEqual(len(removed), 1)
+        # A new cutoff changes every file's import, so both are read again.
+        self.configure(cutoff="2026-06-01", keep_last=1)
+        changed = self.sync()
+        self.assertEqual(changed.ingestion, "succeeded")
+        self.assertEqual(len(self.children(changed.operation_id)), 2)
+        # Then the folder is settled again.
+        again = self.sync()
+        self.assertEqual(
+            (again.ingestion, again.transformation), ("not_run", "not_run")
+        )
 
     def test_missing_folder_fails_the_sync_readably(self):
         self.configure()

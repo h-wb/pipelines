@@ -95,6 +95,12 @@ def redact(error: BaseException, secrets: list[str]) -> tuple[str, str]:
     return f"{kind.__module__}.{kind.__qualname__}"[:200], message[:MAX_ERROR_LENGTH]
 
 
+def _rate_limited(response: Any) -> bool:
+    """GitHub answers an exhausted rate limit with 403, not 429."""
+    headers = getattr(response, "headers", None) or {}
+    return headers.get("x-ratelimit-remaining") == "0" or "retry-after" in headers
+
+
 def failure_kind(error: BaseException) -> str | None:
     """Classify a failure from its exception chain (dlt wraps source errors)."""
     from src.core.secrets import SecretKeyError, SecretResolutionError
@@ -106,7 +112,9 @@ def failure_kind(error: BaseException) -> str | None:
         if isinstance(current, (SecretResolutionError, SecretKeyError)):
             return "credentials_missing"
         response = getattr(current, "response", None)
-        if getattr(response, "status_code", None) in (401, 403):
+        if getattr(response, "status_code", None) in (401, 403) and not _rate_limited(
+            response
+        ):
             return "credentials_rejected"
         current = (
             current.__cause__
@@ -207,14 +215,8 @@ def request_import(
         raise OperationError("Artifact belongs to a different connection")
     parser_version = _format(connection, artifact).version
     options = import_options(connection, artifact)
-    if not replay:
-        for previous in store.artifact_imports(artifact_id):
-            if (
-                previous["ingestion"] == "succeeded"
-                and previous["parser_version"] == parser_version
-                and previous["options"] == options
-            ):
-                raise AlreadyImported(previous["operation_id"])
+    if not replay and (previous := _imported_as_is(store, connection, artifact)):
+        raise AlreadyImported(previous)
     return _new_operation(
         store,
         miroir,
@@ -226,6 +228,22 @@ def request_import(
         options=json.dumps(options, sort_keys=True),
         parent_operation_id=parent_operation_id,
     )
+
+
+def _imported_as_is(
+    store: MetadataStore, connection: ResolvedConnection, artifact: dict[str, Any]
+) -> str | None:
+    """The succeeded import with today's parser version and options, if any."""
+    parser_version = _format(connection, artifact).version
+    options = import_options(connection, artifact)
+    for previous in store.artifact_imports(artifact["id"]):
+        if (
+            previous["ingestion"] == "succeeded"
+            and previous["parser_version"] == parser_version
+            and previous["options"] == options
+        ):
+            return str(previous["operation_id"])
+    return None
 
 
 def execute_operation(
@@ -414,8 +432,10 @@ def collect_folder(
 
     Returns (artifacts, rejected file names). Unchanged files map to their
     existing artifact; invalid files are skipped and reported, never stored.
+    A file still in the folder is not a new arrival: its artifact is neither
+    copied again nor re-dated, and a copy retention removed stays removed.
     """
-    from src.core.artifacts import submit_artifact
+    from src.core.artifacts import file_sha256, submit_artifact
     from src.integrations.validation import InvalidArtifact
 
     folder = connection.config.folder
@@ -426,6 +446,23 @@ def collect_folder(
     collected, rejected = [], []
     for path in sorted(p for p in root.glob(folder.pattern) if p.is_file()):
         origin: ArtifactOrigin = "folder"
+        try:
+            known = store.find_artifact(
+                miroir.id, connection.config.id, file_sha256(path)
+            )
+            # A removed copy that must be read again (new cutoff, new parser) is
+            # restored from the folder below; otherwise known content is reused.
+            reusable = known is not None and (
+                Path(known["storage_path"]).is_file()
+                if known["removed_at"] is None
+                else _imported_as_is(store, connection, known) is not None
+            )
+        except (OSError, OperationError):
+            rejected.append(path.name)
+            continue
+        if reusable and known is not None:
+            collected.append(known)
+            continue
         try:
             artifact, _ = submit_artifact(
                 miroir,

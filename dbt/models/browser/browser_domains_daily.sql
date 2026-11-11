@@ -21,8 +21,8 @@ select
     coalesce(v.day, t.day) as day,
     coalesce(v.domain, t.domain) as domain,
     coalesce(v.visits, 0) as visits,
-    coalesce(t.view_minutes, 0) as view_minutes,
-    coalesce(t.typing_minutes, 0) as typing_minutes,
-    coalesce(t.key_presses, 0) as key_presses
+    {{ if_present('browser_history', 'zen_places_metadata', 'coalesce(t.view_minutes, 0)', 'numeric') }} as view_minutes,
+    {{ if_present('browser_history', 'zen_places_metadata', 'coalesce(t.typing_minutes, 0)', 'numeric') }} as typing_minutes,
+    {{ if_present('browser_history', 'zen_places_metadata', 'coalesce(t.key_presses, 0)', 'numeric') }} as key_presses
 from visits v
 full join time_spent t on t.day = v.day and t.domain = v.domain

@@ -11,14 +11,14 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import dlt
 import requests
 from fastapi.testclient import TestClient
 
 from src.core.config import load_miroir
-from src.core.operations import MetadataStore, OperationError
+from src.core.operations import MetadataStore, OperationError, OrchestratorUnavailable
 from src.core.runner import execute_operation
 from src.core.service import InlineExecutor, MiroirService, SubprocessExecutor
 from src.web.app import SESSION_COOKIE, create_app
@@ -47,6 +47,7 @@ class WebFixture(unittest.TestCase):
         self.addCleanup(self.store.engine.dispose)
         self.store.migrate()
         self.executed = []
+        self.transform = None
         self.service = MiroirService(
             self.config_path,
             self.store,
@@ -74,6 +75,7 @@ class WebFixture(unittest.TestCase):
                 {"access_token": "fake"} if c.config.credentials else {}
             ),
             pipelines_dir=str(self.root / "state"),
+            transform=self.transform,
         )
 
     def login(self):
@@ -374,6 +376,41 @@ class WebTests(WebFixture):
         )
         self.assertEqual(response.status_code, 202)
 
+    def test_unavailable_execution_is_503_and_a_resent_export_imports(self):
+        headers = self.delivery_headers()
+        url = "/api/connections/health/receive"
+        body = json.dumps(export(("2026-06-05", 1)))
+        working = self.service.executor
+        self.service.executor = Mock()
+        self.service.executor.submit.side_effect = OrchestratorUnavailable(
+            "Execution is unavailable; try again."
+        )
+        refused = self.client.post(url, content=body, headers=headers)
+        self.assertEqual(refused.status_code, 503)
+        self.assertIn("try again", refused.json()["error"])
+        self.assertEqual(len(self.service.artifacts("health")), 1)
+        self.service.executor = working
+        resent = self.client.post(url, content=body, headers=headers)
+        self.assertEqual(resent.status_code, 200)
+        self.assertFalse(resent.json()["new"])
+        imported = self.store.attempts(resent.json()["operation_id"])
+        self.assertEqual(imported[0]["ingestion"], "succeeded")
+        # Preparing execution wraps the adapter's error; it is still retryable.
+        self.service.orchestrator = Mock()
+        self.service.orchestrator.plan.side_effect = OrchestratorUnavailable(
+            "Execution is unavailable; try again."
+        )
+        self.assertEqual(
+            self.client.post("/api/connections/music/sync", headers=BEARER).status_code,
+            503,
+        )
+        self.login()
+        page = self.client.post("/connections/music/sync")
+        self.assertEqual(page.status_code, 503)
+        self.assertIn("Your connection is saved", page.text)
+        setup = self.client.post("/connections/health/setup", data={"method": "upload"})
+        self.assertEqual(setup.status_code, 503)
+
     def test_receive_rejects_bad_auth_invalid_json_and_oversized_files(self):
         url = "/api/connections/health/receive"
         for headers in ({}, BEARER, {"Authorization": "Bearer wrong"}):
@@ -441,6 +478,17 @@ class WebTests(WebFixture):
         stored = [p for p in (self.root / "artifacts").rglob("*") if p.is_file()]
         self.assertEqual(stored, [])
 
+    def test_an_oversized_form_upload_is_refused_before_it_is_parsed(self):
+        self.login()
+        with patch("starlette.requests.Request.form") as parse:
+            response = self.client.post(
+                "/connections/health/upload",
+                files={"file": ("big.json", b"x" * (4096 + 1024 * 1024 + 1))},
+            )
+        self.assertEqual(response.status_code, 413)
+        parse.assert_not_called()
+        self.assertEqual(self.service.artifacts("health"), [])
+
     def test_form_upload_escapes_file_names_and_offers_replay(self):
         self.login()
         response = self.client.post(
@@ -499,6 +547,29 @@ class WebTests(WebFixture):
         with self.assertRaises(OperationError):
             self.execute(queued)
         self.assertEqual(self.store.attempts(queued)[0]["ingestion"], "blocked")
+
+    def test_malformed_request_bodies_are_readable_400s(self):
+        original = self.config_path.read_text()
+        revision = self.client.get("/api/config", headers=BEARER).json()
+        headers = {**BEARER, "If-Match": revision["file_revision"]}
+        for method, url in (
+            ("POST", "/api/analyses"),
+            ("PUT", "/api/analyses/health"),
+            ("POST", "/api/connections"),
+            ("PUT", "/api/connections/health/settings"),
+            ("PUT", "/api/connections/music/credentials/access_token"),
+        ):
+            for body in (b"{", b"\xff"):
+                with self.subTest(url=url, body=body):
+                    response = self.client.request(
+                        method, url, content=body, headers=headers
+                    )
+                    self.assertEqual(response.status_code, 400)
+                    self.assertIn("JSON", response.json()["error"])
+        response = self.client.put("/api/config", content=b"\xff", headers=headers)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("UTF-8", response.json()["error"])
+        self.assertEqual(self.config_path.read_text(), original)
 
     def test_config_edits_detect_conflicts_and_reject_invalid_files(self):
         original = self.config_path.read_text()
@@ -585,6 +656,46 @@ class SubprocessExecutorTests(unittest.TestCase):
             self.assertEqual(executor.children[0].wait(timeout=120), 0)
             attempts = store.attempts(operation)
             self.assertEqual([a["ingestion"] for a in attempts], ["succeeded"])
+
+    def test_serve_gives_the_executor_the_metadata_file_it_opened(self):
+        import contextlib
+        import io
+
+        from src.cli.main import main
+
+        served = []
+        cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            (root / "miroir.json").write_text(json.dumps(example()))
+            os.chdir(root)  # the child runs elsewhere (the repository)
+            try:
+                with (
+                    patch.dict(os.environ, {"MIROIR_API_TOKEN": TOKEN}),
+                    patch("uvicorn.run"),
+                    patch("src.web.app.create_app", lambda s, t: served.append(s)),
+                    contextlib.redirect_stderr(io.StringIO()),
+                ):
+                    os.environ.pop("MIROIR_PREFECT_POOL", None)
+                    code = main(
+                        [
+                            "--config",
+                            "miroir.json",
+                            "serve",
+                            "--duckdb",
+                            "w.duckdb",
+                            "--metadata",
+                            "sqlite:///.miroir/metadata.sqlite",
+                        ]
+                    )
+            finally:
+                os.chdir(cwd)
+        self.assertEqual(code, 0)
+        arguments = served[0].executor.arguments
+        self.assertEqual(
+            arguments[arguments.index("--metadata") + 1],
+            f"sqlite:///{root / '.miroir' / 'metadata.sqlite'}",
+        )
 
 
 if __name__ == "__main__":

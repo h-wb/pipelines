@@ -7,6 +7,7 @@ an implemented miroir execution service or artifact inbox.
 
 import copy
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -210,6 +211,150 @@ class ReferenceSourceTests(unittest.TestCase):
                 open_fetch(connection, {"access_token": "t"}) as source,
             ):
                 self.pipeline(connection, "second").run(source)
+
+    def api_connections(self):
+        secret = {"provider": "env", "key": "UNUSED"}
+        music = example()["connections"][0]
+        code = {
+            "id": "code",
+            "integration": "github",
+            "settings": {"username": "octo-cat"},
+            "credentials": {"access_token": secret},
+            "resources": ["repos"],
+        }
+        rides = {
+            "id": "rides",
+            "integration": "bikeshare",
+            "settings": {},
+            "credentials": {"member_id": secret, "authorization_token": secret},
+        }
+        return parse_miroir(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "id": "tests",
+                    "connections": [music, code, rides],
+                }
+            )
+        ).connections
+
+    def test_bikeshare_first_run_reads_every_page(self):
+        connection = self.api_connections()[2]
+        # Newest first, as the API serves them: more than two first-run pages.
+        trips = [
+            {"rentalId": n, "sd": 1_700_000_000_000 + n * 60_000}
+            for n in range(1100, 0, -1)
+        ]
+
+        offsets = []
+
+        def respond(session, request, **kwargs):
+            query = parse_qs(urlsplit(request.url).query)
+            offset, size = int(query["pageOffset"][0]), int(query["pageSize"][0])
+            offsets.append(offset)
+            response = requests.Response()
+            response.status_code = 200
+            response.request = request
+            response.url = request.url
+            response.headers["Content-Type"] = "application/json"
+            page = trips[offset : offset + size]
+            response._content = json.dumps({"rentals": {"closed": page}}).encode()
+            return response
+
+        credentials = {"member_id": "m", "authorization_token": "t"}
+        with patch.object(requests.Session, "send", respond):
+            with open_fetch(connection, credentials) as source:
+                self.pipeline(connection).run(source)
+            self.assertEqual(self.count(connection, "trips"), 1100)
+            # Later runs still stop after the first page wholly before the cursor.
+            trips[:0] = [
+                {"rentalId": n, "sd": 1_700_000_000_000 + n * 60_000}
+                for n in range(1110, 1100, -1)
+            ]
+            offsets.clear()
+            with open_fetch(connection, credentials) as source:
+                self.pipeline(connection).run(source)
+        self.assertEqual(self.count(connection, "trips"), 1110)
+        self.assertEqual(offsets, [0, 50])
+
+    def test_api_fetches_retry_server_errors_and_time_out(self):
+        bodies = {
+            "/1/user/example_user/listens": {
+                "payload": {
+                    "listens": [{"listened_at": 1710000000, "recording_msid": "m"}]
+                }
+            },
+            "/user": {"login": "octo-cat", "created_at": "2020-01-01T00:00:00Z"},
+            "/user/repos": [{"id": 1, "full_name": "octo-cat/r"}],
+            "/mobile/v1/tor/rental/closed": {
+                "rentals": {"closed": [{"rentalId": 1, "sd": 1}]}
+            },
+        }
+        failed, timeouts = set(), set()
+
+        def respond(session, request, **kwargs):
+            path = urlsplit(request.url).path
+            body = bodies[path]  # dlt's own telemetry (path "/") fails here
+            timeouts.add(kwargs.get("timeout"))
+            response = requests.Response()
+            response.request = request
+            response.url = request.url
+            response.headers["Content-Type"] = "application/json"
+            # Every endpoint is unavailable once before it answers.
+            response.status_code = 200 if path in failed else 503
+            response._content = json.dumps(body).encode()
+            failed.add(path)
+            return dispatch_hook("response", request.hooks, response, **kwargs)
+
+        credentials = {
+            "listenbrainz": {"access_token": "t"},
+            "github": {"access_token": "t"},
+            "bikeshare": {"member_id": "m", "authorization_token": "t"},
+        }
+        with (
+            patch.object(requests.Session, "send", respond),
+            patch.dict(os.environ, {"RUNTIME__REQUEST_BACKOFF_FACTOR": "0"}),
+        ):
+            for connection, table in zip(
+                self.api_connections(), ("listens", "repos", "trips"), strict=True
+            ):
+                name = connection.integration.name
+                with open_fetch(connection, credentials[name]) as source:
+                    self.pipeline(connection).run(source)
+                self.assertEqual(self.count(connection, table), 1, name)
+        self.assertEqual(failed, set(bodies))
+        self.assertEqual(timeouts, {60})
+
+    def test_listenbrainz_full_page_within_one_second_fails_instead_of_looping(self):
+        from src.integrations.listenbrainz.source import PAGE_SIZE
+
+        connection = self.api_connections()[0]
+        listens = [
+            {"listened_at": 1710000000, "recording_msid": str(n)}
+            for n in range(PAGE_SIZE)
+        ]
+        min_ts = []
+
+        def respond(session, request, **kwargs):
+            min_ts.append(parse_qs(urlsplit(request.url).query)["min_ts"][0])
+            if len(min_ts) > 3:
+                raise RuntimeError("requested the same page again")
+            response = requests.Response()
+            response.status_code = 200
+            response.request = request
+            response.url = request.url
+            response.headers["Content-Type"] = "application/json"
+            response._content = json.dumps({"payload": {"listens": listens}}).encode()
+            return response
+
+        with (
+            patch.object(requests.Session, "send", respond),
+            patch("src.integrations.listenbrainz.source.PAGE_PAUSE_S", 0),
+            self.assertRaisesRegex(Exception, "did not advance"),
+            open_fetch(connection, {"access_token": "t"}) as source,
+        ):
+            self.pipeline(connection).run(source)
+        self.assertEqual(min_ts, ["1577836799", "1709999999"])
 
     def test_source_requires_explicit_credentials(self):
         connection = parse_miroir(json.dumps(example())).connections[0]

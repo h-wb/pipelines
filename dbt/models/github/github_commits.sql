@@ -18,11 +18,11 @@ select
     split_part(c.message, E'\n', 1) as subject,
     -- Matching none of my identities means not mine (unlinked emails have no login).
     coalesce(lower(c.author_email) in {{ github_my_emails() }}
-        or c.author_login = '{{ var("github_login") }}'
-        or (coalesce(c.author_email, '') = '' and c.author_name = '{{ var("github_login") }}'), false) as is_mine,
+        or lower(c.author_login) = lower('{{ var("github_login") }}')
+        or (coalesce(c.author_email, '') = '' and lower(c.author_name) = lower('{{ var("github_login") }}')), false) as is_mine,
     {{ github_is_bot('c.author_login', 'c.author_type') }} or c.author_email like '%[bot]%' as is_bot,
     coalesce(r.fork, false) as is_fork_repo,
-    split_part(c.url, '/', 4) <> '{{ var("github_login") }}' as is_external_repo,
+    lower(split_part(c.url, '/', 4)) <> lower('{{ var("github_login") }}') as is_external_repo,
     (c.authored_at at time zone '{{ var("timezone") }}')::date as day,
     extract(hour from c.authored_at at time zone '{{ var("timezone") }}')::int as hour
 from {{ ref('stg_github__commits') }} c

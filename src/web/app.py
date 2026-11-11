@@ -19,9 +19,10 @@ from urllib.parse import urlsplit
 from fastapi import FastAPI, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 
 from src.core.config import ConfigurationConflict, ConfigurationError
-from src.core.operations import OperationError
+from src.core.operations import OperationError, OrchestratorUnavailable
 from src.core.secrets import SecretKeyError, SecretResolutionError
 from src.core.service import MiroirService
 from src.integrations.validation import InvalidArtifact
@@ -29,6 +30,7 @@ from src.integrations.validation import InvalidArtifact
 SESSION_COOKIE = "miroir_session"
 DEFAULT_MAX_UPLOAD = 512 * 1024 * 1024
 CHUNK = 1024 * 1024
+MULTIPART_SLACK = 1024 * 1024  # form fields and part headers around the file
 # Query parameters of the upload API that are not import options.
 UPLOAD_PARAMETERS = {"import", "name", "format"}
 
@@ -62,6 +64,30 @@ class Unauthorized(Exception):
     pass
 
 
+def error_status(error: Exception) -> int:
+    """HTTP status of a product error. 503 asks clients to retry later."""
+    from src.core.runner import AlreadyImported
+
+    if isinstance(error, (ConfigurationConflict, AlreadyImported)):
+        return 409
+    if isinstance(error, UploadTooLarge):
+        return 413
+    # Services may re-raise an outage with context (`raise ... from`).
+    cause: BaseException | None = error
+    while cause is not None:
+        if isinstance(cause, OrchestratorUnavailable):
+            return 503
+        cause = cause.__cause__
+    return 400
+
+
+async def json_body(request: Request) -> Any:
+    try:
+        return await request.json()
+    except ValueError:  # also UnicodeDecodeError
+        raise OperationError("The request body must be valid JSON") from None
+
+
 def create_app(
     service: MiroirService, token: str, max_upload_bytes: int = DEFAULT_MAX_UPLOAD
 ) -> FastAPI:
@@ -89,6 +115,17 @@ def create_app(
             raise Unauthorized
 
     @app.middleware("http")
+    async def limit_body(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        # A multipart upload is spooled to disk before its handler can check it.
+        declared = request.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > max_upload_bytes + MULTIPART_SLACK:
+            message = f"Upload exceeds {max_upload_bytes} bytes"
+            return JSONResponse({"error": message}, status_code=413)
+        return await call_next(request)
+
+    @app.middleware("http")
     async def require_login(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
@@ -108,13 +145,7 @@ def create_app(
         return await call_next(request)
 
     async def known_error(request: Request, error: Exception) -> Response:
-        from src.core.runner import AlreadyImported
-
-        status = 400
-        if isinstance(error, (ConfigurationConflict, AlreadyImported)):
-            status = 409
-        elif isinstance(error, UploadTooLarge):
-            status = 413
+        status = error_status(error)
         if request.url.path.startswith("/api/"):
             return JSONResponse({"error": str(error)}, status_code=status)
         return templates.TemplateResponse(
@@ -206,7 +237,7 @@ def create_app(
 
     @app.post("/api/analyses", status_code=201)
     async def api_create_analysis(request: Request) -> dict:
-        body = await request.json()
+        body = await json_body(request)
         if not isinstance(body, dict) or not isinstance(body.get("inputs"), dict):
             raise OperationError("Expected {id, package, inputs, timezone}")
         analysis_id = service.create_analysis(
@@ -220,7 +251,7 @@ def create_app(
 
     @app.put("/api/analyses/{analysis_id}")
     async def api_update_analysis(request: Request, analysis_id: str) -> dict:
-        values = await request.json()
+        values = await json_body(request)
         allowed = {"timezone", "parameters", "inputs", "dashboards"}
         if not isinstance(values, dict) or set(values) - allowed:
             raise OperationError(f"Expected an object with {sorted(allowed)}")
@@ -263,7 +294,8 @@ def create_app(
             if key not in UPLOAD_PARAMETERS
         }
         path = await save_stream(request.stream(), staging)
-        result = submit(
+        result = await run_in_threadpool(
+            submit,
             connection_id,
             path,
             options,
@@ -281,7 +313,8 @@ def create_app(
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         path = await save_stream(request.stream(), staging)
         try:
-            result = service.submit_file(
+            result = await run_in_threadpool(
+                service.submit_file,
                 connection_id,
                 path,
                 # Received files take the format's default import options.
@@ -326,7 +359,7 @@ def create_app(
     @app.post("/api/connections", status_code=201)
     async def api_create_connection(request: Request) -> dict:
         """Body: {"integration", "id", "settings": {...}, "credentials": {name: value}}."""
-        body = await request.json()
+        body = await json_body(request)
         if not isinstance(body, dict):
             raise OperationError("Expected a JSON object")
         connection_id = service.create_connection(
@@ -342,7 +375,7 @@ def create_app(
     async def api_save_connection_settings(
         request: Request, connection_id: str
     ) -> dict:
-        settings = await request.json()
+        settings = await json_body(request)
         if not isinstance(settings, dict):
             raise OperationError("Expected a settings object")
         service.update_connection_settings(
@@ -360,7 +393,7 @@ def create_app(
         request: Request, connection_id: str, name: str
     ) -> Response:
         """Body: {"value": "..."}. The value is never returned by any endpoint."""
-        body = await request.json()
+        body = await json_body(request)
         value = body.get("value") if isinstance(body, dict) else None
         if not isinstance(value, str):
             raise OperationError('Expected {"value": "..."}')
@@ -404,7 +437,10 @@ def create_app(
             raise OperationError(
                 "If-Match with the file_revision you edited is required"
             )
-        text = (await request.body()).decode("utf-8")
+        try:
+            text = (await request.body()).decode("utf-8")
+        except UnicodeDecodeError:
+            raise OperationError("The configuration must be UTF-8 text") from None
         miroir = service.save_configuration(text, expected)
         return {"saved": True, "revision": miroir.revision}
 
@@ -487,7 +523,8 @@ def create_app(
             if key.startswith("option.")
         }
         path = await save_stream(upload_chunks(file), staging)
-        result = submit(
+        result = await run_in_threadpool(
+            submit,
             connection_id,
             path,
             options,
