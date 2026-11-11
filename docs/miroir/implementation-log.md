@@ -1402,3 +1402,30 @@ merges on `rental_id`, so even a lost cursor would only re-read history.
   rollback path; the legacy nightly `run_dbt` keeps building `biking.*`.
 
 Rollback: pause `personal-bikeshare`, resume `load-bikeshare`.
+
+
+## 2026-11-11 — Health cut over to Miroir; stale pool removed
+
+Health Auto Export already posted to the Miroir receiving URL (14 webhook
+deliveries, the last at 04:54 UTC); legacy `load-apple-health` (weekly plus
+n8n-triggered runs into `apple_health_data`) last ran on 2026-11-08. Miroir kept
+its imports in a generated schema with its own cutoff (2026-10-01). Both sources
+write `metrics`, `workouts`, `state_of_mind` and `medications` with the same
+merge keys, and file imports carry no cursor.
+
+- Paused `load-apple-health`. Saved the configuration under
+  `~/.local/state/miroir/releases/20261111T221648Z/`.
+- Bound the `health` connection to `apple_health`/`apple_health_data` and set
+  its cutoff to the legacy 2026-06-04. The changed cutoff makes every stored
+  export a new import, so the 21 retained exports were imported again, oldest
+  first, into the legacy dataset: 21 flow runs completed, ingestion succeeded,
+  and the Health analysis is `current` over the combined history.
+- `load_apple_health` is removed from `prefect.yaml`; the paused deployment stays
+  as a rollback path. The legacy nightly `run_dbt` keeps building `health.*`
+  from `apple_health_data`, which receives the phone's exports again.
+- Deleted the `workspace-k8s` Prefect work pool: no deployments, workers offline
+  since 2026-10-29, nothing in home-ops recreates it.
+
+Left for the operator: disable the n8n Health workflow; drop the unused
+`ws_8_personal_health` schema. Rollback: unbind `health` (its generated schema is
+untouched) and resume `load-apple-health`.
