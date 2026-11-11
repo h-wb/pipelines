@@ -14,6 +14,17 @@ class CheckFailed(Exception):
         self.rejected = rejected
 
 
+def _body(response: Any, service: str) -> dict[str, Any]:
+    """The JSON object answered; anything else (e.g. an HTML bot check) fails."""
+    try:
+        body = response.json()
+    except ValueError:
+        body = None
+    if not isinstance(body, dict):
+        raise CheckFailed(f"{service} returned an unexpected response")
+    return body
+
+
 def listenbrainz(settings: Any, credentials: dict[str, str]) -> str:
     import requests
 
@@ -31,7 +42,7 @@ def listenbrainz(settings: Any, credentials: dict[str, str]) -> str:
         raise CheckFailed("ListenBrainz rejected the token", rejected=True)
     if response.status_code != 200:
         raise CheckFailed(f"ListenBrainz answered HTTP {response.status_code}")
-    body = response.json()
+    body = _body(response, "ListenBrainz")
     if not body.get("valid"):
         raise CheckFailed("ListenBrainz says the token is not valid", rejected=True)
     if body.get("user_name") != settings.username:
@@ -63,7 +74,10 @@ def github(settings: Any, credentials: dict[str, str]) -> str:
             )
         if response.status_code != 200:
             raise CheckFailed(f"GitHub answered HTTP {response.status_code}")
-        if response.json().get("login", "").casefold() != settings.username.casefold():
+        if (
+            _body(response, "GitHub").get("login", "").casefold()
+            != settings.username.casefold()
+        ):
             raise CheckFailed(
                 "The GitHub token belongs to a different account", rejected=True
             )
@@ -98,7 +112,7 @@ def bikeshare(settings: Any, credentials: dict[str, str]) -> str:
             )
         if response.status_code != 200:
             raise CheckFailed(f"Bike Share answered HTTP {response.status_code}")
-        if "rentals" not in response.json():
+        if "rentals" not in _body(response, "Bike Share"):
             raise CheckFailed("Bike Share returned an unexpected response")
     except requests.RequestException as error:
         raise CheckFailed(
