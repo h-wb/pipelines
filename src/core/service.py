@@ -325,6 +325,17 @@ class MiroirService:
             result.append(item)
         return result
 
+    def latest_request(
+        self, connection_id: str, origin: str | None = None
+    ) -> dict[str, Any] | None:
+        """The newest sync or import requested for a connection, if any."""
+        miroir = self.miroir()
+        self._connection(miroir, connection_id)
+        latest = self.store.recent_operations(
+            miroir.id, connection_id, limit=1, requests_only=True, origin=origin
+        )
+        return latest[0] if latest else None
+
     def connection(self, connection_id: str) -> dict[str, Any]:
         miroir = self.miroir()
         connection = self._connection(miroir, connection_id)

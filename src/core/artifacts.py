@@ -45,9 +45,12 @@ def receive_file(
             target.flush()
             os.fsync(target.fileno())
         final = directory / digest.hexdigest()
-        # Replace even an existing copy: it may be damaged; these bytes are verified.
-        os.replace(temporary, final)
-        os.chmod(final, 0o440)
+        # Keep an intact copy (a run may be reading it); repair a damaged one.
+        if final.is_file() and file_sha256(final) == digest.hexdigest():
+            os.unlink(temporary)
+        else:
+            os.replace(temporary, final)
+            os.chmod(final, 0o440)
     except BaseException:
         if os.path.exists(temporary):
             os.unlink(temporary)

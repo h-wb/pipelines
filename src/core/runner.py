@@ -215,14 +215,8 @@ def request_import(
         raise OperationError("Artifact belongs to a different connection")
     parser_version = _format(connection, artifact).version
     options = import_options(connection, artifact)
-    if not replay:
-        for previous in store.artifact_imports(artifact_id):
-            if (
-                previous["ingestion"] == "succeeded"
-                and previous["parser_version"] == parser_version
-                and previous["options"] == options
-            ):
-                raise AlreadyImported(previous["operation_id"])
+    if not replay and (previous := _imported_as_is(store, connection, artifact)):
+        raise AlreadyImported(previous)
     return _new_operation(
         store,
         miroir,
@@ -234,6 +228,22 @@ def request_import(
         options=json.dumps(options, sort_keys=True),
         parent_operation_id=parent_operation_id,
     )
+
+
+def _imported_as_is(
+    store: MetadataStore, connection: ResolvedConnection, artifact: dict[str, Any]
+) -> str | None:
+    """The succeeded import with today's parser version and options, if any."""
+    parser_version = _format(connection, artifact).version
+    options = import_options(connection, artifact)
+    for previous in store.artifact_imports(artifact["id"]):
+        if (
+            previous["ingestion"] == "succeeded"
+            and previous["parser_version"] == parser_version
+            and previous["options"] == options
+        ):
+            return str(previous["operation_id"])
+    return None
 
 
 def execute_operation(
@@ -440,12 +450,17 @@ def collect_folder(
             known = store.find_artifact(
                 miroir.id, connection.config.id, file_sha256(path)
             )
-        except OSError:
+            # A removed copy that must be read again (new cutoff, new parser) is
+            # restored from the folder below; otherwise known content is reused.
+            reusable = known is not None and (
+                Path(known["storage_path"]).is_file()
+                if known["removed_at"] is None
+                else _imported_as_is(store, connection, known) is not None
+            )
+        except (OSError, OperationError):
             rejected.append(path.name)
             continue
-        if known is not None and (
-            known["removed_at"] is not None or Path(known["storage_path"]).is_file()
-        ):
+        if reusable and known is not None:
             collected.append(known)
             continue
         try:
