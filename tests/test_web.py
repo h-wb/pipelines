@@ -646,6 +646,46 @@ class SubprocessExecutorTests(unittest.TestCase):
             attempts = store.attempts(operation)
             self.assertEqual([a["ingestion"] for a in attempts], ["succeeded"])
 
+    def test_serve_gives_the_executor_the_metadata_file_it_opened(self):
+        import contextlib
+        import io
+
+        from src.cli.main import main
+
+        served = []
+        cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            (root / "miroir.json").write_text(json.dumps(example()))
+            os.chdir(root)  # the child runs elsewhere (the repository)
+            try:
+                with (
+                    patch.dict(os.environ, {"MIROIR_API_TOKEN": TOKEN}),
+                    patch("uvicorn.run"),
+                    patch("src.web.app.create_app", lambda s, t: served.append(s)),
+                    contextlib.redirect_stderr(io.StringIO()),
+                ):
+                    os.environ.pop("MIROIR_PREFECT_POOL", None)
+                    code = main(
+                        [
+                            "--config",
+                            "miroir.json",
+                            "serve",
+                            "--duckdb",
+                            "w.duckdb",
+                            "--metadata",
+                            "sqlite:///.miroir/metadata.sqlite",
+                        ]
+                    )
+            finally:
+                os.chdir(cwd)
+        self.assertEqual(code, 0)
+        arguments = served[0].executor.arguments
+        self.assertEqual(
+            arguments[arguments.index("--metadata") + 1],
+            f"sqlite:///{root / '.miroir' / 'metadata.sqlite'}",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
