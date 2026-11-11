@@ -12,16 +12,27 @@ import uuid
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from src.adapters.prefect import PrefectOrchestrator
 from src.cli.main import main
 from src.core.config import ConfigurationError, parse_miroir
-from src.core.operations import MetadataStore, OperationError
+from src.core.operations import MetadataStore, OperationError, OrchestratorUnavailable
 from src.core.runner import request_sync
 from src.core.service import MiroirService
 from tests.test_miroir import example
 
 POOL = "test-pool"
+
+
+def closed_api() -> str:
+    """A Prefect API URL nothing listens on."""
+    import socket
+
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    return f"http://127.0.0.1:{port}/api"
 
 
 def miroir(schedule=None, drop_health=False, deployment=None):
@@ -264,6 +275,33 @@ class PrefectAdapterTests(unittest.TestCase):
             OperationError, 'Work pool "missing-pool" not found'
         ):
             missing.apply(ws, missing.plan(ws))
+
+    def test_unreachable_or_refusing_prefect_is_unavailable(self):
+        import httpx
+        from prefect.settings import PREFECT_API_URL, temporary_settings
+
+        ws = miroir()
+        operation = request_sync(ws, "music", store=self.store, origin="request")
+        with temporary_settings({PREFECT_API_URL: closed_api()}):
+            for call in (
+                lambda: self.orchestrator.submit(operation.id),
+                lambda: self.orchestrator.plan(ws),
+            ):
+                with self.assertRaisesRegex(OrchestratorUnavailable, "try again"):
+                    call()
+            self.store.bind_backend_run(operation.id, str(uuid.uuid4()))
+            self.store.start_attempt(operation.id, "running")
+            with self.assertRaisesRegex(OrchestratorUnavailable, "try again"):
+                self.orchestrator.observe(ws)
+        request = httpx.Request("POST", "http://prefect/api")
+        refused = httpx.HTTPStatusError(
+            "refused", request=request, response=httpx.Response(401, request=request)
+        )
+        with (
+            patch("prefect.deployments.run_deployment", side_effect=refused),
+            self.assertRaisesRegex(OrchestratorUnavailable, "401"),
+        ):
+            self.orchestrator.submit(operation.id)
 
     def test_schedules_are_validated(self):
         for bad in (

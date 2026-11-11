@@ -13,14 +13,21 @@ from functools import wraps
 from typing import Any
 
 from src.core.config import ResolvedConnection, ResolvedMiroir
-from src.core.operations import MetadataStore, OperationError
+from src.core.operations import MetadataStore, OperationError, OrchestratorUnavailable
 
 FLOW_NAME = "sync-connection"
 # Prefect queues overlapping runs of one connection.
 CONCURRENCY_LIMIT = 1
+UNAVAILABLE = (
+    "Execution is unavailable; check the Prefect service and credentials,"
+    " then try again."
+)
 
 
 def _readable_errors(function: Callable[..., Any]) -> Callable[..., Any]:
+    """Prefect failures as product errors; an unreachable or refusing Prefect is
+    OrchestratorUnavailable, so callers can ask to try again later."""
+
     @wraps(function)
     def call(*args: Any, **kwargs: Any) -> Any:
         import httpx
@@ -34,12 +41,17 @@ def _readable_errors(function: Callable[..., Any]) -> Callable[..., Any]:
                 "Execution work pool is unavailable; check the runtime configuration and try again."
             ) from error
         except DeploymentApplyError as error:
+            if isinstance(error.__cause__, httpx.TransportError):
+                raise OrchestratorUnavailable(UNAVAILABLE) from error
             # Creating a deployment wraps Prefect's answer (e.g. a missing work pool).
             raise OperationError(f"Prefect rejected the deployment: {error}") from error
-        except httpx.HTTPError as error:
-            raise OperationError(
-                "Execution is unavailable; check the Prefect service and credentials, then try again."
+        except httpx.HTTPStatusError as error:
+            raise OrchestratorUnavailable(
+                f"Prefect refused the request ({error.response.status_code}): check"
+                " the Prefect service and the server's credentials, then try again."
             ) from error
+        except httpx.HTTPError as error:
+            raise OrchestratorUnavailable(UNAVAILABLE) from error
 
     return call
 
@@ -257,13 +269,13 @@ class PrefectOrchestrator:
 
     # ---- Execution --------------------------------------------------------------
 
+    @_readable_errors
     def submit(self, operation_id: str) -> None:
         """Start the connection's deployment for a requested operation.
 
         The operation ID is the idempotency key: resubmitting after a timeout or
         crash returns the existing flow run instead of starting another.
         """
-        import httpx
         from prefect.deployments import run_deployment
         from prefect.exceptions import ObjectNotFound
 
@@ -287,14 +299,9 @@ class PrefectOrchestrator:
                 f"Deployment {name} does not exist. Apply the deployments first"
                 " (Apply deployments in the interface, or `miroir:deploy`)."
             ) from error
-        except httpx.HTTPStatusError as error:
-            raise OperationError(
-                "Prefect refused the request"
-                f" ({error.response.status_code}): check the server's Prefect"
-                " credentials."
-            ) from error
         self.store.bind_backend_run(operation.id, str(flow_run.id))
 
+    @_readable_errors
     def observe(self, miroir: ResolvedMiroir) -> list[dict[str, Any]]:
         """Close attempts whose flow run ended without recording an outcome."""
         from prefect import get_client

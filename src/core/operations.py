@@ -170,6 +170,10 @@ class OperationError(RuntimeError):
     """An operation cannot be registered, adopted, or started."""
 
 
+class OrchestratorUnavailable(OperationError):
+    """The orchestrator cannot be reached or refused the call; retrying later may work."""
+
+
 class ConnectionBusy(OperationError):
     """Another execution holds the connection's dlt state."""
 
