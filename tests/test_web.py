@@ -537,6 +537,29 @@ class WebTests(WebFixture):
             self.execute(queued)
         self.assertEqual(self.store.attempts(queued)[0]["ingestion"], "blocked")
 
+    def test_malformed_request_bodies_are_readable_400s(self):
+        original = self.config_path.read_text()
+        revision = self.client.get("/api/config", headers=BEARER).json()
+        headers = {**BEARER, "If-Match": revision["file_revision"]}
+        for method, url in (
+            ("POST", "/api/analyses"),
+            ("PUT", "/api/analyses/health"),
+            ("POST", "/api/connections"),
+            ("PUT", "/api/connections/health/settings"),
+            ("PUT", "/api/connections/music/credentials/access_token"),
+        ):
+            for body in (b"{", b"\xff"):
+                with self.subTest(url=url, body=body):
+                    response = self.client.request(
+                        method, url, content=body, headers=headers
+                    )
+                    self.assertEqual(response.status_code, 400)
+                    self.assertIn("JSON", response.json()["error"])
+        response = self.client.put("/api/config", content=b"\xff", headers=headers)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("UTF-8", response.json()["error"])
+        self.assertEqual(self.config_path.read_text(), original)
+
     def test_config_edits_detect_conflicts_and_reject_invalid_files(self):
         original = self.config_path.read_text()
         current = self.client.get("/api/config", headers=BEARER).json()
