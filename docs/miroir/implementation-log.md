@@ -1193,3 +1193,85 @@ Validation: all 136 tests pass locally (Postgres 17.11), ruff and mypy are clean
 on the slice, and the legacy source was exercised with the same fake transport.
 No image, deployment or live configuration changed. The `sha-da77141…` image
 carries the broken model and must not be rolled out.
+
+
+## 2026-11-11 — Audit fixes across core, transports and connectors (decision 024)
+
+Following the GitHub repair above, a read-only audit of `src/core`, the web/CLI/
+Prefect transports and the connectors/dbt found about thirty candidate defects.
+Each fix below began as a test that failed on the previous code; candidates that
+could not be reproduced, or that need a design decision, are listed at the end.
+
+### Core
+
+- Folder scans treated every file still in the folder as an arrival: each scan
+  copied and fsynced it again, re-dated it and restored copies retention had
+  removed, so `keep_last` kept files in name order and "last received" never went
+  stale. A scan now hashes in place and reuses known content untouched; resending
+  by upload or receiving URL still restores a removed copy (decision 024).
+- Connection status showed a folder sync's last child import (no run link,
+  "no transform configured") instead of the sync.
+- An operation whose submission failed had no attempt and stayed requested
+  forever; a refused rebuild left its analysis `running` and its page refreshing.
+  Rebuilds prepare the deployment before recording the operation, and a refused
+  submission closes the operation with a `blocked` `SubmitFailed` attempt.
+- Unexpected check errors are recorded (redacted longest first) instead of
+  escaping; a GitHub rate-limit 403 is not "credentials rejected"; metadata
+  passwords with spaces survive the URL (the old test asserted the broken `+`);
+  saving the configuration keeps its file mode; a damaged stored copy is replaced
+  by the same verified bytes; Postgres migrations take an advisory lock; the
+  connection-lock session runs in autocommit, and a lost session no longer turns
+  a recorded outcome into a failure.
+
+### Transports
+
+- The setup page ignored that a linked build is the newest operation after an
+  import, so first delivery never showed success.
+- Settings forms are typed by the settings schema: Bike Share `verify_tls` could
+  not be set to false and silently reverted to true on save.
+- Prefect errors are product errors everywhere, including `DeploymentApplyError`
+  on create and connection failures in submit/observe. Unreachable or refusing
+  Prefect is `OrchestratorUnavailable` and answers 503, so Health Auto Export
+  retries instead of treating an outage as a rejected file; resending is safe.
+- The deployment plan compares the concurrency limit and every schedule, and
+  apply removes slugged schedules Prefect would otherwise keep (verified against
+  the temporary API: such a schedule was permanent drift).
+- Malformed JSON or non-UTF-8 bodies are 400s; CLI `models`, `refresh` and
+  `deployments` print errors instead of tracebacks; `serve` hands its subprocess
+  executor an absolute SQLite path.
+- File submission and connection checks run in the threadpool instead of on the
+  event loop of the single server worker; a declared body over the upload limit
+  is refused before a multipart form is spooled to disk.
+
+### Connectors and models
+
+- Bike Share stopped paging after two pages (it compared against dlt's moving
+  `last_value`): a first run over 1,100 trips loaded 1,000, and a later run could
+  leave trips behind its cursor for good. It now compares with `start_value`.
+- ListenBrainz, GitHub and Bike Share fetches used a plain session: no retries on
+  429/5xx and no timeout. They use dlt's retrying session (60 s timeout).
+- A truncated or corrupt `.sqlite.gz` is an invalid file instead of aborting a
+  folder sync; a ListenBrainz page that cannot advance fails instead of looping;
+  checks fail readably on non-JSON answers.
+- GitHub `is_mine`/`is_external_repo` compare logins case-insensitively.
+- Browser view/typing minutes and key presses, crossover workout minutes and the
+  yearly workout count are null when their raw table is absent and zero only when
+  it exists without rows (decision 020). Legacy builds are unchanged.
+
+### Validation
+
+Ruff, ruff format and mypy are clean on the maintained slice. All 158 tests pass
+locally with Postgres 17.11 (136 before this batch), including the temporary
+Prefect API and Postgres/dbt scenarios; the new CI workflow ran the suite on
+PR #9. No image, deployment, live configuration or data changed.
+
+### Rollout notes and remaining work
+
+No metadata schema change. Deployed after this, `deployments plan` may report a
+deployment's concurrency limit or a hand-added schedule that it ignored before;
+Apply clears it. Browser and crossover dashboards show blanks instead of zeros
+where those tables were never delivered. Not changed here: GitHub windows by
+commit/author date can miss branches pushed or PRs merged more than three days
+late; browser rows are keyed by profile-local SQLite IDs; Health energy/distance
+units are assumed rather than read from the export; `register_artifact` and
+`put_secret` can race into a raw `IntegrityError` across processes.
