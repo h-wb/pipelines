@@ -520,17 +520,27 @@ class DbtPostgresTests(unittest.TestCase):
     def test_github_identity_comes_from_the_connection_and_analysis(self):
         github = self.migrated()[0]
         github["id"] = "code_identity"  # its own namespace; the database is shared
+        # GitHub logins are case-insensitive; the API reports the canonical case.
+        github["settings"]["username"] = "Octo-Cat"
         connection = self.configuration([github]).connections[0]
         raw = connection.binding.dataset_name
         self.query(
             f"create schema {raw}; create table {raw}.commits "
             "(html_url text, sha text, commit__author__email text, "
-            "commit__author__date timestamptz)"
+            "author__login text, commit__author__date timestamptz)"
         )
         self.query(
             f"insert into {raw}.commits values "
-            "('https://github.com/octo-cat/r/commit/a', 'a', 'me@example.org', now()), "
-            "('https://github.com/octo-cat/r/commit/b', 'b', 'o''brien@x.org', now())"
+            "('https://github.com/octo-cat/r/commit/a', 'a', 'me@example.org', null, now()), "
+            "('https://github.com/octo-cat/r/commit/b', 'b', 'o''brien@x.org', null, now()), "
+            "('https://github.com/octo-cat/r/commit/c', 'c', 'x@y.org', 'octo-cat', now())"
+        )
+        self.query(
+            f"create table {raw}.issues (html_url text, user__login text, "
+            "created_at timestamptz); "
+            f"insert into {raw}.issues values "
+            "('https://github.com/octo-cat/r/issues/1', 'octo-cat', now()), "
+            "('https://github.com/other/r/issues/2', 'other', now())"
         )
         # A repo deleted and recreated under the same name keeps its stale row
         # (dlt merges on id); the newest one decides, without duplicating commits.
@@ -540,13 +550,21 @@ class DbtPostgresTests(unittest.TestCase):
         )
         plan = analysis_plan(self.configuration([github]).analyses[0])
         build_connection_models(plan)
-        commits = plan.relations[0]
+        commits, _, issues = plan.relations[:3]
         self.assertEqual(
             self.query(
                 f"select sha, is_mine, is_external_repo, is_fork_repo from {commits} "
                 "order by sha"
             ),
-            [("a", True, False, False), ("b", False, False, False)],
+            [
+                ("a", True, False, False),
+                ("b", False, False, False),
+                ("c", True, False, False),
+            ],
+        )
+        self.assertEqual(
+            self.query(f"select is_mine, is_external_repo from {issues} order by url"),
+            [(True, False), (False, True)],
         )
 
     def test_browser_snapshot_import_builds_without_interaction_tables(self):
