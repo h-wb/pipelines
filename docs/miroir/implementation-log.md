@@ -1488,5 +1488,11 @@ export at `/root/.prefect/data`; its scratch volume is only underneath. The
 browser flow was reading the Nextcloud-synced snapshot the Mac writes every 6h,
 not an empty folder.
 
-The paused legacy deployments are deleted once the operator confirms the data
-(counts, duplicates and newest rows per raw schema) after the cutovers.
+The operator's post-cutover check (Metabase, raw schemas): no duplicate keys in
+`github_data.commits` (2,287), `listenbrainz_data.listens` (129,082),
+`bikeshare_data.trips` (343) or `apple_health_data.metrics` (6.85M); the newest
+rows are the ones Miroir loaded (listens to 18:49 UTC and a commit at 17:03 UTC
+on 2026-11-11, Health to the phone's 04:54 UTC export; last ride 2026-11-01).
+Then the four paused legacy deployments were deleted and eight stale `Running`
+legacy flow runs (since 2025-10 and 2026-07) were cancelled. Prefect now holds the
+four Miroir deployments, `run_dbt`, and the dawarich flows.
