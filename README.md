@@ -1,8 +1,8 @@
 # Pipelines
 
-Personal data warehouse: [dlt](https://dlthub.com/) pipelines that mirror the
-services I use into Postgres, dbt models on top, Metabase dashboards, all
-scheduled by Prefect in the homelab ([h-wb/home-ops](https://github.com/h-wb/home-ops)).
+Personal data warehouse: Miroir connections mirror the services I use into
+Postgres with [dlt](https://dlthub.com/), dbt models on top, Metabase dashboards,
+all run as Prefect flow runs in the homelab ([h-wb/home-ops](https://github.com/h-wb/home-ops)).
 
 **Documentation: [`docs/`](docs/README.md)** — architecture, conventions, one page
 per source ([ListenBrainz](docs/sources/listenbrainz.md), [GitHub](docs/sources/github.md),
@@ -12,10 +12,12 @@ per source ([ListenBrainz](docs/sources/listenbrainz.md), [GitHub](docs/sources/
 ## Layout
 
 ```
-src/sources/     one dlt source per service (extract only, raw records)
-src/pipelines/   one Prefect @flow per source (+ transform.py: run_dbt)
+src/core/        Miroir: configuration, operations, runner, services
+src/integrations/ one connector package per service (settings, checks, dlt sources)
+src/web, src/cli  the interface and CLI over the same services
+src/pipelines/   miroir.py (the sync-connection flow) and transform.py (dbt, run_dbt)
 dbt/             staging views + mart schemas (music, health, biking, github, browser, crossovers)
-prefect.yaml     deployments: schedules, parameters, env
+prefect.yaml     the legacy nightly run_dbt deployment (Miroir deployments come from its config)
 fnox.toml        secret references (Proton Pass `Automation General`)
 mise.toml        tools, shared config, task secret grants; mise.local.toml: machine overrides
 docs/            documentation
@@ -45,9 +47,8 @@ The data paths default to the Prefect worker's mounts; override them for local i
 ```bash
 mise run dev                                      # local Miroir UI, no Proton access
 mise run dev:infra                                # UI against the existing installation (see prerequisites)
-mise run deploy                                   # register all deployments (task-scoped secrets)
-mise run prefect -- deployment run load-github/load_github --watch
-mise run run:listenbrainz                         # run a pipeline locally (see mise.toml for all)
+mise run miroir:deploy                            # apply Miroir deployments from miroir.json
+mise run deploy                                   # register the nightly run_dbt deployment
 mise run run:dbt                                  # build + test the dbt models
 uv run ruff check src/
 ```

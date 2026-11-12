@@ -17,9 +17,6 @@ experimental = true
 _.python.venv = {path = ".venv", create = true}
 RUNTIME__LOG_LEVEL = "INFO"
 RUNTIME__HTTP_SHOW_ERROR_BODY = "true"
-LISTENBRAINZ__USERNAME = "Chocoboco"
-LISTENBRAINZ__START_DATE = "2019-06-11T09:57:59+0000"
-GITHUB__USERNAME = "h-wb"
 PREFECT_SERVER_ALLOW_EPHEMERAL_MODE = "false"
 PREFECT_LOGGING_EXTRA_LOGGERS = "dlt"
 PREFECT_LOGGING_LOG_PRINTS = "true"
@@ -35,10 +32,6 @@ MIROIR_METADATA__HOST = "postgres-miroir-rw.automation.svc"
 MIROIR_METADATA__PORT = "5432"
 MIROIR_METADATA__DATABASE = "miroir"
 MIROIR_METADATA__USERNAME = "miroir"
-# Data mounts on the Prefect worker; override for local imports.
-BROWSER_HISTORY__DATA_DIR = "/root/.prefect/data/browser"
-APPLE_HEALTH__DATA_DIR = "/root/.prefect/data/health"
-APPLE_HEALTH__CUTOFF = "2026-06-04"
 # The workstation and pod tokens read the `Automation General` vault. Both use this
 # repo session (shared by its Paseo worktrees).
 PROTON_PASS_SESSION_DIR = "{{env.HOME}}/.local/state/pass-cli/dlt"
@@ -111,65 +104,6 @@ depends = ["pass:login"]
 description = "Start Prefect worker"
 secrets = ["PREFECT_API_URL", "PREFECT_API_AUTH_STRING"]
 run = "prefect worker start --pool local-pool"
-
-[tasks."run:listenbrainz"]
-depends = ["pass:login"]
-description = "Run listenbrainz pipeline locally"
-secrets = [
-  "DESTINATION__POSTGRES__CREDENTIALS__PASSWORD",
-  "PREFECT_API_URL",
-  "PREFECT_API_AUTH_STRING",
-  "GITHUB__AUTHOR_EMAILS",
-  "LISTENBRAINZ__ACCESS_TOKEN",
-]
-run = "python -m src.pipelines.listenbrainz"
-
-[tasks."run:bikeshare"]
-depends = ["pass:login"]
-description = "Run bikeshare pipeline locally"
-secrets = [
-  "DESTINATION__POSTGRES__CREDENTIALS__PASSWORD",
-  "PREFECT_API_URL",
-  "PREFECT_API_AUTH_STRING",
-  "GITHUB__AUTHOR_EMAILS",
-  "BIKESHARE__MEMBER_ID",
-  "BIKESHARE__AUTHORIZATION_TOKEN",
-]
-run = "python -m src.pipelines.bikeshare"
-
-[tasks."run:github"]
-depends = ["pass:login"]
-description = "Run github pipeline locally"
-secrets = [
-  "DESTINATION__POSTGRES__CREDENTIALS__PASSWORD",
-  "PREFECT_API_URL",
-  "PREFECT_API_AUTH_STRING",
-  "GITHUB__AUTHOR_EMAILS",
-  "GITHUB__ACCESS_TOKEN",
-]
-run = "python -m src.pipelines.github"
-
-[tasks."run:browser-history"]
-depends = ["pass:login"]
-description = "Run browser history pipeline locally"
-secrets = [
-  "DESTINATION__POSTGRES__CREDENTIALS__PASSWORD",
-  "PREFECT_API_URL",
-  "PREFECT_API_AUTH_STRING",
-  "GITHUB__AUTHOR_EMAILS",
-]
-run = "python -m src.pipelines.browser_history"
-
-[tasks."run:apple-health"]
-depends = ["pass:login"]
-description = "Run apple health pipeline locally (uses APPLE_HEALTH__DATA_DIR and APPLE_HEALTH__CUTOFF)"
-secrets = [
-  "DESTINATION__POSTGRES__CREDENTIALS__PASSWORD",
-  "PREFECT_API_URL",
-  "PREFECT_API_AUTH_STRING",
-  "GITHUB__AUTHOR_EMAILS",
-]
-run = "python -m src.pipelines.apple_health"
 
 [tasks."run:dbt"]
 depends = ["pass:login"]

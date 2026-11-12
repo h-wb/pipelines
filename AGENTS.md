@@ -37,8 +37,8 @@ Miroir (decision 014); history keeps its own words.
   check, resources, and inputs — a `fetch` and/or file `formats` with typed
   import options (decision 021) — plus its dlt source (`source.py`);
   `registry.py` only lists them. Upload, receiving URL, and watched folder are
-  core transports that all register artifacts. `src/sources/` + old `src/pipelines/*.py` flows
-  are the legacy path, kept only until each cutover (decision 020).
+  core transports that all register artifacts. The legacy per-source flows and
+  `src/sources/` were retired after the 2026-11-11 cutovers (decision 025).
 - `dbt/` — models (staging + reporting), profiles read
   `DESTINATION__POSTGRES__CREDENTIALS__*` env.
 - `src/analyses/catalog.py` — analysis packages (typed input roles, dbt selector,
@@ -57,16 +57,15 @@ Miroir (decision 014); history keeps its own words.
 ```bash
 uv run --locked python -m unittest discover -s tests          # the suite
 uv run --locked ruff check --fix <paths> && uv run --locked ruff format <paths>
-uv run --locked mypy --follow-imports=silent src/...          # workspace slice only
+uv run --locked mypy --follow-imports=silent src
 mise run miroir:deploy    # deployments apply (needs fnox secrets, see below)
 mise run prefect -- <cmd> # prefect CLI with cluster credentials
 ```
 
-Lint/mypy the *slice* (`src/core src/adapters src/integrations src/analyses src/cli
-src/web src/pipelines/miroir.py tests`) — legacy `src/pipelines/*.py` have pre-existing
-findings. CI (`.github/workflows/test.yml`) runs the same lint, format check, mypy
-and the full suite on pull requests and `main`; `image.yml` only builds. Legacy
-deployments clone `main` at run time, so a broken model on `main` is live at once. Secrets for mise tasks come from ProtonPass via fnox
+Lint `src tests scripts`; mypy `src`. CI (`.github/workflows/test.yml`) runs the
+same lint, format check, mypy and the full suite on pull requests and `main`;
+`image.yml` only builds. The nightly `run_dbt` deployment clones `main` at run
+time, so a broken model on `main` reaches the dashboards' mart schemas at once. Secrets for mise tasks come from ProtonPass via fnox
 (`mise run pass:login`); grants are per task in `mise.toml`/`fnox.toml`.
 
 ## The deployed system (home-ops cluster, `automation` namespace)
@@ -128,19 +127,18 @@ deployments clone `main` at run time, so a broken model on `main` is live at onc
   (`/app/.venv/bin/python -m src.cli` / `-m prefect`) — a node once refused
   PATH lookups of console scripts despite a correct image.
 
-## Known remaining work (2026-10-31)
+## Known remaining work (2026-11-11)
 
-- Legacy cutover (2026-11-11): GitHub, ListenBrainz, Bike Share and Health run
-  on Miroir, bound to `github_data`, `listenbrainz_data`, `bikeshare_data` and
-  `apple_health_data` (the phone posts to the receiving URL); legacy
-  `load-github`, `load-listenbrainz`, `load-bikeshare` and `load-apple-health`
-  are paused, delete them after a few clean nights. Disable the n8n Health
-  workflow. The old `ws_8_personal_listenbrainz` and `ws_8_personal_health`
-  schemas are unused and can be dropped. Left: browser history (needs snapshot
-  delivery; the legacy flow reads an empty scratch folder), then retire
-  `local-pool` with `run_dbt`.
-- Eight legacy `local-pool` flow runs are stuck in `Running` in Prefect since
-  2025-10/2026-07 (stale states, not work); cancel them.
+- Legacy loads are retired (decision 025): GitHub, ListenBrainz, Bike Share and
+  Health run on Miroir, bound to their original raw schemas. Operator leftovers:
+  drop the unused `ws_8_personal_listenbrainz` and `ws_8_personal_health`
+  schemas.
+- Browser history: redo as a Miroir connection bound to `browser_history_data`
+  with a watched folder at `/miroir/data/browser`: the same Nextcloud-synced
+  snapshot file the legacy flow loaded, so its row IDs match what is stored.
+- Dashboards still read the original mart schemas built by the legacy `run_dbt`
+  on `local-pool` (which also runs dawarich). Moving them to the Miroir analysis
+  outputs would let `run_dbt` go.
 - Cloud blockers (decision-adjacent, from the OSS+hosted analysis):
   per-tenant key separation, artifact storage abstraction (NFS paths are
   absolute on purpose today — they must resolve identically everywhere),

@@ -745,3 +745,22 @@ refusing it on every sync. Retention keeps the most recently arrived folder file
 
 Submitting an operation that the executor refuses closes it with a `blocked`
 attempt (`SubmitFailed`), so nothing stays requested without a run to observe.
+
+## 025 — Legacy per-source loads are retired; `run_dbt` stays for the mart schemas
+
+Status: accepted, 2026-11-11. Completes the cutovers planned in 020 and 021.
+
+GitHub, ListenBrainz, Bike Share and Health load through Miroir connections bound
+to their original pipelines and raw schemas, so history and cursors carried over.
+Their legacy deployments, the per-source flows, `src/sources/`, and their tasks
+and configuration are removed. Browser history is retired without a replacement
+for now; its raw data stays, and it returns as a Miroir connection with a watched
+folder. The one-shot GitHub account-export seeding went with the legacy source;
+its `export_*` tables stay and dbt still reads them, and a GitHub archive file
+format would replace it (021).
+
+The nightly `run_dbt` deployment on `local-pool` stays. Dashboards read the
+original mart schemas (`music`, `github`, `health`, `biking`, `browser`,
+`crossovers`), which only it builds; Miroir analyses build their own namespaced
+copies. It can go once dashboards read analysis outputs. `local-pool` also runs
+flows from other repositories.

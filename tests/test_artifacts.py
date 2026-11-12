@@ -33,7 +33,6 @@ from src.core.operations import (
 from src.core.runner import AlreadyImported, IngestionFailed, import_artifact
 from src.integrations.registry import INTEGRATIONS
 from src.integrations.validation import InvalidArtifact
-from src.sources.apple_health import apple_health as legacy_health_source
 from tests.test_miroir import example
 
 CUTOFF = "2026-06-04"  # from examples/miroir.json
@@ -154,38 +153,16 @@ class ArtifactTests(unittest.TestCase):
         self.assertEqual([qty for _, qty in self.metrics()], [1, 2])
 
     def test_changed_contents_with_unchanged_mtime_are_imported(self):
-        directory = self.root / "health"
-        directory.mkdir()
-        legacy = directory / "export.json"
-        legacy.write_text(json.dumps(export(("2026-06-05", 1))))
-        stamp = os.stat(legacy).st_mtime
-        connection = parse_miroir(
-            json.dumps(
-                {
-                    **example(),
-                    "connections": [
-                        {
-                            **example()["connections"][1],
-                            "settings": {"data_dir": str(directory), "cutoff": CUTOFF},
-                        }
-                    ],
-                }
-            )
-        ).connections[0]
-        pipeline = dlt.pipeline(
-            pipeline_name=connection.binding.pipeline_name,
-            pipelines_dir=str(self.root / "state"),
-            destination=dlt.destinations.duckdb(credentials=str(self.database)),
-            dataset_name=connection.binding.dataset_name,
-        )
-        pipeline.run(legacy_health_source(data_dir=str(directory), cutoff=CUTOFF))
-        legacy.write_text(json.dumps(export(("2026-06-05", 1), ("2026-06-06", 2))))
-        os.utime(legacy, (stamp, stamp))
-        pipeline.run(legacy_health_source(data_dir=str(directory), cutoff=CUTOFF))
-        # The legacy scanner's modification-time cursor skips the changed file...
+        # Content addressing, not modification times, decides what is new.
+        path = self.write("export.json", export(("2026-06-05", 1)))
+        stamp = os.stat(path).st_mtime
+        self.load(self.submit(path)[0])
         self.assertEqual(len(self.metrics()), 1)
-        # ...while the same bytes submitted explicitly are a new artifact and load.
-        self.load(self.submit(legacy)[0])
+        path.write_text(json.dumps(export(("2026-06-05", 1), ("2026-06-06", 2))))
+        os.utime(path, (stamp, stamp))
+        artifact, created = self.submit(path)
+        self.assertTrue(created)
+        self.load(artifact)
         self.assertEqual(len(self.metrics()), 2)
 
     def test_failed_import_is_not_imported_and_can_be_retried(self):

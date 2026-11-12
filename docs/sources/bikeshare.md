@@ -2,8 +2,8 @@
 
 Every Bike Share Toronto rental (stations, times, bike type).
 
-- **Schedule**: daily 00:00 UTC (`load-bikeshare/load_bikeshare`)
-- **Code**: [`src/sources/bikeshare.py`](../../src/sources/bikeshare.py), [`src/pipelines/bikeshare.py`](../../src/pipelines/bikeshare.py)
+- **Schedule**: Miroir connection `bikeshare`, daily 00:00 UTC
+- **Code**: connector [`src/integrations/bikeshare/`](../../src/integrations/bikeshare/) (legacy flow retired 2026-11-11)
 - **Raw schema**: `bikeshare_data.trips` (+ `trips__start_location`, `trips__end_location`)
 - **dbt**: `staging.stg_bikeshare__trips` → `biking.{biking_rides, stations, routes}`, `crossovers.rides`
 - **Dashboards**: Biking (3), Rides (26)

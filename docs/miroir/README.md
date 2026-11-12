@@ -98,8 +98,8 @@ token) fetch. Apple Health reads Health Auto Export JSON (option `role`:
 `ongoing`/`historical`); browser history reads Firefox/Zen Places snapshots, plain or
 gzip. Native Apple Health XML is not supported. Each connector package under
 `src/integrations/<name>/` owns its settings, credentials, check, resources, inputs,
-and dlt sources; the registry only lists them. `src/sources/` and the old flow entry
-points are the legacy path.
+and dlt sources; the registry only lists them. The legacy `src/sources/` and per-source
+flows were retired after the 2026-11-11 cutovers.
 
 Files arrive through three core transports, all of which register an artifact and
 then import it: upload, the connection's receiving URL, and a **watched folder**. A
