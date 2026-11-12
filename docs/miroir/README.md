@@ -8,6 +8,7 @@ flows continue alongside Miroir until each source is explicitly cut over.
 - [Roadmap](../product-plan.md)
 - [Baseline and migration constraints](baseline.md)
 - [Design decisions](decisions.md)
+- [Writing an integration](integrations.md)
 - [Implementation log and next steps](implementation-log.md)
 - [Synthetic example configuration](../../examples/miroir.json)
 
@@ -417,6 +418,7 @@ The JSON API takes `Authorization: Bearer $MIROIR_API_TOKEN`:
 | `GET /api/integrations` | Integrations with settings schemas and credential fields |
 | `POST /api/connections` | Add a connection: `{"integration", "id", "settings", "credentials"}`; returns the check result |
 | `PUT /api/connections/{id}/settings` with `If-Match: <file_revision>` | Patch non-secret settings; keeps other connection configuration |
+| `PUT /api/connections/{id}/resources` with `If-Match: <file_revision>` | Save `{"resources": ["commits", "stars"]}`; null selects all; keeps data and cursors |
 | `POST /api/connections/{id}/prepare` | Prepare execution for this connection only |
 | `PUT /api/connections/{id}/credentials/{name}` | Replace a credential: `{"value": "..."}` (204) |
 | `POST /api/connections/{id}/check`, `DELETE /api/connections/{id}` | Test or remove a connection |
@@ -505,6 +507,11 @@ settings, credential references, and optional explicit pipeline/dataset binding,
 resource selection (`resources`: a subset of declared resources; unselected resources
 keep their stored state and rows), watched folder, and schedule. Analyses own input
 links, timezone, typed parameters, and dashboard links.
+Fetched resources can be selected during setup or in connection settings. The API
+also accepts `resources` when creating a connection. Omission/null keeps the
+existing all-resources default; an explicit selection must be nonempty. Deselecting
+keeps stored rows and sync progress, which analyses may still read. The file import
+path continues to parse all resources in an artifact.
 Credentials use `provider: "miroir"` for the built-in encrypted store without a
 key, or `provider: "env"` / `"fnox"` with a `key` naming the external value. Inline
 credential fields and unknown settings are rejected. The configuration's content

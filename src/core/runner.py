@@ -95,15 +95,10 @@ def redact(error: BaseException, secrets: list[str]) -> tuple[str, str]:
     return f"{kind.__module__}.{kind.__qualname__}"[:200], message[:MAX_ERROR_LENGTH]
 
 
-def _rate_limited(response: Any) -> bool:
-    """GitHub answers an exhausted rate limit with 403, not 429."""
-    headers = getattr(response, "headers", None) or {}
-    return headers.get("x-ratelimit-remaining") == "0" or "retry-after" in headers
-
-
 def failure_kind(error: BaseException) -> str | None:
     """Classify a failure from its exception chain (dlt wraps source errors)."""
     from src.core.secrets import SecretKeyError, SecretResolutionError
+    from src.integrations.errors import IntegrationError, is_rate_limited
 
     seen: set[int] = set()
     current: BaseException | None = error
@@ -111,10 +106,12 @@ def failure_kind(error: BaseException) -> str | None:
         seen.add(id(current))
         if isinstance(current, (SecretResolutionError, SecretKeyError)):
             return "credentials_missing"
+        if isinstance(current, IntegrationError):
+            return current.kind
         response = getattr(current, "response", None)
-        if getattr(response, "status_code", None) in (401, 403) and not _rate_limited(
-            response
-        ):
+        if response is not None and is_rate_limited(response):
+            return "rate_limited"
+        if getattr(response, "status_code", None) in (401, 403):
             return "credentials_rejected"
         current = (
             current.__cause__

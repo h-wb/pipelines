@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_macros.html" import badge, when %}
-{% from "_connection_forms.html" import settings_fields, credential_fields, endpoint, folder_field %}
+{% from "_connection_forms.html" import settings_fields, credential_fields, endpoint, folder_field, resource_fields %}
 {% set c = connection %}
 {% block title %}{{ c.id }} settings{% endblock %}
 {% block body %}
@@ -14,6 +14,14 @@
   {{ settings_fields(integration, integration.connection_fields, values) }}
   <button>Save settings</button>
 </form>
+
+{% if integration.fetch %}
+<form class="stack" method="post" action="/connections/{{ c.id }}/resources">
+  <input type="hidden" name="file_revision" value="{{ file_revision }}">
+  {{ resource_fields(integration, selected_resources) }}
+  <button>Save resource selection</button>
+</form>
+{% endif %}
 
 {% if c.credentials %}<h2>Account credentials</h2>{{ credential_fields(c) }}{% endif %}
 <p>Connection check {{ badge(c.credential_status.state) }} · {{ c.credential_status.message or 'Not checked yet' }}</p>

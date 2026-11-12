@@ -30,6 +30,160 @@ class OnboardingTests(WebFixture):
             follow_redirects=False,
         )
 
+    def test_resource_choices_create_edit_validate_and_detect_conflicts(self):
+        from cryptography.fernet import Fernet
+
+        from src.core.secrets import SecretBox, SecretStore
+
+        self.service.secrets = SecretStore(
+            self.store, SecretBox.from_keys(Fernet.generate_key().decode())
+        )
+        form = self.client.get("/connections/new?integration=github")
+        self.assertIn("Data to mirror", form.text)
+        self.assertIn('value="commits" checked', form.text)
+        self.assertIn("Initial sync can be slow", form.text)
+        original = self.config_path.read_bytes()
+        data = {
+            "integration": "github",
+            "id": "code",
+            "method": "api",
+            "setting.username": "octo-cat",
+            "credential.access_token": "fake",
+            "resources_present": "true",
+        }
+        empty = self.client.post("/connections/new", data=data)
+        self.assertEqual(empty.status_code, 400)
+        self.assertNotIn('value="commits" checked', empty.text)
+        self.assertEqual(self.config_path.read_bytes(), original)
+        self.assertEqual(self.store.secret_metadata("personal", "code"), {})
+        with patch.object(self.service, "check_connection", return_value={}):
+            created = self.client.post(
+                "/connections/new",
+                data={**data, "resources": ["commits", "stars"]},
+                follow_redirects=False,
+            )
+        self.assertEqual(created.status_code, 303)
+        raw, _ = self.service._raw_config()
+        target = next(c for c in raw["connections"] if c["id"] == "code")
+        target["schedule"] = {"cron": "0 0 * * *", "timezone": "UTC"}
+        target["binding"] = {"pipeline_name": "github", "dataset_name": "github_data"}
+        self.config_path.write_text(json.dumps(raw))
+        original, revision = self.service._raw_config()
+        old_revision = self.service._connection(self.service.miroir(), "code").revision
+        settings = self.client.get("/connections/code/settings")
+        self.assertIn('value="commits" checked', settings.text)
+        self.assertNotIn('value="repos" checked', settings.text)
+        self.assertIn("Analyses may still read previously stored data", settings.text)
+        saved = self.client.post(
+            "/connections/code/resources",
+            data={"file_revision": revision, "resources": ["stars"]},
+            follow_redirects=False,
+        )
+        self.assertEqual(saved.status_code, 303)
+        expected = copy.deepcopy(original)
+        next(c for c in expected["connections"] if c["id"] == "code")["resources"] = [
+            "stars"
+        ]
+        self.assertEqual(json.loads(self.config_path.read_text()), expected)
+        self.assertNotEqual(
+            self.service._connection(self.service.miroir(), "code").revision,
+            old_revision,
+        )
+        stale = self.client.post(
+            "/connections/code/resources",
+            data={"file_revision": revision, "resources": ["repos"]},
+        )
+        self.assertEqual(stale.status_code, 409)
+        revision = self.service.connection_settings("code")["file_revision"]
+        for selection in ([], ["unknown"], ["repos", "repos"], "repos", False):
+            response = self.client.put(
+                "/api/connections/code/resources",
+                headers={**BEARER, "If-Match": revision},
+                json={"resources": selection},
+            )
+            self.assertEqual(response.status_code, 400, selection)
+            self.assertEqual(json.loads(self.config_path.read_text()), expected)
+        self.assertEqual(
+            self.client.put(
+                "/api/connections/code/resources",
+                headers=BEARER,
+                json={"resources": ["repos"]},
+            ).status_code,
+            400,
+        )
+        self.assertEqual(
+            self.client.put(
+                "/api/connections/health/resources",
+                headers={**BEARER, "If-Match": revision},
+                json={"resources": ["metrics"]},
+            ).status_code,
+            400,
+        )
+        reset = self.client.put(
+            "/api/connections/code/resources",
+            headers={**BEARER, "If-Match": revision},
+            json={"resources": None},
+        )
+        self.assertEqual(reset.status_code, 200)
+        settings = self.client.get("/connections/code/settings")
+        self.assertIn('value="repos" checked', settings.text)
+        self.assertEqual(
+            len(self.service.connection_settings("code")["selected_resources"]), 11
+        )
+        self.assertEqual(self.executed, [])
+        self.assertNotIn(
+            "Data to mirror", self.client.get("/connections/health/settings").text
+        )
+
+    def test_api_creation_accepts_resource_selection_and_omission_means_all(self):
+        from cryptography.fernet import Fernet
+
+        from src.core.secrets import SecretBox, SecretStore
+
+        self.service.secrets = SecretStore(
+            self.store, SecretBox.from_keys(Fernet.generate_key().decode())
+        )
+        with patch.object(self.service, "check_connection", return_value={}):
+            before = self.config_path.read_bytes()
+            for invalid in (False, "stars", [1], {"name": "stars"}):
+                response = self.client.post(
+                    "/api/connections",
+                    headers=BEARER,
+                    json={
+                        "integration": "github",
+                        "id": "invalid",
+                        "settings": {"username": "octo-cat"},
+                        "credentials": {"access_token": "fake"},
+                        "resources": invalid,
+                    },
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(self.config_path.read_bytes(), before)
+                self.assertEqual(self.store.secret_metadata("personal", "invalid"), {})
+            for connection_id, extra in (
+                ("selected", {"resources": ["stars"]}),
+                ("all_data", {}),
+            ):
+                created = self.client.post(
+                    "/api/connections",
+                    headers=BEARER,
+                    json={
+                        "integration": "github",
+                        "id": connection_id,
+                        "settings": {"username": "octo-cat"},
+                        "credentials": {"access_token": "fake"},
+                        **extra,
+                    },
+                )
+                self.assertEqual(created.status_code, 201)
+        self.assertEqual(
+            self.service.connection_settings("selected")["selected_resources"],
+            ["stars"],
+        )
+        self.assertEqual(
+            len(self.service.connection_settings("all_data")["selected_resources"]), 11
+        )
+
     def test_delivery_choice_filters_fields_and_validates_before_saving(self):
         choice = self.client.get("/connections/new?integration=apple_health")
         self.assertIn("How do you want to send data?", choice.text)
@@ -334,6 +488,27 @@ class FolderSettingsTests(WebFixture):
             data={"file_revision": revision, "folder.path": path},
             follow_redirects=False,
         )
+
+    def test_shared_edit_aborts_on_errors_and_detects_changes_at_save(self):
+        from src.core.config import ConfigurationConflict
+
+        before = self.config_path.read_bytes()
+        revision = self.service.connection_settings("health")["file_revision"]
+        with (
+            self.assertRaisesRegex(OperationError, "abort"),
+            self.service._edit_connection("health", revision) as (target, _),
+        ):
+            target["settings"]["cutoff"] = "2026-01-01"
+            raise OperationError("abort")
+        self.assertEqual(self.config_path.read_bytes(), before)
+        concurrent = before + b"\n"
+        with (
+            self.assertRaises(ConfigurationConflict),
+            self.service._edit_connection("health", revision) as (target, _),
+        ):
+            target["settings"]["cutoff"] = "2026-01-01"
+            self.config_path.write_bytes(concurrent)
+        self.assertEqual(self.config_path.read_bytes(), concurrent)
 
     def test_folder_is_delivery_configuration_not_a_source_setting(self):
         page = self.client.get("/connections/health")

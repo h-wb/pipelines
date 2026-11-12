@@ -12,7 +12,7 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from starlette.concurrency import run_in_threadpool
 
-from src.core.config import ConfigurationConflict, ConfigurationError
+from src.core.config import ConfigurationError
 from src.core.operations import OperationError
 from src.core.secrets import SecretResolutionError
 from src.core.service import MiroirService
@@ -56,6 +56,21 @@ def connection_pages(service: MiroirService, page: Page) -> APIRouter:
         return RedirectResponse(
             f"/connections/{connection_id}/settings?notice={notice}", status_code=303
         )
+
+    def settings_error(
+        request: Request,
+        connection_id: str,
+        revision: str,
+        error: Exception,
+        **overrides: Any,
+    ) -> HTMLResponse:
+        view = service.connection_settings(connection_id)
+        view["values"].update(overrides.pop("values", {}))
+        view.update(overrides)
+        view["file_revision"] = revision
+        response = page(request, "connection_settings.html", **view, error=str(error))
+        response.status_code = error_status(error)
+        return response
 
     def creation_page(
         request: Request,
@@ -113,6 +128,11 @@ def connection_pages(service: MiroirService, page: Page) -> APIRouter:
             if key.startswith("credential.")
         }
         folder_path = str(form.get("folder.path", "")).strip() or None
+        resources = (
+            [str(value) for value in form.getlist("resources")]
+            if form.get("resources_present")
+            else None
+        )
         try:
             selected = service.setup_method(integration, method)
             service.create_connection(
@@ -122,13 +142,19 @@ def connection_pages(service: MiroirService, page: Page) -> APIRouter:
                 credentials,
                 delivery_method=selected["id"],
                 folder_path=folder_path,
+                resources=resources,
             )
         except (ConfigurationError, OperationError, SecretResolutionError) as error:
             response = creation_page(
                 request,
                 integration,
                 method,
-                {"id": connection_id, "folder.path": folder_path, **settings},
+                {
+                    "id": connection_id,
+                    "folder.path": folder_path,
+                    "resources": resources,
+                    **settings,
+                },
                 str(error),
             )
             response.status_code = 400
@@ -230,17 +256,23 @@ def connection_pages(service: MiroirService, page: Page) -> APIRouter:
         try:
             service.update_connection_settings(connection_id, values, revision)
         except (ConfigurationError, OperationError) as error:
-            view = service.connection_settings(connection_id)
-            view["values"].update(values)
-            view["file_revision"] = revision
-            response = page(
-                request, "connection_settings.html", **view, error=str(error)
+            return settings_error(
+                request, connection_id, revision, error, values=values
             )
-            response.status_code = (
-                409 if isinstance(error, ConfigurationConflict) else 400
-            )
-            return response
         await run_in_threadpool(service.check_connection, connection_id)
+        return back(connection_id, "saved")
+
+    @router.post("/connections/{connection_id}/resources")
+    async def save_resources(request: Request, connection_id: str) -> Response:
+        form = await request.form()
+        resources = [str(value) for value in form.getlist("resources")]
+        revision = str(form.get("file_revision", ""))
+        try:
+            service.update_connection_resources(connection_id, resources, revision)
+        except (ConfigurationError, OperationError) as error:
+            return settings_error(
+                request, connection_id, revision, error, selected_resources=resources
+            )
         return back(connection_id, "saved")
 
     @router.post("/connections/{connection_id}/folder")
@@ -251,16 +283,9 @@ def connection_pages(service: MiroirService, page: Page) -> APIRouter:
         try:
             service.update_folder(connection_id, path, revision)
         except (ConfigurationError, OperationError) as error:
-            view = service.connection_settings(connection_id)
-            view["folder_values"] = {"path": path}
-            view["file_revision"] = revision
-            response = page(
-                request, "connection_settings.html", **view, error=str(error)
+            return settings_error(
+                request, connection_id, revision, error, folder_values={"path": path}
             )
-            response.status_code = (
-                409 if isinstance(error, ConfigurationConflict) else 400
-            )
-            return response
         await run_in_threadpool(service.check_connection, connection_id)
         return back(connection_id, "saved")
 

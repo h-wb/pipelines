@@ -764,3 +764,77 @@ original mart schemas (`music`, `github`, `health`, `biking`, `browser`,
 `crossovers`), which only it builds; Miroir analyses build their own namespaced
 copies. It can go once dashboards read analysis outputs. `local-pool` also runs
 flows from other repositories.
+
+## 026 — Native dlt resources are the connector authoring boundary
+
+Status: accepted, 2026-11-12. Refines 020 and 021.
+
+A selectable resource is a logical stream to mirror, not an HTTP endpoint or a
+destination table. It may combine several requests, use GraphQL, or parse files.
+Large connectors keep resource implementations in small modules; a thin dlt source
+assembles them. Small connectors need not split files. Use dlt's REST API source,
+resources, transformers, and incremental state directly rather than a Miroir
+endpoint language or dependency engine.
+
+dlt owns keys, write disposition, cursors, and extraction dependencies. Miroir's
+resource catalog owns stable selection IDs, labels, descriptions, warnings, and
+retention explanations; duplicated key/cursor declarations are removed from that
+catalog. Metadata remains importable without dlt or network access. Source assembly
+also performs no HTTP requests; account verification happens during extraction.
+
+Connections select fetched resources during setup or in settings. Omission/null
+continues to mean all resources; an explicit selection must be nonempty, distinct,
+and declared. Saving checkboxes pins that explicit list. Deselecting does not drop
+data or reset state; reselecting resumes the resource's existing state. Analysis
+may still read retained data for a deselected resource. File resource selection is
+not added by this change. Resource edits use configuration revision checks and
+invalidate queued source operations through the existing execution revision.
+
+GitHub is the first modular example. Its source/resource names, keys, table shapes,
+and state keys remain unchanged. This is a bundled authoring contract, not an
+arbitrary-code upload facility or a plugin installer.
+
+## 027 — Shared connector diagnostics and revision-checked connection edits
+
+Status: accepted, 2026-11-12. Refines 026's implementation.
+
+Use a small `IntegrationError` with a safe message and typed kind for credential
+rejection, rate limiting, and malformed upstream responses. GitHub's lightweight
+check and extraction share account identity validation. HTTP 429 and rate-limited
+403 responses are not rejected credentials; a successful response that consumes
+the last quota slot is still successful. Other HTTP errors retain their original
+exceptions, and the runner recognizes typed diagnostics through dlt's wrapping.
+Safe diagnostics do not include upstream bodies or credential-bearing URLs.
+
+Settings, resource, and folder edits use one private context-managed edit path:
+read a snapshot, check its revision, resolve the connection from that snapshot,
+mutate only the requested fields, validate, and atomically revision-check/save.
+Exceptions abort the edit. HTTP input validates resource selection shape before
+passing a typed list/null to the service; configuration remains authoritative for
+declared IDs, uniqueness, and nonempty selection. Web edit failures share one
+renderer that preserves the submitted values and stale revision for conflict
+safety. No new persistence schema or source-state migration is involved.
+
+## 028 — GitHub uses native REST resources, dependencies, and incremental lag
+
+Status: accepted, 2026-11-12. Supersedes 027's no-state-migration scope for this slice.
+
+Simple GitHub streams use dlt's declarative REST resources. An unselected
+`owned_repositories` resource drives repository-scoped transformers, separate
+from the broader selectable repositories stream. Parent discovery does not load
+its own table. No global row ordering is asserted across repositories; pull-request
+pagination stops within each repository only.
+
+Issues, comments, and pull requests track native `updated_at` cursors with a
+three-day lag; the calendar tracks `date` with a three-day lag. On the first
+extraction native state is seeded from the corresponding legacy `last_run` or
+`last_date`, preserving the overlap. Legacy keys remain historical migration inputs
+and are not advanced afterward. Native state takes precedence on future runs;
+failed extraction must roll back migration and cursor updates. Commit/search
+resources retain their run-window state because record dates do not establish
+when an old commit was pushed or indexed. Downgrading after native cursors advance
+would resume older legacy watermarks, causing safe merge re-reads, not deletion.
+
+The dlt HTTP client's retry predicate handles rate-limited 403 responses without
+retrying permission failures, retaining standard 429/server retries and Retry-After.
+Custom search pacing stays. No parallel extraction or credential-provider change.

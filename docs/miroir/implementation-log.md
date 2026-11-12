@@ -1496,3 +1496,106 @@ on 2026-11-11, Health to the phone's 04:54 UTC export; last ride 2026-11-01).
 Then the four paused legacy deployments were deleted and eight stale `Running`
 legacy flow runs (since 2025-10 and 2026-07) were cancelled. Prefect now holds the
 four Miroir deployments, `run_dbt`, and the dawarich flows.
+
+## 2026-11-12 — Resource-oriented integration authoring and selection (decision 026)
+
+GitHub's source now only assembles eleven native dlt resource modules. Shared
+requests, date-window helpers, and lazy account/repository discovery live in its
+client module. Assembly makes no network calls; extraction still checks that the
+token belongs to the configured account. Existing source/resource names, primary
+keys, merge dispositions, output shapes, and `last_run` / `last_date` state keys
+are preserved. Supporting repository requests do not require loading repos, and
+owned-repository discovery is shared across selected resources in one run.
+
+The connector resource catalog now describes selection/presentation, not a second
+copy of dlt keys/cursors. Bundled integrations declare labels; GitHub includes
+scope descriptions and history/cost warnings. Connection setup and settings render
+generic resource checkboxes for fetched integrations. Resource-only edits use a
+revision-checked service operation and `PUT /api/connections/{id}/resources`;
+creation also accepts `resources`. Empty, duplicate, and unknown selections fail
+before persistence. Null/omission retains the all-resources behavior. No file
+selection, destructive data operation, plugin installer, or deployment is added.
+
+Added `docs/miroir/integrations.md` with the contributor contract, native dlt
+primitives, cleanup rules, selection semantics, and compatibility/testing guidance.
+Tests load all eleven GitHub resources into temporary DuckDB using intercepted
+HTTP; assert existing keys and merge hints, lazy assembly, selected-only requests
+and tables, shared discovery, account mismatch, failure cursor rollback, and
+cursor restoration after deselect/reselect into a fresh worker directory. Web/API
+tests cover creation, defaults, validation, error redisplay, revision conflicts,
+source revision changes, and preserving bindings/schedules/other configuration.
+
+Validation: ruff check, ruff format check, mypy, and `git diff --check` pass.
+The full suite passes: 170 tests in 167s, including the real Prefect API harness
+and disposable Postgres/dbt scenarios using Postgres 17.11. The 25 focused
+connector/GitHub/onboarding tests also pass after strengthening the fresh-worker
+cursor restoration and network-free assembly assertions. No live configuration,
+warehouse, or deployment was changed; browser visual verification was not run.
+
+## 2026-11-12 — Integration and connection-edit cleanup (decision 027)
+
+Added shared safe integration diagnostics and rate-limit classification. GitHub's
+check and extraction share account validation, classify mismatched accounts as
+credential rejection, and report malformed account JSON/dates readably. Exhausted
+quota (403/429) no longer marks a valid token rejected; a successful last-quota
+response still succeeds. The runner understands typed errors through dlt wrappers.
+
+Settings/resources/folder mutations share a private revision-checked context
+manager, resolving from the same snapshot that is edited. Exceptions never save;
+the final atomic save still checks the file revision. Web edit errors share a
+renderer and keep submitted values/revisions. Resource JSON shapes are checked at
+the HTTP boundary, and service resource parameters are `list[str] | None`.
+
+GitHub resource metadata uses named dataclass fields instead of positional tuple
+rows. Repository discovery is a public cached property without a forwarding
+method; the lazy `authenticated_client` property makes verification explicit.
+Sessions and date-window interfaces now use concrete types. No custom dlt base
+class, cursor migration, or endpoint framework was introduced.
+
+Validation: ruff, formatting, mypy, `git diff --check`, and focused tests pass. The first
+full run found an existing test expecting rate limits to have no classification;
+it now expects `rate_limited` (still not rejected credentials). The full suite is
+green: 174 tests in 169s, including the real Prefect API and disposable Postgres/dbt
+scenarios. New tests cover limits, valid last-quota responses, malformed account
+bodies/dates, wrapped/raw HTTP failure classification, and invalid resource shapes
+before secret/configuration persistence. Shared edits are tested for exception
+rollback and final-save conflict detection, preserving concurrent file changes.
+An isolated compatibility probe loaded the original GitHub source from `HEAD`
+into temporary DuckDB, then resumed it with the modular source: all eleven table
+schemas/hints matched exactly and the original committed cursor was reused.
+
+## 2026-11-12 — GitHub native REST resources and incremental lag (decision 028)
+
+A follow-up that compared the connector with dlt's documented patterns (dlt 1.31.0)
+and adopted four of them. `repos`, `stars` and `events` are now declarative
+`rest_api_resources` definitions. They share header-link pagination, `per_page`
+and merge defaults, and an auth wrapper that runs the same lazy account check
+before the first request. An extraction-only `owned_repositories` parent
+(`selected=False`, owner affiliation only) is piped into the `pull_requests`,
+`issues`, `issue_comments` and `releases` transformers. dlt runs it for a
+selected child without loading its table, and it stays separate from the broader
+`repos` stream.
+
+Issues, comments and pull requests track native `updated_at` cursors with a
+three-day lag; the calendar tracks `date` with a three-day lag. On the first run,
+`github/incremental.py` seeds each untouched native cursor from the legacy
+`last_run` / `last_date` inside extraction. A failed run therefore rolls back the
+seed. It keeps one start boundary per resource across transformer rebinding and
+never advances the legacy keys again. Pull-request early stop is per repository.
+Commits and the two search resources keep their run windows. The dlt HTTP client
+gets a `retry_condition` for rate-limited 403 responses, on top of the default
+429/5xx retries and Retry-After. Plain 403/401 responses are not retried, and
+search pacing is unchanged.
+
+Tests cover migration once then native resume, rollback of a failed migration,
+an empty migrated resource keeping its watermark and lag, lagged refresh of
+existing rows across repositories, calendar migration and refresh, per-repository
+PR early stop, declarative pagination/headers/scope, and the retry predicate
+matrix. Downgrading after native cursors advance would resume the older legacy
+watermarks: merge re-reads, not data loss.
+
+Validation: ruff check, ruff format check, mypy and `git diff --check` pass.
+The full suite is green: 182 tests in 180s, including the real Prefect API harness
+and disposable Postgres/dbt scenarios (Postgres 17.11). No live configuration,
+warehouse or deployment was changed. The live GitHub connection will run the
+legacy→native seed on its first run after the next image rollout.

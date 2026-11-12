@@ -71,9 +71,7 @@ DEFINITION = IntegrationDefinition(
             "ListenBrainz → Settings → User token (https://listenbrainz.org/settings/)",
         ),
     ),
-    resources=(
-        ResourceDefinition("listens", ("listened_at", "recording_msid"), "listened_at"),
-    ),
+    resources=(ResourceDefinition("listens", "Listens", "Your listening history."),),
     fetch=Fetch(
         "Connect your account",
         "Miroir fetches your data using your account's access token.",

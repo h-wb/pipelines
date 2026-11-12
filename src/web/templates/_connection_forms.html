@@ -83,3 +83,19 @@
 {% endfor %}
 {% endif %}
 {% endmacro %}
+{% macro resource_fields(integration, selected=none) %}
+{% if integration.fetch %}
+<fieldset class="stack">
+  <legend>Data to mirror</legend>
+  <input type="hidden" name="resources_present" value="true">
+  {% for resource in integration.resources %}
+  <label>
+    <span><input type="checkbox" name="resources" value="{{ resource.name }}"{% if selected is none or resource.name in selected %} checked{% endif %}> {{ resource.label or resource.name }}</span>
+    {% if resource.description %}<span class="muted">{{ resource.description }}</span>{% endif %}
+    {% if resource.warning %}<span class="muted">{{ resource.warning }}</span>{% endif %}
+  </label>
+  {% endfor %}
+  <p class="muted">Select at least one. Deselecting keeps stored data and sync progress; reselecting resumes it. Analyses may still read previously stored data.</p>
+</fieldset>
+{% endif %}
+{% endmacro %}

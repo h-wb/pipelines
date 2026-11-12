@@ -172,8 +172,13 @@ class SmallCoreTests(unittest.TestCase):
             return requests.HTTPError(response=response)
 
         self.assertEqual(failure_kind(error(403)), "credentials_rejected")
-        self.assertIsNone(failure_kind(error(403, **{"X-RateLimit-Remaining": "0"})))
-        self.assertIsNone(failure_kind(error(403, **{"Retry-After": "60"})))
+        self.assertEqual(
+            failure_kind(error(403, **{"X-RateLimit-Remaining": "0"})), "rate_limited"
+        )
+        self.assertEqual(
+            failure_kind(error(403, **{"Retry-After": "60"})), "rate_limited"
+        )
+        self.assertEqual(failure_kind(error(429)), "rate_limited")
 
     def test_identical_bytes_arriving_together_register_once(self):
         import sqlalchemy as sa
