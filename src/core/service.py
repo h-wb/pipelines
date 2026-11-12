@@ -12,7 +12,8 @@ import logging
 import secrets as random_secrets
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
@@ -579,6 +580,7 @@ class MiroirService:
             "connection": self.connection(connection_id),
             "integration": definition,
             "values": connection.settings.model_dump(mode="json"),
+            "selected_resources": connection.summary()["resources"],
             "folder_values": connection.config.folder.model_dump(mode="json")
             if connection.config.folder
             else None,
@@ -606,28 +608,48 @@ class MiroirService:
     def update_connection_settings(
         self, connection_id: str, settings: dict[str, Any], expected_revision: str
     ) -> None:
-        from src.core.config import ConfigurationConflict
+        with self._edit_connection(connection_id, expected_revision) as (target, _):
+            updated = {**target["settings"], **settings}
+            target["settings"] = {
+                key: value for key, value in updated.items() if value is not None
+            }
 
-        if not expected_revision:
-            raise OperationError("Reload settings before saving")
-        raw, revision = self._raw_config()
-        if revision != expected_revision:
-            raise ConfigurationConflict(
-                "Configuration changed since you loaded it; reload settings before saving"
-            )
-        self._connection(self.miroir(), connection_id)
-        target = next(c for c in raw["connections"] if c["id"] == connection_id)
-        updated = {**target["settings"], **settings}
-        target["settings"] = {
-            key: value for key, value in updated.items() if value is not None
-        }
-        self._write_config(raw, expected_revision)
+    def update_connection_resources(
+        self, connection_id: str, resources: list[str] | None, expected_revision: str
+    ) -> None:
+        """Change selection only; dlt retains unselected resources' data and state."""
+        with self._edit_connection(connection_id, expected_revision) as (
+            target,
+            connection,
+        ):
+            if connection.integration.fetch is None:
+                raise OperationError("Only fetched resources can be selected")
+            target["resources"] = resources
 
     def update_folder(
         self, connection_id: str, path: str | None, expected_revision: str
     ) -> None:
         """Set or clear the watched folder; other folder choices are kept."""
-        from src.core.config import ConfigurationConflict
+        with self._edit_connection(connection_id, expected_revision) as (
+            target,
+            connection,
+        ):
+            if path and not connection.integration.accepts_files:
+                raise OperationError("This integration reads no files")
+            target.get("settings", {}).pop("data_dir", None)
+            if path:
+                target["folder"] = {**target.get("folder", {}), "path": path}
+            else:
+                target.pop("folder", None)
+
+    @contextmanager
+    def _edit_connection(
+        self, connection_id: str, expected_revision: str
+    ) -> Iterator[tuple[dict[str, Any], ResolvedConnection]]:
+        """Validate the edited snapshot and save with a final atomic revision check."""
+        import json
+
+        from src.core.config import ConfigurationConflict, parse_miroir
 
         if not expected_revision:
             raise OperationError("Reload settings before saving")
@@ -636,15 +658,9 @@ class MiroirService:
             raise ConfigurationConflict(
                 "Configuration changed; reload settings before saving"
             )
-        connection = self._connection(self.miroir(), connection_id)
-        if path and not connection.integration.accepts_files:
-            raise OperationError("This integration reads no files")
+        connection = self._connection(parse_miroir(json.dumps(raw)), connection_id)
         target = next(c for c in raw["connections"] if c["id"] == connection_id)
-        target.get("settings", {}).pop("data_dir", None)
-        if path:
-            target["folder"] = {**target.get("folder", {}), "path": path}
-        else:
-            target.pop("folder", None)
+        yield target, connection
         self._write_config(raw, expected_revision)
 
     def prepare_connection(self, connection_id: str) -> None:
@@ -690,6 +706,7 @@ class MiroirService:
         *,
         delivery_method: str | None = None,
         folder_path: str | None = None,
+        resources: list[str] | None = None,
     ) -> str:
         """Add a connection whose credentials are stored by the miroir.
 
@@ -727,6 +744,7 @@ class MiroirService:
                 "integration": integration,
                 "settings": settings,
                 "credentials": {name: {"provider": "miroir"} for name in credentials},
+                **({"resources": resources} if resources is not None else {}),
                 **({"folder": {"path": folder_path}} if folder_path else {}),
             }
         )
@@ -770,6 +788,7 @@ class MiroirService:
         """Run the integration's check and record the outcome."""
         from src.core.secrets import SecretKeyError
         from src.integrations.checks import CheckFailed
+        from src.integrations.errors import IntegrationError
 
         miroir = self.miroir()
         connection = self._connection(miroir, connection_id)
@@ -787,7 +806,7 @@ class MiroirService:
             ok = True
         except (SecretResolutionError, SecretKeyError) as error:
             message = str(error)
-        except CheckFailed as error:
+        except (CheckFailed, IntegrationError) as error:
             message, rejected = str(error), error.rejected
         except Exception as error:  # noqa: BLE001 - recorded as a failed check
             # Type only: the message may carry a credential until redacted below.

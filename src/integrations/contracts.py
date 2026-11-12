@@ -16,9 +16,12 @@ from src.integrations.delivery import DeliveryMethod
 
 @dataclass(frozen=True)
 class ResourceDefinition:
+    """Selection and presentation only; loading semantics belong to dlt."""
+
     name: str
-    primary_key: tuple[str, ...]
-    cursor: str | None
+    label: str = ""
+    description: str = ""
+    warning: str = ""
     record_kind: str = "event"
     history: str = "Previously observed rows are retained; upstream absence does not delete history."
 

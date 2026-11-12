@@ -49,13 +49,13 @@ DEFINITION = IntegrationDefinition(
     settings_model=BrowserHistorySettings,
     credentials=(),
     resources=tuple(
-        ResourceDefinition(name, ("id",), cursor, kind)
-        for name, cursor, kind in (
-            ("zen_places", "last_visit_date", "entity"),
-            ("zen_historyvisits", "visit_date", "event"),
-            ("zen_places_metadata", "updated_at", "entity"),
-            ("zen_origins", None, "entity"),
-            ("zen_bookmarks", None, "entity"),
+        ResourceDefinition(name, label, record_kind=kind)
+        for name, label, kind in (
+            ("zen_places", "Pages", "entity"),
+            ("zen_historyvisits", "Visits", "event"),
+            ("zen_places_metadata", "Page interactions", "entity"),
+            ("zen_origins", "Origins", "entity"),
+            ("zen_bookmarks", "Bookmarks", "entity"),
         )
     ),
     formats=(

@@ -58,7 +58,9 @@ DEFINITION = IntegrationDefinition(
         "Fetch your closed rentals using your mobile-app credentials.",
         open_fetch,
     ),
-    resources=(ResourceDefinition("trips", ("rentalId",), "sd"),),
+    resources=(
+        ResourceDefinition("trips", "Trips", "Your Bike Share rental history."),
+    ),
     analysis="biking",
     check=checks.bikeshare,
 )

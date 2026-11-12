@@ -40,16 +40,6 @@ def parse(*connections):
     )
 
 
-def github_user(session, request, **kwargs):
-    """The only request made while opening a GitHub source: the account check."""
-    assert request.url.endswith("/user"), request.url
-    response = requests.Response()
-    response.status_code = 200
-    response._content = b'{"login": "octo-cat", "created_at": "2020-01-01T00:00:00Z"}'
-    response.request = request
-    return response
-
-
 def places(path: Path) -> Path:
     with closing(sqlite3.connect(path)) as db, db:
         db.executescript(
@@ -73,14 +63,22 @@ class ConnectorContractTests(unittest.TestCase):
         connection = parse(github(resources=["repos", "stars"])).connections[0]
         self.assertEqual(connection.summary()["resources"], ["repos", "stars"])
         with (
-            patch.object(requests.Session, "send", github_user),
+            patch.object(
+                requests.Session,
+                "send",
+                side_effect=AssertionError("Source assembly made a request"),
+            ),
             open_fetch(connection, {"access_token": "t"}) as source,
         ):
             self.assertEqual(sorted(source.selected_resources), ["repos", "stars"])
         # Without a selection, every declared resource stays selected.
         connection = parse(github()).connections[0]
         with (
-            patch.object(requests.Session, "send", github_user),
+            patch.object(
+                requests.Session,
+                "send",
+                side_effect=AssertionError("Source assembly made a request"),
+            ),
             open_fetch(connection, {"access_token": "t"}) as source,
         ):
             self.assertEqual(
@@ -149,6 +147,57 @@ class ConnectorContractTests(unittest.TestCase):
         with patch("requests.get", return_value=Response("Octo-Cat")):
             self.assertEqual(
                 check(settings, {"access_token": "t"}), "GitHub account access verified"
+            )
+
+    def test_github_checks_classify_limits_and_malformed_accounts_safely(self):
+        settings = parse(github()).connections[0].settings
+        check = INTEGRATIONS["github"].check
+        for status, headers, body, rejected, message in (
+            (403, {"x-ratelimit-remaining": "0"}, b"{}", False, "rate limit"),
+            (403, {"Retry-After": "10"}, b"{}", False, "rate limit"),
+            (429, {}, b"{}", False, "rate limit"),
+            (401, {}, b"{}", True, "rejected access"),
+            (403, {}, b"{}", True, "rejected access"),
+            (200, {}, b'{"login": 123}', False, "unexpected"),
+            (200, {}, b"{}", False, "unexpected"),
+            (200, {}, b"<html>token-value</html>", False, "unexpected"),
+        ):
+            response = requests.Response()
+            response.status_code = status
+            response.headers.update(headers)
+            response._content = body
+            with (
+                self.subTest(status=status, headers=headers, body=body),
+                patch("requests.get", return_value=response),
+            ):
+                with self.assertRaises(CheckFailed) as caught:
+                    check(settings, {"access_token": "t"})
+                self.assertEqual(caught.exception.rejected, rejected)
+                self.assertIn(message, str(caught.exception))
+                self.assertNotIn("token-value", str(caught.exception))
+        response = requests.Response()
+        response.status_code = 200
+        response.headers["x-ratelimit-remaining"] = "0"
+        response._content = b'{"login": "octo-cat"}'
+        with patch("requests.get", return_value=response):
+            self.assertEqual(
+                check(settings, {"access_token": "t"}), "GitHub account access verified"
+            )
+
+    def test_raw_http_errors_use_the_same_failure_classification(self):
+        from src.core.runner import failure_kind
+
+        for status, headers, expected in (
+            (403, {"Retry-After": "10"}, "rate_limited"),
+            (429, {}, "rate_limited"),
+            (403, {}, "credentials_rejected"),
+            (500, {}, None),
+        ):
+            response = requests.Response()
+            response.status_code = status
+            response.headers.update(headers)
+            self.assertEqual(
+                failure_kind(requests.HTTPError(response=response)), expected
             )
 
     def test_checks_fail_readably_on_unexpected_bodies(self):

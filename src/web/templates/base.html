@@ -40,7 +40,8 @@
   code { font-size: .9em; }
   .copy-value { box-sizing: border-box; width: min(48rem, 100%); padding: .4rem; font: 13px/1.4 ui-monospace, monospace; }
   form.stack label { display: block; margin: .8rem 0; }
-  form.stack input:not([type=hidden]) { display: block; width: min(32rem, 100%); padding: .3rem; font: inherit; }
+  form.stack input:not([type=hidden]):not([type=checkbox]) { display: block; width: min(32rem, 100%); padding: .3rem; font: inherit; }
+  form.stack fieldset { margin: 1rem 0; padding: 1rem; border: 1px solid #ccc; min-width: 0; }
   .ok { color: var(--ok); }
   .rejected, .check_failed { color: var(--bad); }
   .unknown { color: var(--muted); }

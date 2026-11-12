@@ -88,6 +88,15 @@ async def json_body(request: Request) -> Any:
         raise OperationError("The request body must be valid JSON") from None
 
 
+def resource_selection(value: Any) -> list[str] | None:
+    """Shape validation at the transport boundary; config validates resource IDs."""
+    if value is None:
+        return None
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise OperationError("Resources must be a list of names or null")
+    return value
+
+
 def create_app(
     service: MiroirService, token: str, max_upload_bytes: int = DEFAULT_MAX_UPLOAD
 ) -> FastAPI:
@@ -368,6 +377,7 @@ def create_app(
             body.get("settings") or {},
             body.get("credentials") or {},
             delivery_method=body.get("delivery_method"),
+            resources=resource_selection(body.get("resources")),
         )
         return {"id": connection_id, "check": service.check_connection(connection_id)}
 
@@ -382,6 +392,20 @@ def create_app(
             connection_id, settings, request.headers.get("if-match", "").strip('"')
         )
         return {"saved": True, "check": service.check_connection(connection_id)}
+
+    @app.put("/api/connections/{connection_id}/resources")
+    async def api_save_connection_resources(
+        request: Request, connection_id: str
+    ) -> dict:
+        body = await json_body(request)
+        if not isinstance(body, dict) or "resources" not in body:
+            raise OperationError("Expected an object with resources")
+        service.update_connection_resources(
+            connection_id,
+            resource_selection(body["resources"]),
+            request.headers.get("if-match", "").strip('"'),
+        )
+        return {"saved": True}
 
     @app.post("/api/connections/{connection_id}/prepare")
     def api_prepare_connection(connection_id: str) -> dict:

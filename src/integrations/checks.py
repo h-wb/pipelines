@@ -7,6 +7,11 @@ credentials, as opposed to being unreachable.
 
 from typing import Any
 
+from src.integrations.errors import (
+    IntegrationError,
+    response_object,
+)
+
 
 class CheckFailed(Exception):
     def __init__(self, message: str, rejected: bool = False):
@@ -57,6 +62,8 @@ def listenbrainz(settings: Any, credentials: dict[str, str]) -> str:
 def github(settings: Any, credentials: dict[str, str]) -> str:
     import requests
 
+    from src.integrations.github.account import verify_account
+
     try:
         response = requests.get(
             "https://api.github.com/user",
@@ -67,20 +74,11 @@ def github(settings: Any, credentials: dict[str, str]) -> str:
             },
             timeout=20,
         )
-        if response.status_code in (401, 403):
-            raise CheckFailed(
-                "GitHub rejected access; check the token and its permissions",
-                rejected=True,
-            )
-        if response.status_code != 200:
+        if response.status_code not in (200, 401, 403, 429):
             raise CheckFailed(f"GitHub answered HTTP {response.status_code}")
-        if (
-            _body(response, "GitHub").get("login", "").casefold()
-            != settings.username.casefold()
-        ):
-            raise CheckFailed(
-                "The GitHub token belongs to a different account", rejected=True
-            )
+        verify_account(response_object(response, "GitHub"), settings.username)
+    except IntegrationError as error:
+        raise CheckFailed(str(error), rejected=error.rejected) from error
     except requests.RequestException as error:
         raise CheckFailed(f"GitHub unreachable ({type(error).__name__})") from None
     return "GitHub account access verified"

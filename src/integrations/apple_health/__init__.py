@@ -56,10 +56,10 @@ DEFINITION = IntegrationDefinition(
     settings_model=AppleHealthSettings,
     credentials=(),
     resources=(
-        ResourceDefinition("metrics", ("metric_name", "date", "source"), None),
-        ResourceDefinition("workouts", ("id",), None),
-        ResourceDefinition("state_of_mind", ("id",), None),
-        ResourceDefinition("medications", ("displayText", "start"), None),
+        ResourceDefinition("metrics", "Health metrics"),
+        ResourceDefinition("workouts", "Workouts"),
+        ResourceDefinition("state_of_mind", "State of mind"),
+        ResourceDefinition("medications", "Medications"),
     ),
     formats=(
         FileFormat(
