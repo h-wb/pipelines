@@ -1471,3 +1471,22 @@ Seen while checking for active runs: eight legacy `local-pool` flow runs have
 been stuck in `Running` since 2025-10 and 2026-07 (six `load-listenbrainz`, one
 `load-apple-health`, one `load-arc-timeline`). They are stale Prefect states, not
 work; cancel them in Prefect when convenient.
+
+
+## 2026-11-11 — Legacy loads retired (decision 025)
+
+After the four cutovers, the legacy browser-history deployment was deleted at the
+operator's request (its data stays in `browser_history_data`), and the n8n Health
+workflow was archived by the operator. This change removes `src/sources/`, the
+per-source flows in `src/pipelines/`, their `prefect.yaml` entries, `mise` run
+tasks and environment, and rewrites the documentation around Miroir connections.
+`transform.py` (dbt, the nightly `run_dbt`) and `miroir.py` stay. With the legacy
+code gone, lint and mypy cover all of `src`, in CI as well.
+
+Correction to the earlier entries and notes: the legacy worker mounts the NAS
+export at `/root/.prefect/data`; its scratch volume is only underneath. The
+browser flow was reading the Nextcloud-synced snapshot the Mac writes every 6h,
+not an empty folder.
+
+The paused legacy deployments are deleted once the operator confirms the data
+(counts, duplicates and newest rows per raw schema) after the cutovers.

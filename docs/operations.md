@@ -5,23 +5,24 @@ CLI with the prod secrets from fnox.
 
 ## Everyday
 
+Sources run as Miroir connections: sync, import, rebuild and inspect them in the
+Miroir interface or its API/CLI ([Miroir](miroir/README.md)); `refresh` closes
+runs that ended without recording an outcome.
+
 ```bash
-mise run deploy                                           # (re)register every deployment from prefect.yaml
+mise run miroir:deploy                                    # apply Miroir deployments from miroir.json
+mise run deploy                                           # (re)register run_dbt from prefect.yaml
 mise run prefect -- deployment ls
-mise run prefect -- deployment run load-github/load_github --watch
-mise run prefect -- deployment run load-listenbrainz/load_listenbrainz -p full_refresh=true --watch
-mise run prefect -- flow-run ls --flow-name load-github --limit 5
+mise run prefect -- flow-run ls --flow-name sync-connection --limit 5
 mise run prefect -- flow-run logs <flow-run-id>
 ```
 
-A deployment only accepts parameters that exist in its registered schema, so
-after adding a flow parameter run `mise run deploy` before passing it.
-
 ## dbt
 
-Every load flow ends with a dbt build of the models downstream of its source;
-a failure there is logged as a warning and the load still completes. `run_dbt`
-(nightly) builds everything, or a subset with `-p select=source:github+`.
+Every Miroir load builds each analysis linked to its connection, into that
+analysis's own schemas; a build failure leaves the load succeeded and the analysis
+stale. `run_dbt` (nightly, legacy pool) builds the original mart schemas the
+dashboards read, or a subset with `-p select=source:github+`.
 
 Builds are serialised by the global concurrency limit `dbt`. It lives in the
 Prefect server, not in `prefect.yaml`; recreate it after a server rebuild:
@@ -30,19 +31,10 @@ Prefect server, not in `prefect.yaml`; recreate it after a server rebuild:
 mise run prefect -- gcl create dbt --limit 1
 ```
 
-## Triggers from n8n
-
-`load_apple_health` is started by the n8n workflow "Apple Health → Files:
-Ingest Exports" right after it writes an export (HTTP Request to
-`/api/deployments/<id>/create_flow_run`, n8n credential "Prefect API"). The
-weekly cron stays as a fallback.
-
 ## Full refresh
 
-`full_refresh=true` truncates the source's tables and resets its incremental
-state (`refresh="drop_data"`). It never drops tables: dbt staging views depend
-on them and Postgres refuses the `DROP TABLE` (the load then fails and leaves a
-pending package, see below).
+Miroir syncs have no full refresh. Never drop raw tables: dbt staging views depend
+on them and Postgres refuses the `DROP TABLE`.
 
 ## Failure modes seen so far
 
@@ -56,10 +48,8 @@ pending package, see below).
 
 ## One-off loads into the warehouse
 
-The warehouse is only reachable in-cluster. Prefer running a deployment with
-parameters (the worker has the credentials). For ad-hoc runs, copy the code or
-data onto the worker (`kubectl -n automation exec -i deploy/prefect-worker -- tar -x …`)
-and run there; remove copied data afterwards (exports contain private repos).
+The warehouse is only reachable in-cluster. Load files through a Miroir
+connection (upload or receiving URL); flow runs have the credentials.
 
 ## Checks
 

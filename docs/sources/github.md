@@ -3,8 +3,8 @@
 My GitHub footprint: everything in the repos I own (any author, bots included)
 plus my activity elsewhere, from 2017 on.
 
-- **Schedule**: daily 01:00 UTC (`load-github/load_github`)
-- **Code**: [`src/sources/github.py`](../../src/sources/github.py), [`src/pipelines/github.py`](../../src/pipelines/github.py)
+- **Schedule**: Miroir connection `github`, daily 01:00 UTC
+- **Code**: connector [`src/integrations/github/`](../../src/integrations/github/) (legacy flow retired 2026-11-11)
 - **Raw schema**: `github_data`
 - **dbt**: `staging.stg_github__*` → `github.{commits, pull_requests, issues, issue_comments, releases, contributions}`
 - **Dashboard**: GitHub (30): Overview / Pull requests / Stars & activity tabs, contribution-graph heatmap

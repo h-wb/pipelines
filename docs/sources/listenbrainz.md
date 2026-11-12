@@ -3,8 +3,8 @@
 Every listen, from 2019-06 on. ListenBrainz is the hub: other players scrobble
 into it and this pipeline mirrors it.
 
-- **Schedule**: daily 00:00 UTC (`load-listenbrainz/load_listenbrainz`)
-- **Code**: [`src/sources/listenbrainz.py`](../../src/sources/listenbrainz.py), [`src/pipelines/listenbrainz.py`](../../src/pipelines/listenbrainz.py)
+- **Schedule**: Miroir connection `listenbrainz`, daily 00:00 UTC
+- **Code**: connector [`src/integrations/listenbrainz/`](../../src/integrations/listenbrainz/) (legacy flow retired 2026-11-11)
 - **Raw schema**: `listenbrainz_data.listens`
 - **dbt**: `staging.stg_listenbrainz__listens` → `music.*`, `crossovers.*`
 - **Dashboards**: Music (2), Music & Heart (25), Late nights (27), Year in review (29)

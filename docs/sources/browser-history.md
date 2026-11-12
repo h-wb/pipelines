@@ -3,8 +3,8 @@
 Browsing history from Zen (Firefox-based) on the MacBook, from 2025-01-07 on,
 including how long each page was in view and how much I typed on it.
 
-- **Schedule**: daily 02:00 UTC (`load-browser-history/load_browser_history`); snapshots every 6h
-- **Code**: [`src/sources/browser_history.py`](../../src/sources/browser_history.py), [`src/pipelines/browser_history.py`](../../src/pipelines/browser_history.py)
+- **Status**: legacy load retired 2026-11-11; the data stays in `browser_history_data`. To be redone as a Miroir connection with a watched folder at `/miroir/data/browser` (the same synced NAS folder the legacy flow read)
+- **Code**: connector [`src/integrations/browser_history/`](../../src/integrations/browser_history/) (snapshot format)
 - **Raw schema**: `browser_history_data.zen_*`
 - **dbt**: `staging.stg_browser__{visits, page_interactions}` → `browser.{visits, domains_daily}`
 - **Dashboard**: Browser (31): Overview (pages, hours in view, top sites, how I got there) / When (weekday × hour heatmap, hour and weekday charts, recent visits); Date, Group by and Site filters
@@ -21,9 +21,9 @@ runs. A mise task in the dotfiles snapshots it:
   (`sqlite` comes from mise). A launchd agent in the same file runs it every 6h
   and at login; log in `~/Library/Logs/zen-history-snapshot.log`.
 - `sqlite3 .backup` can't be used on the live DB: Zen holds an exclusive lock.
-- Nextcloud's `Hugo/Documents/data` is the NAS share the Prefect worker mounts at
-  `/root/.prefect/data`, so the pipeline reads
-  `BROWSER_HISTORY__DATA_DIR=/root/.prefect/data/browser` as a plain file.
+- Nextcloud's `Hugo/Documents/data` is the NAS share. The retired legacy flow
+  read it at `/root/.prefect/data/browser`; Miroir flow runs see the same folder
+  at `/miroir/data/browser`, ready for a watched folder.
 
 The Arc history from before the switch (2025-01-07 → 2025-10-22) was imported
 into Zen, so it's part of the same DB (visits with `source = 3` "restore" also
@@ -64,6 +64,5 @@ replacement characters rather than failing the run.
 ## Quirks
 
 - Firefox trims old history as the DB grows; the warehouse keeps it (merge).
-- A new snapshot only reaches the worker once the Nextcloud client uploads it.
-  When the client lags, copy it in directly:
-  `kubectl -n automation exec -i deploy/prefect-worker -- sh -c 'cat > /root/.prefect/data/browser/zen-places.sqlite.gz' < ~/Nextcloud/Hugo/Documents/data/browser/zen-places.sqlite.gz`
+- A new snapshot only reaches the NAS once the Nextcloud client uploads it; when
+  it lags, upload the snapshot to the connection directly instead.
