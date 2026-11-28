@@ -1,10 +1,15 @@
 """The Prefect adapter against a real, temporary Prefect API (prefect_test_harness).
 
+With MIROIR_TEST_PREFECT_API_URL set, the adapter tests run against that server
+instead: the Prefect contract job starts one of another version in a process of
+its own (the Prefect version contract, docs/decisions).
+
 No worker runs: flow runs stay scheduled unless a test sets their state.
 """
 
 import io
 import json
+import os
 import tempfile
 import unittest
 import uuid
@@ -13,9 +18,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+from src.adapters import prefect as adapter
 from src.adapters.prefect import (
     MEDIA_TAG,
     PrefectOrchestrator,
+    incompatibility,
     media_deployment_name,
 )
 from src.cli.main import main
@@ -69,14 +76,25 @@ class PrefectAdapterTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         from prefect.client.schemas.actions import WorkPoolCreate
-        from prefect.testing.utilities import prefect_test_harness
+        from prefect.exceptions import ObjectAlreadyExists
 
-        cls.harness = prefect_test_harness()
+        external = os.environ.get("MIROIR_TEST_PREFECT_API_URL")
+        if external:
+            from prefect.settings import PREFECT_API_URL, temporary_settings
+
+            cls.harness = temporary_settings({PREFECT_API_URL: external})
+        else:
+            from prefect.testing.utilities import prefect_test_harness
+
+            cls.harness = prefect_test_harness()
         cls.harness.__enter__()
         from prefect import get_client
 
         with get_client(sync_client=True) as client:
-            client.create_work_pool(WorkPoolCreate(name=POOL, type="process"))
+            try:
+                client.create_work_pool(WorkPoolCreate(name=POOL, type="process"))
+            except ObjectAlreadyExists:  # an external server used before
+                pass
 
     @classmethod
     def tearDownClass(cls):
@@ -487,6 +505,49 @@ class PrefectAdapterTests(unittest.TestCase):
         ):
             self.orchestrator.submit(operation.id)
 
+    def test_an_older_prefect_server_is_refused_before_any_call(self):
+        import prefect
+        from prefect.client.orchestration import SyncPrefectClient
+
+        major, minor = prefect.__version__.split(".")[:2]
+        older = (
+            f"{major}.{int(minor) - 1}.0" if int(minor) else f"{int(major) - 1}.99.0"
+        )
+        ws = miroir()
+        operation = request_sync(ws, "music", store=self.store, origin="request")
+        with (
+            patch.object(adapter, "_compatible_servers", set()),
+            patch.object(SyncPrefectClient, "api_version", return_value=older),
+            patch("prefect.deployments.run_deployment") as run_deployment,
+        ):
+            for call in (
+                lambda: self.orchestrator.submit(operation.id),
+                lambda: self.orchestrator.plan(ws),
+                lambda: self.orchestrator.observe(ws),
+            ):
+                with self.assertRaisesRegex(
+                    OperationError, "Upgrade the Prefect server"
+                ):
+                    call()
+            run_deployment.assert_not_called()
+
+    def test_the_server_is_checked_once_per_process(self):
+        from prefect.client.orchestration import SyncPrefectClient
+
+        ws = miroir()
+        with (
+            patch.object(adapter, "_compatible_servers", set()),
+            patch.object(
+                SyncPrefectClient,
+                "api_version",
+                autospec=True,
+                side_effect=SyncPrefectClient.api_version,
+            ) as api_version,
+        ):
+            self.orchestrator.plan(ws)
+            self.orchestrator.plan(ws)
+        self.assertEqual(api_version.call_count, 1)
+
     def test_plan_and_apply_own_the_media_deployment(self):
         raw = with_screen("media_owned")
         media = media_deployment_name("media_owned")
@@ -607,6 +668,24 @@ class PrefectAdapterTests(unittest.TestCase):
         ):
             with self.subTest(bad=bad), self.assertRaises(ConfigurationError):
                 miroir(schedule=bad)
+
+
+class ServerVersionTests(unittest.TestCase):
+    def test_a_server_at_or_after_the_clients_minor_is_compatible(self):
+        for server in ("3.9.0", "3.9.7", "3.10.0", "3.12.1.dev4+g1a2b3c"):
+            with self.subTest(server=server):
+                self.assertIsNone(incompatibility("3.9.2", server))
+
+    def test_an_older_minor_or_another_major_is_not(self):
+        self.assertRegex(
+            incompatibility("3.9.0", "3.8.8"), "Upgrade .* to 3.9 or later"
+        )
+        self.assertRegex(incompatibility("3.9.0", "4.0.0"), "share a major version")
+        self.assertRegex(incompatibility("3.9.0", "2.20.0"), "share a major version")
+
+    def test_an_unreadable_version_is_a_product_error(self):
+        with self.assertRaisesRegex(OperationError, "unreadable"):
+            incompatibility("3.9.0", "nightly")
 
 
 class DeploymentSettingsTests(unittest.TestCase):

@@ -30,7 +30,7 @@ src/core/          Miroir: configuration, metadata store, runner, services, medi
 src/integrations/  one connector package per source
 src/analyses/      the catalog of analysis packages
 src/web, src/cli   the interface, HTTP API and CLI over the same services
-src/adapters/      Prefect and S3
+src/adapters/      Prefect
 src/flows/         the flow entry points Prefect runs
 collector/         miroir-collector, its own package
 dbt/               staging views and one model group per package

@@ -29,6 +29,7 @@ What is deployed and how to operate it:
 | [Architecture](architecture.md) | Which part of the code does what, who may import whom, where a new thing goes |
 | [Decisions](miroir/decisions.md) | Why it is built this way, numbered |
 | [The package split](decisions/2026-11-25-package-split.md) | The parts the code is split into, their contracts and the order of the move (2026-11-25) |
+| [The Prefect version contract](decisions/2026-11-27-prefect-version-contract.md) | Which Prefect servers the adapter accepts, the contract tests in CI, the order of upgrades (2026-11-27) |
 | [Writing an integration](miroir/integrations.md) | How a connector is written and tested |
 | [Observability](observability.md) | How Miroir tells a quiet source from a broken one; metrics and alert rules |
 | [Operations](operations.md) | Adding a device source or an analysis, commands from a checkout, symptoms and failures seen |

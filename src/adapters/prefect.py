@@ -11,9 +11,15 @@ give the bucket key to its Jobs alone (decision 033 amendment).
 It blocks, so callers run it off the event loop (the web routes that reach it are
 synchronous). On a loop Prefect's `to_deployment` and `run_deployment` would hand
 back coroutines instead of results.
+
+The locked Prefect client is the contract with the Prefect server: before its
+first call to a server, a process checks that the server is at least the
+client's minor version, on the same major ([the Prefect version
+contract](../../docs/decisions/2026-11-27-prefect-version-contract.md)).
 """
 
 import json
+import re
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -49,9 +55,60 @@ UNAVAILABLE = (
 )
 
 
+# Prefect API URLs this process found compatible; each is checked once.
+_compatible_servers: set[str] = set()
+
+
+def _release(version: str) -> tuple[int, int]:
+    """Major and minor of a Prefect version (`3.9.0`, `3.10.1.dev2+g1a2b`)."""
+    match = re.match(r"(\d+)\.(\d+)", version)
+    if match is None:
+        raise OperationError(f"Prefect reported an unreadable version: {version!r}")
+    return int(match.group(1)), int(match.group(2))
+
+
+def incompatibility(client: str, server: str) -> str | None:
+    """Why this client cannot use that server, or None when it can.
+
+    The server must be on the client's major and at least its minor. Patch
+    releases differ freely; Prefect itself only warns when the server is older.
+    """
+    have, need = _release(server), _release(client)
+    if have[0] != need[0]:
+        return (
+            f"The Prefect server runs {server}, Miroir's Prefect client {client}:"
+            f" they must share a major version. Run a Prefect {need[0]}.x server"
+            f" at {need[0]}.{need[1]} or later."
+        )
+    if have < need:
+        return (
+            f"The Prefect server runs {server}, older than Miroir's Prefect client"
+            f" {client}. Upgrade the Prefect server to {need[0]}.{need[1]} or later."
+        )
+    return None
+
+
+def _require_compatible_server() -> None:
+    """Refuse a Prefect server older than the locked client, once per server."""
+    import prefect
+    from prefect import get_client
+    from prefect.settings import get_current_settings
+
+    url = str(get_current_settings().api.url)
+    if url in _compatible_servers:
+        return
+    with get_client(sync_client=True) as client:
+        server = client.api_version()
+    problem = incompatibility(prefect.__version__, server)
+    if problem is not None:
+        raise OperationError(problem)
+    _compatible_servers.add(url)
+
+
 def _readable_errors(function: Callable[P, R]) -> Callable[P, R]:
     """Prefect failures as product errors; an unreachable or refusing Prefect is
-    OrchestratorUnavailable, so callers can ask to try again later."""
+    OrchestratorUnavailable, so callers can ask to try again later. Checks the
+    server's version first."""
 
     @wraps(function)
     def call(*args: P.args, **kwargs: P.kwargs) -> R:
@@ -60,6 +117,7 @@ def _readable_errors(function: Callable[P, R]) -> Callable[P, R]:
         from prefect.exceptions import ObjectNotFound
 
         try:
+            _require_compatible_server()
             return function(*args, **kwargs)
         except ObjectNotFound as error:
             raise OperationError(
