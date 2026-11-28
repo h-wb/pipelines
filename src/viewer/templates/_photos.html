@@ -1,0 +1,13 @@
+{# One page of a conversation's pictures, newest first; also the fragment the
+   page's script loads, the next page's cursor on the list. Names are values
+   Jinja escapes. #}
+<ul class="photos" id="photos" data-before="{{ before or '' }}">
+{% for photo in photos %}
+<li class="photo" data-message="{{ photo.message }}">
+  <a class="attachment-image" href="{{ photo.open }}" target="_blank"><img src="{{ photo.image }}" alt="{{ photo.name }}" loading="lazy" decoding="async"></a>
+  <p class="photo-links"><time datetime="{{ photo.sent_at }}">{{ photo.when }}</time><br><a class="photo-original" href="{{ photo.original }}" target="_blank">Original</a> · <a class="photo-thread" href="{{ photo.thread }}">In the thread</a></p>
+</li>
+{% else %}
+<li class="empty-page">{% if later_page %}No more pictures.{% else %}No pictures in this conversation{% endif %}</li>
+{% endfor %}
+</ul>

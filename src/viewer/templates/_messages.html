@@ -15,7 +15,7 @@
     {% if item.text_truncated %}<p class="muted">The text is cut here.</p>{% endif %}
     {% if item.audio %}<p class="audio">Audio message</p>{% endif %}
     {% if item.attachments %}<ul class="attachments">{% for file in item.attachments %}
-      <li>{% if file.image %}<a class="attachment-image" href="{{ file.open }}" target="_blank"><img src="{{ file.image }}" alt="{{ file.name }}" loading="lazy" decoding="async"></a>
+      <li>{% if file.image %}<a class="attachment-image" href="{{ file.open }}" target="_blank"><img src="{{ file.image }}" alt="{{ file.name }}" loading="lazy" decoding="async"></a>{% if file.original %}<a class="attachment-original" href="{{ file.original }}" target="_blank">Original</a>{% endif %}
       {%- elif file.open %}<a class="file-tile" href="{{ file.open }}" target="_blank"><span class="file-name">{{ file.name }}</span><span class="file-about">{{ file.type }}{% if file.size %} · {{ file.size }}{% endif %}</span></a>
       {%- else %}<span class="file-tile file-absent"><span class="file-name">{{ file.name }}</span><span class="file-about">{{ file.state }}</span></span>{% endif %}</li>
     {% endfor %}</ul>{% endif %}

@@ -358,7 +358,19 @@ of each page works without it. All four, and `conversations.css`, are served at
   there; "File state not known yet" with no record of it; "Not available" for a
   file that was never stored. A thumbnail box has a fixed size, so one that
   loads late moves nothing. An attachment shows its thumbnail or tile after the
-  first timeline build that follows its derive run ([Media](media.md)).
+  first timeline build that follows its derive run ([Media](media.md)). Beside
+  a thumbnail, "Original" opens the stored file itself: the media route without
+  `size`, as a stored file's tile does.
+- `/timeline/conversations/{id}/photos`, linked as "Photos" from the thread's
+  header, is a grid of the conversation's pictures: its attachments with
+  thumbnails (images, and videos that have one), newest first, from the same
+  messages the thread shows (deleted and undated ones never). Each tile is the
+  360-pixel thumbnail opening the 1280-pixel one, with its time, "Original",
+  and "In the thread", which opens the thread at its message (`?around=`).
+  60 load at a time, by keyset on the message's time, its guid and the
+  attachment's place in it: the next page loads as the end of the grid comes
+  near, or from "More" (`?before=` a cursor) without JavaScript. A conversation
+  with none says "No pictures in this conversation"; an unknown one is 404.
 - An htmx request made after the login expired gets `HX-Redirect` to the login.
 - Up to 760 pixels wide everything is one column: the image, the text, the
   lanes, the slider, the calendar; lanes and slider are taller for a finger. A

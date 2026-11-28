@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{# No name in the title: browsers keep titles in their history. #}
+{% block title %}Pictures{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/viewer/conversations.css">
+<script src="/static/htmx.min.js" defer></script>
+<script type="module" src="/static/viewer/conversations.js"></script>{% endblock %}
+{% block body %}
+<div class="conversations-page thread-open">
+  <nav class="conversation-pane" aria-labelledby="conversations-heading">
+    <h2 id="conversations-heading"><a href="/timeline/conversations">Conversations</a></h2>
+    <ul class="conversation-list" id="conversation-list">{% include "_conversation_list.html" %}</ul>
+  </nav>
+  <main class="thread" id="thread" data-conversation="{{ conversation_id }}" data-fragment="{{ fragment }}">
+    <header class="thread-head">
+      <a class="back" href="/timeline/conversations">‹ Conversations</a>
+      <h1>{{ conversation_name }}</h1>
+      <p class="head-links"><a id="to-thread" href="{{ thread }}">Back to the thread</a></p>
+    </header>
+    {% if source.warning %}<p class="notice">{{ source.warning }}</p>{% endif %}
+    <div class="thread-scroll" id="photos-scroll" tabindex="0" aria-label="Pictures">
+      {% include "_photos.html" %}
+      {% if more_photos %}<p class="page-link"><a id="more" href="{{ more_photos }}">More</a></p>{% endif %}
+    </div>
+    <p id="thread-status" class="muted" role="status"></p>
+  </main>
+</div>
+{% endblock %}

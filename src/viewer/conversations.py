@@ -1,9 +1,10 @@
 """The conversation pages (decision 040, phase 2c, part 2): the list, a thread,
-and the fragments that page them.
+a conversation's pictures, and the fragments that page them.
 
 Rendered on the server from the reader methods the JSON API uses; nothing here
 writes SQL. `/static/viewer/conversations.js` loads further pages of a thread
-as the reader scrolls and keeps their place; without it, links page instead.
+(and of its pictures) as the reader scrolls and keeps their place; without it,
+links page instead.
 Every page is `Cache-Control: private, no-store`. A conversation is named in an
 address only by its id; text, names and file names reach templates as values,
 so Jinja escapes them, and only `http` and `https` addresses become links.
@@ -48,6 +49,7 @@ from src.viewer.timeline import (
 Page = Callable[..., HTMLResponse]
 LIST_PAGE = 50
 MESSAGE_PAGE = 80
+PHOTO_PAGE = 60
 # A reply's quote: the first line of the message it answers, this long at most.
 QUOTE_CHARACTERS = 120
 UNKNOWN_MESSAGE = "That message is not in this conversation."
@@ -73,6 +75,12 @@ def thread_url(conversation_id: str, around: str | None = None) -> str:
     """A thread's address: its id, and a message's guid to open it at."""
     url = f"/timeline/conversations/{quote(conversation_id, safe='')}"
     return url + (f"?{urlencode({'around': around})}" if around else "")
+
+
+def photos_url(conversation_id: str, before: str | None = None) -> str:
+    """A conversation's pictures: its id, and the next page's cursor."""
+    url = f"{thread_url(conversation_id)}/photos"
+    return url + (f"?{urlencode({'before': before})}" if before else "")
 
 
 def attachment_url(
@@ -162,6 +170,7 @@ def _attachment(item: dict[str, Any]) -> dict[str, Any]:
         "size": file_size(item.get("bytes")),
         "image": None,
         "open": None,
+        "original": None,
         "state": None,
     }
     if media is None:
@@ -172,6 +181,8 @@ def _attachment(item: dict[str, Any]) -> dict[str, Any]:
             **view,
             "image": attachment_url(media["connection"], kind, key, 360),
             "open": attachment_url(media["connection"], kind, key, 1280),
+            # The stored file itself, as the route serves it without a size.
+            "original": attachment_url(media["connection"], kind, key, None),
         }
     if media["state"] == "stored":
         return {**view, "open": attachment_url(media["connection"], kind, key, None)}
@@ -275,6 +286,37 @@ def message_views(
         )
         previous = {"day": message["day"], "run": run}
     return views
+
+
+def photo_views(
+    photos: list[dict[str, Any]], conversation_id: str
+) -> list[dict[str, Any]]:
+    """A page of pictures as tiles: each with its message's time and a link to
+    the thread at that message."""
+    return [
+        {
+            **_attachment(photo["attachment"]),
+            "message": photo["guid"],
+            "sent_at": photo["sent_at"],
+            "when": _moment(photo["sent_at"]).strftime("%d %b %Y %H:%M"),
+            "thread": thread_url(conversation_id, photo["guid"]),
+        }
+        for photo in photos
+    ]
+
+
+def _photo_cursor(request: Request) -> tuple[datetime, str, int] | None:
+    """Where a page of pictures starts: after `before`, a tile's place."""
+    query = request.query_params
+    if len(query.getlist("before")) > 1:
+        raise OperationError("A parameter is given more than once")
+    value = query.get("before")
+    if value is None:
+        return None
+    at, guid, position = read_cursor(value, (str, str, int))
+    if not guid or len(guid) > MAX_GUID or position < 1:
+        raise OperationError("Invalid paging cursor")
+    return _cursor_time(at), guid, position
 
 
 def _position(request: Request) -> dict[str, Any]:
@@ -446,6 +488,7 @@ def conversation_pages(settings: ViewerSettings, page: Page) -> APIRouter:
                 "search_kind": reader.source.thread.source
                 if reader.source.thread
                 else "",
+                "photos": photos_url(conversation_id),
             }
             return _no_store(page(request, "conversation.html", **context), 200)
 
@@ -464,6 +507,51 @@ def conversation_pages(settings: ViewerSettings, page: Page) -> APIRouter:
                 message = UNKNOWN_MESSAGE if found is not None else UNKNOWN_CONVERSATION
                 return error(request, message, 404)
             return _no_store(page(request, "_messages.html", **found), 200)
+
+        return guarded(request, render)
+
+    @router.get(
+        "/timeline/conversations/{conversation_id}/photos",
+        response_class=HTMLResponse,
+    )
+    def photos(request: Request, conversation_id: str) -> Response:
+        """A conversation's pictures, newest first, `before` a cursor (the
+        "More" link without JavaScript). htmx asks for the next tiles alone."""
+
+        def render(reader: TimelineReader) -> Response:
+            before = _photo_cursor(request)
+            # Not an id: unknown, before any query.
+            if not valid_conversation_id(conversation_id):
+                return error(request, UNKNOWN_CONVERSATION, 404)
+            fragment = request.headers.get("hx-request") == "true"
+            conversation = None if fragment else reader.conversation(conversation_id)
+            found = None
+            if fragment or conversation is not None:
+                found = reader.conversation_photos(conversation_id, PHOTO_PAGE, before)
+            if found is None:
+                return error(request, UNKNOWN_CONVERSATION, 404)
+            context = {
+                "photos": photo_views(found["photos"], conversation_id),
+                "before": found["before"],
+                # Not `more`: the list beside it has its own.
+                "more_photos": photos_url(conversation_id, found["before"])
+                if found["before"]
+                else None,
+                "later_page": before is not None,
+            }
+            if fragment:
+                return _no_store(page(request, "_photos.html", **context), 200)
+            assert conversation is not None
+            context |= {
+                "source": reader.source.describe(),
+                **listing(reader, None, conversation_id),
+                "conversation": conversation,
+                "conversation_id": conversation_id,
+                "conversation_name": conversation["display_name"],
+                "thread": thread_url(conversation_id),
+                "fragment": photos_url(conversation_id),
+            }
+            return _no_store(page(request, "conversation_photos.html", **context), 200)
 
         return guarded(request, render)
 

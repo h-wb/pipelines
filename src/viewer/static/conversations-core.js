@@ -68,11 +68,16 @@ export function centredTop(offsetTop, height, clientHeight) {
 // the top, newer within `margin` of the bottom, each only if a cursor leads
 // there and no load of that side runs.
 export function wanted(box, pager, margin = 800) {
-  const fromBottom = box.scrollHeight - box.scrollTop - box.clientHeight;
   return {
     older: box.scrollTop <= margin && pager.can("before"),
-    newer: fromBottom <= margin && pager.can("after"),
+    newer: nearEnd(box, margin) && pager.can("after"),
   };
+}
+
+// Whether the reader is within `margin` pixels of the box's bottom: where a
+// conversation's pictures, newest first, load their next (older) page.
+export function nearEnd(box, margin = 800) {
+  return box.scrollHeight - box.scrollTop - box.clientHeight <= margin;
 }
 
 // A thread's two cursors: one load at a time on each side; a side whose

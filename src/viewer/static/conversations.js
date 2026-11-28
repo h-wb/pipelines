@@ -1,6 +1,7 @@
 // The conversation pages (decision 040, phase 2c): a thread loads its older
 // and newer pages as the reader scrolls, keeping their place, and opens at
-// its latest message, a marked one or a day. Pages are HTML the server
+// its latest message, a marked one or a day; a conversation's pictures load
+// their next page as the end of the grid comes near. Pages are HTML the server
 // rendered, with every value escaped; nothing from data is parsed here as
 // markup. No storage: nothing is kept outside the page and the browser's HTTP
 // cache, which logging out clears.
@@ -10,9 +11,35 @@ import {
   centredTop,
   initialScroll,
   keepingPlace,
+  nearEnd,
   seam,
   wanted,
 } from "./conversations-core.js";
+
+// One page the server rendered alone, as htmx asks for it (an expired login
+// answers 401 rather than the login page): the element `id` of it.
+async function fragmentPage(url, id, what) {
+  const response = await fetch(url, {
+    credentials: "same-origin",
+    headers: { "HX-Request": "true" },
+  });
+  if (response.status === 401) {
+    location.assign("/login");
+    throw new Error("You are logged out.");
+  }
+  if (!response.ok) throw new Error(`The ${what} could not be loaded (${response.status}).`);
+  const parsed = new DOMParser().parseFromString(await response.text(), "text/html");
+  const page = parsed.getElementById(id);
+  if (!page) throw new Error(`The ${what} could not be loaded.`);
+  return page;
+}
+
+// A page's items without its empty placeholder, for this document.
+function adopted(page) {
+  return [...page.children]
+    .filter((node) => !node.classList.contains("empty-page"))
+    .map((node) => document.adoptNode(node));
+}
 
 class Thread {
   constructor(root) {
@@ -72,9 +99,7 @@ class Thread {
     }
     // An empty page's placeholder goes once messages arrive; a fetched page
     // brings none of its own.
-    const items = [...page.children]
-      .filter((node) => !node.classList.contains("empty-page"))
-      .map((node) => document.adoptNode(node));
+    const items = adopted(page);
     if (items.length) for (const empty of this.list.querySelectorAll(".empty-page")) empty.remove();
     this.pager.done(side, page.dataset[side]);
     if (side === "before") {
@@ -96,22 +121,9 @@ class Thread {
     this.check();
   }
 
-  async #fetch(side, cursor) {
+  #fetch(side, cursor) {
     const query = new URLSearchParams({ [side]: cursor });
-    // As htmx asks: an expired login answers 401 rather than the login page.
-    const response = await fetch(`${this.fragment}?${query}`, {
-      credentials: "same-origin",
-      headers: { "HX-Request": "true" },
-    });
-    if (response.status === 401) {
-      location.assign("/login");
-      throw new Error("You are logged out.");
-    }
-    if (!response.ok) throw new Error(`The messages could not be loaded (${response.status}).`);
-    const parsed = new DOMParser().parseFromString(await response.text(), "text/html");
-    const page = parsed.getElementById("messages");
-    if (!page) throw new Error("The messages could not be loaded.");
-    return page;
+    return fragmentPage(`${this.fragment}?${query}`, "messages", "messages");
   }
 
   #last(items) {
@@ -144,6 +156,60 @@ class Thread {
   }
 }
 
+// A conversation's pictures, newest first: the next page loads as the end of
+// the grid comes near, or from the "More" link, in place.
+class Photos {
+  constructor(root) {
+    this.fragment = root.dataset.fragment;
+    this.box = document.getElementById("photos-scroll");
+    this.grid = document.getElementById("photos");
+    this.status = document.getElementById("thread-status");
+    this.link = document.getElementById("more");
+    this.pager = new Pager(this.grid.dataset.before, null);
+  }
+
+  start() {
+    this.link?.addEventListener("click", (event) => {
+      event.preventDefault();
+      this.load();
+    });
+    this.box.addEventListener("scroll", () => this.check(), { passive: true });
+    this.check();
+  }
+
+  check() {
+    if (nearEnd(this.box) && this.pager.can("before")) this.load();
+  }
+
+  async load() {
+    const cursor = this.pager.begin("before");
+    if (cursor === null) return;
+    if (this.link) this.link.textContent = "Loading more pictures…";
+    let page;
+    try {
+      const query = new URLSearchParams({ before: cursor });
+      page = await fragmentPage(`${this.fragment}?${query}`, "photos", "pictures");
+    } catch (error) {
+      this.pager.failed("before");
+      if (this.link) this.link.textContent = "More";
+      this.status.textContent = error.message;
+      return;
+    }
+    this.grid.append(...adopted(page));
+    this.pager.done("before", page.dataset.before);
+    const next = this.pager.cursors.before;
+    if (this.link) {
+      this.link.parentElement.hidden = next === null;
+      if (next !== null) {
+        this.link.href = `${location.pathname}?${new URLSearchParams({ before: next })}`;
+        this.link.textContent = "More";
+      }
+    }
+    this.status.textContent = "";
+    this.check();
+  }
+}
+
 // The list beside a thread shows where it is, also in rows loaded later.
 function markCurrent() {
   const thread = document.getElementById("thread");
@@ -156,6 +222,7 @@ function markCurrent() {
 
 const thread = document.getElementById("thread");
 if (thread && document.getElementById("messages")) new Thread(thread).start();
+if (thread && document.getElementById("photos")) new Photos(thread).start();
 markCurrent();
 const current = document.querySelector(".conversation-pane [aria-current]");
 const pane = document.querySelector(".conversation-pane");

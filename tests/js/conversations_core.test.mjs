@@ -9,6 +9,7 @@ import {
   keepingPlace,
   keptScrollTop,
   messageLine,
+  nearEnd,
   seam,
   threadUrl,
   wanted,
@@ -85,6 +86,15 @@ test("pages are wanted near either end, while a cursor leads there", () => {
   const latest = new Pager("older-cursor", "");
   assert.deepEqual(wanted(box(9400), latest), { older: false, newer: false });
   assert.deepEqual(wanted(box(0), latest), { older: true, newer: false });
+});
+
+test("pictures load their next page near the bottom of the box", () => {
+  const box = (scrollTop) => ({ scrollTop, clientHeight: 600, scrollHeight: 10000 });
+  assert.equal(nearEnd(box(0)), false);
+  assert.equal(nearEnd(box(8600)), true);
+  assert.equal(nearEnd(box(9400)), true);
+  // A grid shorter than its box is at its end.
+  assert.equal(nearEnd({ scrollTop: 0, clientHeight: 600, scrollHeight: 300 }), true);
 });
 
 test("a pager loads one page at a time on each side, to the end", () => {

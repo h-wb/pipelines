@@ -13,6 +13,7 @@ from datetime import date
 from unittest.mock import patch
 from urllib.parse import quote
 
+from src.kernel.errors import OperationError
 from src.viewer import STATIC_DIR
 from src.viewer.reader import NO_MESSAGES, TimelineReader, TimelineTimeout
 from tests import test_timeline_conversations as part_one
@@ -60,6 +61,29 @@ def item(text, guid):
 
 def guids(text):
     return re.findall(r'<li class="message[^"]*" data-guid="([^"]+)"', text)
+
+
+# A tile of a conversation's pictures: its message, its file's key, and where
+# its links lead.
+TILE = re.compile(
+    r'<li class="photo" data-message="([^"]+)">\s*'
+    r'<a class="attachment-image" href="/media/m/attachments/([^"?]+)\?size=1280"'
+    r' target="_blank"><img src="/media/m/attachments/\2\?size=360"[^>]*></a>\s*'
+    r'<p class="photo-links"><time datetime="[^"]+">[^<]+</time><br>'
+    r'<a class="photo-original" href="/media/m/attachments/\2" target="_blank">'
+    r'Original</a> · <a class="photo-thread" href="([^"]+)">In the thread</a></p>'
+)
+
+
+def tiles(text):
+    """The pictures of a rendered page, in order, by their files' keys."""
+    return [key for _, key, _ in TILE.findall(text)]
+
+
+def photo_cursor(text):
+    found = re.search(r'<ul class="photos" id="photos" data-before="([^"]*)"', text)
+    assert found is not None
+    return html.unescape(found.group(1)) or None
 
 
 def cursor(text, side):
@@ -384,6 +408,155 @@ class ConversationPageTests(ConversationsFixture):
         )
         self.assertIn("That message is not in this conversation.", unknown.text)
 
+    # ---- pictures -------------------------------------------------------------
+
+    def photos(self, client, conversation_id, status=200, fragment=False, **params):
+        headers = {"HX-Request": "true"} if fragment else {}
+        response = self.get(
+            client,
+            f"/timeline/conversations/{conversation_id}/photos",
+            status,
+            params=params,
+            headers=headers,
+        )
+        if status == 200:
+            self.assertEqual("<html" in response.text, not fragment)
+            self.assertIn('<ul class="photos" id="photos"', response.text)
+        return response
+
+    def pictures(self):
+        """For one test, a made thumbnail on more of Alex's messages: a00, a16
+        (beside its stored file), a19, a08 (after p1), a18 (then deleted) and
+        az (undated)."""
+        table = f"{self.schema_name}.messages"
+        chosen = "('a00', 'a08', 'a16', 'a19', 'a18', 'az')"
+        where = f"conversation_id = '{self.alex}' and guid in {chosen}"
+        kept = self.query(
+            f"select guid, attachments::text, deleted from {table} where {where}"
+        )
+        self.assertEqual(len(kept), 6)
+
+        def restore():
+            for guid, attachments, deleted in kept:
+                written = attachments.replace("'", "''")
+                self.query(
+                    f"update {table} set attachments = '{written}'::jsonb,"
+                    f" deleted = {deleted} where guid = '{guid}'"
+                )
+
+        self.addCleanup(restore)
+        self.query(
+            f"update {table} set attachments = attachments || jsonb_build_array("
+            "jsonb_build_object('guid', 'q-' || guid, 'media_key', 'q-' || guid ||"
+            " '.jpeg', 'kind', 'image', 'mime_type', 'image/jpeg', 'bytes', 2000,"
+            " 'transfer_name', 'IMG-' || guid || '.jpeg', 'media_status', 'made',"
+            " 'thumbnail_w360', true, 'thumbnail_w1280', true))"
+            f" where {where}"
+        )
+        self.query(f"update {table} set deleted = true where guid = 'a18'")
+
+    def test_a_thumbnail_opens_its_original_and_the_header_its_pictures(self):
+        page = self.thread(self.client(), self.alex).text
+        self.assertIn(
+            '<img src="/media/m/attachments/p1.jpeg?size=360" alt="Attachment"'
+            ' loading="lazy" decoding="async"></a><a class="attachment-original"'
+            ' href="/media/m/attachments/p1.jpeg" target="_blank">Original</a>',
+            item(page, "a08"),
+        )
+        # A stored file without thumbnails opens itself; the others open nothing.
+        for guid in ("a16", "a03", "a11"):
+            self.assertNotIn("Original", item(page, guid))
+        self.assertIn(
+            f'<a id="photos-link" href="/timeline/conversations/{self.alex}/photos">'
+            "Photos</a>",
+            page,
+        )
+
+    def test_the_pictures_page_newest_first(self):
+        self.pictures()
+        client = self.client()
+        # By (sent_at, guid, position), newest first: a19 alone at its minute,
+        # then a16, a08 and a00 sent in the same minute, a08's second picture
+        # before its first.
+        expected = ["q-a19.jpeg", "q-a16.jpeg", "q-a08.jpeg", "p1.jpeg", "q-a00.jpeg"]
+        page = self.photos(client, self.alex).text
+        self.assertEqual(tiles(page), expected)
+        self.assertEqual(len(TILE.findall(page)), page.count('<li class="photo"'))
+        # Each tile's thread link opens the thread at its message.
+        senders = ["a19", "a16", "a08", "a08", "a00"]
+        self.assertEqual([guid for guid, _, _ in TILE.findall(page)], senders)
+        for guid, _, thread in TILE.findall(page):
+            self.assertEqual(
+                html.unescape(thread),
+                f"/timeline/conversations/{self.alex}?around={guid}",
+            )
+        self.assertIn(
+            '<time datetime="2026-01-09T23:50:00-05:00">09 Jan 2026 23:50</time>', page
+        )
+        self.assertIn('alt="IMG-a19.jpeg"', page)
+        opened = self.thread(client, self.alex, around="a19").text
+        self.assertIn('id="marked"', item(opened, "a19"))
+        # The thread withholds deleted and undated messages: so do its pictures.
+        # Stored files and those not known yet have no thumbnail to show.
+        for absent in ("q-a18", "q-az", "p2.png", "p3.jpeg"):
+            self.assertNotIn(absent, page)
+        self.assertIsNone(photo_cursor(page))
+        self.assertNotIn('id="more"', page)
+        self.assertIn("<h1>Alex Example</h1>", page)
+        self.assertIn(
+            f'<a id="to-thread" href="/timeline/conversations/{self.alex}">', page
+        )
+        self.assertIn("<title>Pictures</title>", page)
+        self.assertIn(f'data-conversation="{self.alex}" aria-current="page"', page)
+        with patch("src.viewer.conversations.PHOTO_PAGE", 2):
+            first = self.photos(client, self.alex).text
+            seen = tiles(first)
+            self.assertEqual(seen, expected[:2])
+            before = photo_cursor(first)
+            while before:
+                more = self.photos(client, self.alex, fragment=True, before=before)
+                seen += tiles(more.text)
+                before = photo_cursor(more.text)
+            self.assertEqual(seen, expected)
+            # Without JavaScript, "More" pages as whole pages.
+            link = re.search(r'<a id="more" href="([^"]+)">More</a>', first)
+            assert link is not None
+            second = self.get(client, html.unescape(link.group(1))).text
+            self.assertIn("<html", second)
+            self.assertEqual(tiles(second), expected[2:4])
+            link = re.search(r'<a id="more" href="([^"]+)">More</a>', second)
+            assert link is not None
+            last = self.get(client, html.unescape(link.group(1))).text
+            self.assertEqual(tiles(last), expected[4:])
+            self.assertNotIn('id="more"', last)
+        script = (STATIC_DIR / "conversations.js").read_text()
+        self.assertIn('getElementById("photos")', script)
+
+    def test_pictures_of_an_empty_or_unknown_conversation(self):
+        client = self.client()
+        for conversation_id in (self.book, self.sam):
+            page = self.photos(client, conversation_id).text
+            self.assertIn(
+                '<li class="empty-page">No pictures in this conversation</li>', page
+            )
+            self.assertNotIn('<li class="photo"', page)
+        for fragment in (False, True):
+            unknown = self.photos(client, "0" * 32, 404, fragment=fragment)
+            self.assertIn("Unknown conversation", unknown.text)
+        for before, words in (
+            ("forged", "Invalid paging cursor"),
+            (
+                cursor(self.thread(client, self.alex, at="2026-01-09").text, "after"),
+                "Invalid paging cursor",
+            ),
+        ):
+            with self.subTest(before=before):
+                refused = self.photos(client, self.alex, 400, before=before)
+                self.assertIn(words, html.unescape(refused.text))
+        with self.assertRaises(OperationError):
+            self.reader.conversation_photos(self.alex, 0)
+        self.assertIsNone(self.reader.conversation_photos("0" * 32, 5))
+
     # ---- search ---------------------------------------------------------------
 
     def search(self, client, fields, status=200):
@@ -540,6 +713,7 @@ class ConversationPageTests(ConversationsFixture):
             "/timeline/conversations",
             f"/timeline/conversations/{self.alex}",
             f"/timeline/conversations/{self.alex}/messages",
+            f"/timeline/conversations/{self.alex}/photos",
         )
         unconfigured = self.client(database=None)
         for url in urls:
@@ -565,6 +739,11 @@ class ConversationPageTests(ConversationsFixture):
                         "conversation_messages",
                         side_effect=TimelineTimeout("Slow"),
                     ),
+                    patch.object(
+                        TimelineReader,
+                        "conversation_photos",
+                        side_effect=TimelineTimeout("Slow"),
+                    ),
                 ):
                     self.assertIn("Slow", self.get(client, url, 504).text)
         # An unknown id is 404; a handle or anything not an id, before any query.
@@ -577,6 +756,7 @@ class ConversationPageTests(ConversationsFixture):
                 for url in (
                     f"/timeline/conversations/{bad}",
                     f"/timeline/conversations/{bad}/messages",
+                    f"/timeline/conversations/{bad}/photos",
                 ):
                     with self.subTest(url=url):
                         self.get(client, url, 404)
@@ -589,6 +769,7 @@ class ConversationPageTests(ConversationsFixture):
                 pages.append(self.thread(client, conversation_id).text)
                 pages.append(self.thread(client, conversation_id, at="2026-01-09").text)
             pages.append(self.thread(client, self.alex, around="a19").text)
+            pages.append(self.photos(client, self.alex).text)
             latest = pages[1]
             pages.append(
                 self.fragment(client, self.alex, before=cursor(latest, "before")).text
@@ -611,7 +792,8 @@ class ConversationPageTests(ConversationsFixture):
         for address in found:
             if address.startswith("/timeline/conversations/"):
                 self.assertRegex(
-                    address, r"^/timeline/conversations/[0-9a-f]{32}(/messages)?(\?|$)"
+                    address,
+                    r"^/timeline/conversations/[0-9a-f]{32}(/messages|/photos)?(\?|$)",
                 )
 
     def test_the_times_are_the_analysis_time_zone(self):

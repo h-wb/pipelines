@@ -14,6 +14,7 @@
     <header class="thread-head">
       <a class="back" href="/timeline/conversations">‹ Conversations</a>
       <h1>{{ conversation_name }}</h1>
+      <p class="head-links"><a id="photos-link" href="{{ photos }}">Photos</a></p>
       <p class="people muted" id="people">{% if people %}{{ "With " if not conversation.is_group else "" }}{{ people | join(", ") }}{% else %}No one else is listed.{% endif %}</p>
       <details class="thread-tools" {% if at_day %}open{% endif %}>
         <summary>Search or go to a day</summary>

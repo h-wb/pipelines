@@ -227,6 +227,7 @@ _MEDIA_STATES = {
 }
 MAX_CONVERSATIONS = 200
 MAX_MESSAGES = 200
+MAX_PHOTOS = 200
 PREVIEW_CHARACTERS = 200
 # A conversation's opaque id (timeline_conversation_id): checked before any query.
 _CONVERSATION_ID = re.compile(r"[0-9a-f]{32}")
@@ -1022,6 +1023,68 @@ class TimelineReader:
             "after": _message_cursor(newer_key),
         }
 
+    def conversation_photos(
+        self,
+        conversation_id: str,
+        limit: int,
+        before: tuple[datetime, str, int] | None = None,
+    ) -> dict[str, Any] | None:
+        """A page of a conversation's attachments with thumbnails, newest first,
+        from the messages its thread shows, by keyset on (sent_at, guid, the
+        attachment's position in its message). None if the conversation is
+        unknown. `before` is the next page's cursor, null at the end."""
+        if not 1 <= limit <= MAX_PHOTOS:
+            raise OperationError(f"The limit must be between 1 and {MAX_PHOTOS}")
+        conversations, messages, _ = self._messages_tables()
+        parameters: dict[str, Any] = {"id": conversation_id, "count": limit + 1}
+        keyset = ""
+        if before is not None:
+            # The plain bound keeps the index range narrow, as a thread's.
+            keyset = (
+                " AND m.sent_at <= :key_at AND (m.sent_at, m.guid, a.position)"
+                " < (:key_at, :key_guid, :key_position)"
+            )
+            parameters.update(
+                key_at=before[0], key_guid=before[1], key_position=before[2]
+            )
+        sql = (
+            "SELECT m.guid, m.sent_at, m.day, a.position, a.item, m.connection"
+            f" FROM {messages} m CROSS JOIN LATERAL"
+            " jsonb_array_elements(m.attachments) WITH ORDINALITY a (item, position)"
+            f" WHERE {_THREAD_MESSAGES} AND {_ATTACHMENT_THUMBNAILS}{keyset}"
+            " ORDER BY m.sent_at DESC, m.guid DESC, a.position DESC LIMIT :count"
+        )
+        with self._session() as db:
+            known = db.execute(
+                sa.text(f"SELECT 1 FROM {conversations} WHERE conversation_id = :id"),
+                {"id": conversation_id},
+            ).first()
+            if known is None:
+                return None
+            rows = db.execute(sa.text(sql), parameters).all()
+        more = len(rows) > limit
+        rows = rows[:limit]
+        zone = self.source.zone
+        kind = self.source.media_kind(THREAD)
+        last = rows[-1] if rows else None
+        return {
+            **self.source.describe(),
+            "conversation_id": conversation_id,
+            "photos": [
+                {
+                    "guid": guid,
+                    "sent_at": _iso(sent, zone),
+                    "day": day.isoformat() if day else None,
+                    "position": int(position),
+                    "attachment": _attachment_row(connection, kind, item),
+                }
+                for guid, sent, day, position, item, connection in rows
+            ],
+            "before": _cursor([last[1].isoformat(), last[0], int(last[3])])
+            if more and last
+            else None,
+        }
+
     def search_messages(
         self,
         query: str,
@@ -1123,7 +1186,7 @@ class _MessagePage:
             "count": count,
             "max_text": MAX_TEXT,
         }
-        keyset = " AND m.sent_at IS NOT NULL"
+        keyset = ""
         if key is not None:
             # The plain bound keeps the index range narrow; the row comparison
             # orders ties on sent_at by guid.
@@ -1140,7 +1203,7 @@ class _MessagePage:
             " length(m.text) > :max_text, m.text_unreadable, m.is_edited,"
             " m.edited_at, m.is_unsent, m.is_audio, m.reply_to_guid, m.attachments,"
             " m.reactions, m.connection FROM (SELECT * FROM"
-            f" {self.messages} m WHERE m.conversation_id = :id AND NOT m.deleted"
+            f" {self.messages} m WHERE {_THREAD_MESSAGES}"
             f"{keyset} ORDER BY m.sent_at {direction}, m.guid {direction}"
             f" LIMIT :count) m LEFT JOIN {self.people} p"
             f" ON p.handle = m.sender_handle"
@@ -1226,15 +1289,7 @@ def _message(
         "audio": bool(audio),
         "reply_to": reply_to,
         "attachments": [
-            {
-                "guid": item.get("guid"),
-                "kind": item.get("kind"),
-                "mime_type": item.get("mime_type"),
-                "bytes": item.get("bytes"),
-                "transfer_name": item.get("transfer_name"),
-                "media": _attachment_media(connection, kind, item),
-            }
-            for item in attachments or []
+            _attachment_row(connection, kind, item) for item in attachments or []
         ],
         "reactions": [
             {
@@ -1248,6 +1303,20 @@ def _message(
             }
             for item in reactions or []
         ],
+    }
+
+
+def _attachment_row(
+    connection: str | None, kind: str, item: dict[str, Any]
+) -> dict[str, Any]:
+    """An attachment as the API gives it, from a message's `attachments` item."""
+    return {
+        "guid": item.get("guid"),
+        "kind": item.get("kind"),
+        "mime_type": item.get("mime_type"),
+        "bytes": item.get("bytes"),
+        "transfer_name": item.get("transfer_name"),
+        "media": _attachment_media(connection, kind, item),
     }
 
 
@@ -1265,6 +1334,18 @@ def _attachment_media(
     )
     return _media(connection, kind, key, code, status)
 
+
+# The messages a thread shows (`m` a message, `:id` its conversation): neither
+# deleted nor undated. A thread's pages and its pictures read the same ones.
+_THREAD_MESSAGES = "m.conversation_id = :id AND NOT m.deleted AND m.sent_at IS NOT NULL"
+# An item `a.item` of a message's attachments whose thumbnails are made: what
+# `_attachment_media` reads as `thumbnails` (`media_code`), in SQL.
+_ATTACHMENT_THUMBNAILS = (
+    "coalesce(a.item->>'media_key', '') <> ''"
+    " AND a.item->>'media_status' IS NOT NULL"
+    " AND a.item->'thumbnail_w360' = 'true'::jsonb"
+    " AND a.item->'thumbnail_w1280' = 'true'::jsonb"
+)
 
 # A message's sender as shown: the address book's name, else the handle as that
 # message writes it (decision 041); null for mine. `m` a message, `p` its person.
